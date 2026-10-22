@@ -24,8 +24,8 @@ Sistema de gestão e agendamento para barbearias — projeto da disciplina de Ar
 - [x] Migrations: `users`, `barbers`, `clients`, `services`
 - [x] Model + Controller + Seeder de `services`
 - [x] API REST de `services` (CRUD completo via `Route::apiResource`)
-- [ ] `clients` (CRUD)
-- [ ] `barbers` (CRUD)
+- [x] `clients` (CRUD)
+- [x] `barbers` (CRUD)
 - [ ] Agenda / agendamento online
 - [ ] Autenticação por perfil (Sanctum)
 
