@@ -38,3 +38,15 @@ Sistema de gestão e agendamento para barbearias — projeto da disciplina de Ar
 | GET | `/api/services/{id}` | Mostra um serviço específico |
 | PUT/PATCH | `/api/services/{id}` | Atualiza um serviço |
 | DELETE | `/api/services/{id}` | Remove um serviço |
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| GET | `/api/barbers` | Lista todos os barbeiros |
+| POST | `/api/barbers` | Cadastra um novo barbeiro |
+| GET | `/api/barbers/{id}` | Exibe os dados de um barbeiro específico |
+| PUT/PATCH | `/api/barbers/{id}` | Atualiza os dados de um barbeiro |
+| DELETE | `/api/barbers/{id}` | Remove um barbeiro |
+| GET | `/api/clients` | Lista todos os clientes |
+| POST | `/api/clients` | Cadastra um novo cliente |
+| GET | `/api/clients/{id}` | Exibe os dados de um cliente específico |
+| PUT/PATCH | `/api/clients/{id}` | Atualiza os dados de um cliente |
+| DELETE | `/api/clients/{id}` | Remove um cliente |
