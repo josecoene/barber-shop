@@ -24,10 +24,15 @@ API REST para gestão e agendamento de barbearias. Projeto da disciplina Arquite
 - API em `routes/api.php`, com `Route::apiResource(...)` e nomes prefixados `api.` (registrada no `then:` do `withRouting` em `bootstrap/app.php`). Rota da API sem `->name()` ganha o nome `api.`, e duas assim repetem o nome (o `WebPagesTest` acusa). Telas em `routes/web.php`
 - Validação com `$request->validate()` dentro do controller. No update, usar `sometimes|required`; para e-mail único usar `unique:tabela,email,{id}` para ignorar o próprio registro
 - Usar route model binding (`Service $service`) em show, update e destroy
-- Respostas em JSON: 201 ao criar, 204 ao remover; 404 e 422 vêm do Laravel
-- Tabelas de domínio:
-  - `services`: name, duration (minutos), price (decimal 8,2), status (`active` ou `inactive`)
-  - `clients` e `barbers`: name, email (único), phone (opcional, até 20 caracteres)
+- Respostas em JSON, no mesmo estilo nos três controllers: `store` devolve `response()->json($model, 201)`, `show` e `update` devolvem o model e `destroy` devolve `response()->noContent()` (204)
+  - `index` valida `page` (1 a 100000, teto que evita estourar a conta do offset), `per_page` (1 a 100, padrão 15) e `search` (até 100 caracteres) com `$request->validate()` e devolve `JsonResource::collection(...->orderBy('name')->orderBy('id')->paginate()->withQueryString())`: resposta com `data` (itens), `links` (`first`, `last`, `prev`, `next`) e `meta` (`current_page`, `last_page`, `per_page`, `total` etc.), sem classe de Resource própria
+  - 422 vem do Laravel, com as mensagens de `lang/pt_BR/validation.php`. Campo novo ganha o nome em português no bloco `attributes` desse arquivo
+  - 404 sai como `{"message": "Registro não encontrado."}` (route model binding) ou `{"message": "Rota não encontrada."}`, e 405 como `{"message": "Método não permitido para esta rota."}`, pelo `withExceptions` do `bootstrap/app.php`
+  - `GET /api/health` (`HealthController`) confere banco e cache: 200 ou 503, só com `ok`/`falhou`, e fica fora do limite de requisições com `withoutMiddleware('throttle:api')` (se o `throttleApi()` usar outro limitador, troque também ali). O `/up` continua raso, porque é o health check do balanceador
+- Tabelas de domínio (todas com `SoftDeletes`: o `DELETE` preenche `deleted_at` e a linha fica para o histórico):
+  - `services`: name (até 255), duration (minutos, de 5 a 480, cast `integer`), price (decimal 8,2, até 999999.99, cast `decimal:2`, que sai no JSON como texto `"35.00"`), status (`active` ou `inactive`; opcional no POST, com padrão `active` no `$attributes` do model)
+  - `clients` e `barbers`: name (até 255), email (único, até 255), phone (opcional, até 20 caracteres)
+  - Excluir cliente anonimiza (LGPD) com `Client::anonymizeAndDelete()`: nome "Cliente removido", e-mail `removido+{id}@barberflow.invalid` e telefone nulo. Excluir barbeiro mantém só o nome, com `Barber::releaseEmailAndDelete()`: troca o e-mail e apaga o telefone. Os dois liberam o e-mail original no `unique` do banco; nunca chame `delete()` direto nesses models. Por isso a validação de e-mail de clientes e barbeiros recusa o domínio `barberflow.invalid` (`not_regex`). O endereço vem do trait `App\Models\Concerns\ReleasesEmailOnDelete`, que pergunta ao banco se ele já está em uso (o MySQL iguala `barberflow.ínvalid` a `barberflow.invalid`) e, se estiver, acrescenta um sufixo aleatório
 - Código (classes, variáveis, rotas) em inglês; README, docs e mensagens de commit em português
 
 ## Ao implementar algo novo

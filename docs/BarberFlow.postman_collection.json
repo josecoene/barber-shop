@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "BarberFlow API",
-    "description": "Coleção de requisições da API do BarberFlow. Defina a variável baseUrl (padrão http://localhost:8000/api).",
+    "description": "Coleção de requisições da API do BarberFlow. Defina a variável baseUrl (padrão http://localhost:8000/api). As listagens são paginadas: page e per_page vêm ligados, e search e status de exemplo vêm desligados na aba Params.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -11,6 +11,33 @@
     }
   ],
   "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Saúde da aplicação",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "200 com {\"status\":\"ok\"} quando banco e cache respondem; 503 com o que falhou (\"falhou\") quando não. Fica fora do limite de requisições da API."
+          }
+        }
+      ]
+    },
     {
       "name": "Services",
       "item": [
@@ -29,14 +56,39 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/services",
+              "raw": "{{baseUrl}}/services?page=1&per_page=15",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "services"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "search",
+                  "value": "corte",
+                  "description": "Procura no nome (até 100 caracteres).",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "active",
+                  "description": "active ou inactive.",
+                  "disabled": true
+                }
               ]
-            }
+            },
+            "description": "Lista paginada em ordem de nome. Os itens vêm em data; meta traz current_page, last_page, per_page e total, e links traz first, last, prev e next."
           }
         },
         {
@@ -64,13 +116,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Corte de cabelo\",\n  \"duration\": 30,\n  \"price\": 40.0,\n  \"status\": \"active\"\n}",
+              "raw": "{\n  \"name\": \"Corte de cabelo\",\n  \"duration\": 30,\n  \"price\": 40.0\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "status é opcional: sem ele, o serviço nasce active. duration de 5 a 480 minutos e price de 0 a 999999.99."
           }
         },
         {
@@ -157,7 +210,8 @@
                 "services",
                 "1"
               ]
-            }
+            },
+            "description": "Exclusão lógica: o serviço sai das listas, mas a linha continua no banco."
           }
         }
       ]
@@ -180,14 +234,33 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/clients",
+              "raw": "{{baseUrl}}/clients?page=1&per_page=15",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "clients"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "search",
+                  "value": "silva",
+                  "description": "Procura no nome e no e-mail (até 100 caracteres).",
+                  "disabled": true
+                }
               ]
-            }
+            },
+            "description": "Lista paginada em ordem de nome. Os itens vêm em data; meta traz current_page, last_page, per_page e total, e links traz first, last, prev e next."
           }
         },
         {
@@ -308,7 +381,8 @@
                 "clients",
                 "1"
               ]
-            }
+            },
+            "description": "Exclusão lógica com anonimização (LGPD): nome vira \"Cliente removido\", e-mail vira removido+{id}@barberflow.invalid e o telefone fica vazio."
           }
         }
       ]
@@ -331,14 +405,33 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/barbers",
+              "raw": "{{baseUrl}}/barbers?page=1&per_page=15",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "barbers"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "search",
+                  "value": "silva",
+                  "description": "Procura no nome e no e-mail (até 100 caracteres).",
+                  "disabled": true
+                }
               ]
-            }
+            },
+            "description": "Lista paginada em ordem de nome. Os itens vêm em data; meta traz current_page, last_page, per_page e total, e links traz first, last, prev e next."
           }
         },
         {
@@ -459,7 +552,8 @@
                 "barbers",
                 "1"
               ]
-            }
+            },
+            "description": "Exclusão lógica: mantém o nome, troca o e-mail por removido+{id}@barberflow.invalid (liberando o original) e apaga o telefone."
           }
         }
       ]

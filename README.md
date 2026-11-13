@@ -128,6 +128,13 @@ Para parar o servidor, use `docker stop barberflow-app`; para subir de novo, `do
 > **Atenção:** `clients` e `barbers` começam vazios: o seed cria só os serviços e o usuário de teste.
 > Se você já tinha rodado as migrations antes de atualizar o projeto, recrie o banco com `php artisan migrate:fresh` (isso apaga os dados).
 
+### Atualizando um ambiente que já existia
+
+Quem já tinha o projeto rodando antes da paginação e da exclusão lógica precisa de dois ajustes:
+
+1. Rodar `php artisan migrate` (no caminho 2, `docker exec -w /app barberflow-app php artisan migrate`). Ele só acrescenta a coluna `deleted_at` e não apaga nada.
+2. No `.env`, trocar `APP_LOCALE=en` por `APP_LOCALE=pt_BR` e acrescentar `APP_TIMEZONE=America/Sao_Paulo`. Sem isso, as mensagens da API continuam em inglês. Depois reinicie o servidor (no caminho 2, `docker restart barberflow-app`).
+
 ## Testes
 
 ```bash
@@ -138,7 +145,14 @@ No caminho 2, rode `docker exec -w /app barberflow-app composer test`.
 
 O `composer test` limpa o cache de configuração antes de rodar o `php artisan test`. Com a configuração em cache, os testes ignorariam o `phpunit.xml` e usariam o banco do `.env`, apagando os dados dele.
 
-Os testes de feature em `tests/Feature` cobrem o CRUD de `services`, `clients` e `barbers` (listagem, criação, validação, consulta, atualização, remoção e 404), as telas (`WebPagesTest`: cada tela responde, o menu aponta para as telas e não para a API, e nenhum nome de rota se repete) e o seed (`DatabaseSeederTest`).
+Os testes de feature em `tests/Feature` cobrem:
+
+- o CRUD de `services`, `clients` e `barbers`: listagem paginada (`data`, `links` e `meta`), busca, `page` e `per_page` inválidos, criação, limites de cada campo, consulta, atualização, exclusão lógica (com a anonimização do cliente e a troca do e-mail e do telefone do barbeiro, mesmo quando o endereço reservado já está ocupado), recadastro do e-mail de quem foi excluído e 404;
+- os erros da API em português (`ApiErrorsTest`: 404 de registro e de rota, 405 e 422);
+- o idioma e o fuso (`LocalizationTest`);
+- o `GET /api/health` com tudo no ar (200), com o banco ou o cache fora (503) e fora do limite de requisições (`HealthApiTest`);
+- as telas (`WebPagesTest`: cada tela responde, o menu aponta para as telas e não para a API, e nenhum nome de rota se repete);
+- o seed (`DatabaseSeederTest`).
 
 ## Endpoints
 
@@ -146,21 +160,22 @@ Base URL: `http://localhost:8000/api`
 
 | Recurso | Método | Rota | Descrição |
 |---|---|---|---|
-| Services | GET | `/services` | Lista todos os serviços |
+| Health | GET | `/health` | Confere banco e cache (200 ou 503) |
+| Services | GET | `/services` | Lista os serviços, paginado (`search`, `status`, `per_page`, `page`) |
 | Services | POST | `/services` | Cria um serviço |
 | Services | GET | `/services/{id}` | Mostra um serviço |
 | Services | PUT/PATCH | `/services/{id}` | Atualiza um serviço |
-| Services | DELETE | `/services/{id}` | Remove um serviço |
-| Clients | GET | `/clients` | Lista todos os clientes |
+| Services | DELETE | `/services/{id}` | Exclui um serviço (exclusão lógica) |
+| Clients | GET | `/clients` | Lista os clientes, paginado (`search`, `per_page`, `page`) |
 | Clients | POST | `/clients` | Cadastra um cliente |
 | Clients | GET | `/clients/{id}` | Mostra um cliente |
 | Clients | PUT/PATCH | `/clients/{id}` | Atualiza um cliente |
-| Clients | DELETE | `/clients/{id}` | Remove um cliente |
-| Barbers | GET | `/barbers` | Lista todos os barbeiros |
+| Clients | DELETE | `/clients/{id}` | Exclui um cliente e apaga os dados pessoais dele (LGPD) |
+| Barbers | GET | `/barbers` | Lista os barbeiros, paginado (`search`, `per_page`, `page`) |
 | Barbers | POST | `/barbers` | Cadastra um barbeiro |
 | Barbers | GET | `/barbers/{id}` | Mostra um barbeiro |
 | Barbers | PUT/PATCH | `/barbers/{id}` | Atualiza um barbeiro |
-| Barbers | DELETE | `/barbers/{id}` | Remove um barbeiro |
+| Barbers | DELETE | `/barbers/{id}` | Exclui um barbeiro (mantém o nome, libera o e-mail e apaga o telefone) |
 
 Corpos de requisição, regras de validação, códigos de resposta e exemplos completos estão em [`docs/API.md`](docs/API.md). Há também uma coleção do Postman em [`docs/BarberFlow.postman_collection.json`](docs/BarberFlow.postman_collection.json) (importe no Postman ou no Insomnia).
 
@@ -194,6 +209,10 @@ docs/
 - [x] CRUD de `clients`
 - [x] CRUD de `barbers`
 - [x] Testes de feature dos três recursos
+- [x] Paginação e busca nas listagens
+- [x] Exclusão lógica (soft delete), com anonimização do cliente (LGPD)
+- [x] Mensagens em português do Brasil e fuso de São Paulo
+- [x] `GET /api/health` (banco e cache)
 - [ ] Autenticação e permissões por perfil (Sanctum)
 - [ ] Agenda e agendamento online
 - [ ] Status do atendimento e pagamentos
@@ -204,7 +223,7 @@ docs/
 
 - Os endpoints atuais **não exigem autenticação**. O Sanctum está instalado, mas ainda não há rotas de login/logout nem o trait `HasApiTokens` no model `User`.
 - `barbers` e `clients` ainda não têm relacionamento com `users` nem com agendamentos.
-- Não existe paginação nas listagens (`GET` retorna todos os registros).
+- As listagens devolvem no máximo 100 itens por página. A tela Agendar carrega os 100 primeiros clientes, barbeiros e serviços ativos em ordem de nome.
 
 ## Documentação
 
