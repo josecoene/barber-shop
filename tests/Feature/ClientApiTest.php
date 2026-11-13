@@ -13,7 +13,7 @@ class ClientApiTest extends TestCase
     private function payload(array $overrides = []): array
     {
         return array_merge([
-            'name'  => 'Carlos Silva',
+            'name' => 'Carlos Silva',
             'email' => 'carlos@example.com',
             'phone' => '67999990000',
         ], $overrides);
@@ -41,7 +41,7 @@ class ClientApiTest extends TestCase
     public function test_phone_is_optional(): void
     {
         $this->postJson('/api/clients', [
-            'name'  => 'Sem Telefone',
+            'name' => 'Sem Telefone',
             'email' => 'sem.telefone@example.com',
         ])->assertCreated();
     }
@@ -83,7 +83,7 @@ class ClientApiTest extends TestCase
         $client = Client::create($this->payload());
 
         $this->putJson("/api/clients/{$client->id}", [
-            'name'  => 'Carlos Atualizado',
+            'name' => 'Carlos Atualizado',
             'email' => $client->email,
         ])->assertOk();
 

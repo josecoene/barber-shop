@@ -13,7 +13,7 @@ class BarberApiTest extends TestCase
     private function payload(array $overrides = []): array
     {
         return array_merge([
-            'name'  => 'João Barbeiro',
+            'name' => 'João Barbeiro',
             'email' => 'joao@barberflow.com',
             'phone' => '67988880000',
         ], $overrides);
@@ -41,7 +41,7 @@ class BarberApiTest extends TestCase
     public function test_phone_is_optional(): void
     {
         $this->postJson('/api/barbers', [
-            'name'  => 'Sem Telefone',
+            'name' => 'Sem Telefone',
             'email' => 'sem.telefone@barberflow.com',
         ])->assertCreated();
     }
@@ -83,7 +83,7 @@ class BarberApiTest extends TestCase
         $barber = Barber::create($this->payload());
 
         $this->putJson("/api/barbers/{$barber->id}", [
-            'name'  => 'João Atualizado',
+            'name' => 'João Atualizado',
             'email' => $barber->email,
         ])->assertOk();
 
