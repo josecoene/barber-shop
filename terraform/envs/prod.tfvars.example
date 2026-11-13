@@ -8,3 +8,30 @@ region      = "us-east-1"
 # Faixa diferente da homolog, para as duas VPCs poderem se conectar um dia sem conflito de IP.
 vpc_cidr = "10.30.0.0/16"
 az_count = 2
+
+# Banco (RDS): réplica de espera em outra zona (Multi-AZ) e proteção contra exclusão.
+# Para destruir a prod, mude db_deletion_protection para false e aplique antes do destroy.
+db_deletion_protection = true
+db_multi_az            = true
+
+# Cache (ElastiCache Valkey): primário e uma réplica em outra zona, com failover automático.
+cache_node_type          = "cache.t4g.micro"
+cache_num_cache_clusters = 2
+cache_automatic_failover = true
+
+# Imagens com tag guardadas em cada repositório do ECR e dias de log no CloudWatch.
+ecr_keep_tagged_images = 10
+log_retention_days     = 30
+
+# Sem domínio: deixe vazio, e a feat/infra-computacao usa o DNS do ALB no APP_URL.
+# Com domínio, ex.: app_url = "https://barberflow.com.br"
+app_url = ""
+
+# E-mail: smtp com o provedor do grupo. Preencha o servidor (mail_host) e a porta
+# (mail_port) do provedor; com mail_host vazio, o parâmetro MAIL_HOST não é criado e o
+# e-mail não sai. Usuário e senha (MAIL_USERNAME e MAIL_PASSWORD) entram à mão no SSM, veja
+# docs/nuvem/TERRAFORM.md. Troque o remetente por um endereço do domínio verificado no provedor.
+mail_mailer       = "smtp"
+mail_host         = ""
+mail_port         = 587
+mail_from_address = "nao-responda@example.com"

@@ -1,6 +1,6 @@
 # Alertas do trivy config aceitos de propósito, cada um preso ao arquivo do recurso (paths)
 # e com o motivo (statement). O mesmo problema num recurso de outro arquivo continua sendo
-# acusado: um RDS novo sem criptografia num arquivo novo falha, mesmo com o AWS-0080 aqui.
+# acusado: um RDS novo sem login por IAM num arquivo novo falha, mesmo com o AWS-0176 aqui.
 # Rode na pasta terraform/ com --ignorefile .trivyignore.yaml (docs/nuvem/TERRAFORM.md).
 # Os paths são relativos à pasta analisada.
 # Quando o motivo deixar de valer, apague o item junto com a correção.
@@ -18,29 +18,37 @@ misconfigurations:
       - main.tf
     statement: Disco da EC2 solta do main.tf sem criptografia. Sai na feat/infra-computacao.
 
-  # RDS da Sprint 1 (aws_db_instance.barbershop_db). Fica como está nesta branch: a decisão
-  # do Leonam de 13/11 mantém o recurso e a senha da linha 23. A feat/infra-dados-seguranca
-  # liga backup de 7 dias, criptografia e proteção contra exclusão e apaga os itens do que corrigir.
-  - id: AWS-0077
-    paths:
-      - main.tf
-    statement: Retenção de backup do RDS no padrão de 1 dia. A feat/infra-dados-seguranca liga 7 dias.
-  - id: AWS-0080
-    paths:
-      - main.tf
-    statement: RDS sem criptografia. A feat/infra-dados-seguranca liga.
-  - id: AWS-0177
-    paths:
-      - main.tf
-    statement: RDS sem proteção contra exclusão. A feat/infra-dados-seguranca liga.
+  # RDS (aws_db_instance.barbershop_db). A feat/infra-dados-seguranca ligou backup de 7 dias,
+  # criptografia e proteção contra exclusão por variável e apagou os itens AWS-0077, AWS-0080
+  # e AWS-0177. Ficam os dois abaixo, de propósito.
   - id: AWS-0176
     paths:
       - main.tf
-    statement: Login no RDS por IAM desligado; a aplicação entra com usuário e senha. A feat/infra-dados-seguranca decide se o item fica e escreve o motivo.
+    statement: Login no RDS por IAM desligado de propósito. A aplicação entra com usuário e senha (decisão de 13/11, a senha do main.tf repassada pelo SSM). O token do IAM vence em 15 minutos, e o Laravel não gera nem renova esse token sozinho; ligar pediria código novo na aplicação.
   - id: AWS-0133
     paths:
       - main.tf
-    statement: Performance Insights desligado no RDS. A feat/infra-dados-seguranca decide se o item fica e escreve o motivo.
+    statement: Performance Insights (hoje CloudWatch Database Insights) não roda no db.t3.micro do RDS for MySQL; a AWS só aceita a partir do db.t3.medium, e o modo Advanced é pago. O banco fica monitorado pelas métricas do RDS no CloudWatch e pelos logs de erro e de consultas lentas exportados.
+
+  # Saída do security group do app para a internet (aws_vpc_security_group_egress_rule.app_to_internet),
+  # só na 443 e na porta do SMTP. A entrada continua só do ALB, e o tests/dados_seguranca.tftest.hcl
+  # confere as portas de saída do app e que banco e cache não têm regra de saída nenhuma.
+  - id: AWS-0104
+    paths:
+      - sg.tf
+    statement: Saída do app para a internet só na 443 (HTTPS) e na porta do SMTP do provedor de e-mail. Sem NAT Gateway e sem VPC endpoints (custo por hora), a instância alcança ECR, S3, SSM, CloudWatch Logs, os repositórios do dnf, o GitHub e o provedor de e-mail pelo IP público. Banco e cache ficam na mesma VPC, e a saída para eles vai só ao security group de cada um.
+
+  # Repositórios do ECR (aws_ecr_repository.image).
+  - id: AWS-0033
+    paths:
+      - ecr.tf
+    statement: ECR com criptografia AES256, a chave da AWS, sem custo. Uma chave do KMS do grupo custa US$ 1 por mês e não muda quem lê as imagens, que é decidido pelo IAM (pull só pela role da EC2).
+
+  # Log groups (aws_cloudwatch_log_group.container e .rds).
+  - id: AWS-0017
+    paths:
+      - logs.tf
+    statement: Log groups com a criptografia padrão do CloudWatch, com chave da AWS. Uma chave do KMS do grupo custa US$ 1 por mês e pede uma política de chave para o serviço de logs; quem lê os logs continua decidido pelo IAM.
 
   # VPC sem Flow Logs (aws_vpc.main). Cortado no plano como excesso: o log de tráfego da VPC
   # paga ingestão e armazenamento no CloudWatch, e o projeto não tem quem analise.
