@@ -1,0 +1,49 @@
+# O que NÃO entra no contexto do docker build (docker/php/Dockerfile).
+# A imagem app copia o repositório inteiro menos o que está aqui.
+
+# Git, CI, infraestrutura e documentação
+.git
+.github
+.playwright-mcp
+terraform
+load-tests
+monitoring
+docs
+*.md
+*.pdf
+
+# Os compose não precisam ir para a imagem (o de dev tem as senhas locais do MySQL)
+docker-compose*.yml
+
+# Dependências: o vendor vem do estágio vendor e o public/build do estágio assets
+vendor
+node_modules
+public/hot
+public/build
+
+# Ambiente local e credenciais (o container de produção recebe tudo por variável de ambiente)
+.env*
+auth.json
+storage/*.key
+
+# Caches do dev. O bootstrap/cache do dev lista Pail e Collision, que não existem
+# no vendor de produção (--no-dev), e derrubaria a imagem.
+bootstrap/cache/*.php
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/testing/*
+storage/framework/views/*
+storage/pail
+.phpunit.cache
+.phpunit.result.cache
+
+# As pastas do storage precisam existir na imagem: os .gitignore delas voltam
+!storage/**/.gitignore
+
+# Bancos SQLite locais
+database/*.sqlite*
+
+# Testes não rodam na imagem de produção (o CI roda a suíte direto no PHP)
+tests
+phpunit*.xml
