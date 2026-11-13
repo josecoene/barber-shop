@@ -1,0 +1,14 @@
+/*
+ * Estilos próprios das telas, além do Bootstrap. Ficam neste arquivo, e nunca em style="" no HTML,
+ * porque a Content-Security-Policy (style-src 'self') bloqueia estilo inline.
+ */
+
+/* Cartão central das telas de visitante (login, cadastro, senha) e das páginas de erro. */
+.guest-card {
+    max-width: 26rem;
+}
+
+/* Nome do usuário no menu: um nome muito longo é cortado com reticências. */
+.navbar-user {
+    max-width: 16rem;
+}

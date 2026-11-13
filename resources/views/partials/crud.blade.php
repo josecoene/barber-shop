@@ -1,5 +1,9 @@
-{{-- Tela de cadastro genérica. Parâmetros: $resource, $title, $singular, $plural, $searchLabel, $columns, $fields --}}
-<div data-crud data-resource="{{ $resource }}" data-singular="{{ $singular }}" data-plural="{{ $plural }}">
+{{--
+    Tela de cadastro genérica. Parâmetros: $resource, $title, $singular, $plural, $searchLabel, $columns, $fields
+    e $canDelete (opcional, padrão true: sem permissão, a tabela não mostra o botão Excluir; a API também recusa).
+--}}
+<div data-crud data-resource="{{ $resource }}" data-singular="{{ $singular }}" data-plural="{{ $plural }}"
+    data-can-delete="{{ ($canDelete ?? true) ? 'true' : 'false' }}">
     <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
         <h1 class="h3 mb-0">{{ $title }}</h1>
         <button type="button" class="btn btn-primary" data-action="create">Novo {{ $singular }}</button>

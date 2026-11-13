@@ -1,9 +1,23 @@
 import 'bootstrap/dist/css/bootstrap.min.css';
+import '../css/pages.css';
 import { Modal } from 'bootstrap';
 
 const JSON_HEADERS = { Accept: 'application/json', 'Content-Type': 'application/json' };
 const HTTP_NO_CONTENT = 204;
+const HTTP_UNAUTHORIZED = 401;
+const HTTP_FORBIDDEN = 403;
+/* 419: o token CSRF não vale mais (a sessão expirou ou foi encerrada em outra aba). */
+const HTTP_SESSION_EXPIRED = 419;
 const HTTP_UNPROCESSABLE = 422;
+
+const FORBIDDEN_MESSAGE = 'Você não tem permissão para esta ação.';
+const SESSION_PROBLEM_MESSAGE = 'Não foi possível confirmar o seu login. Recarregue a página ou entre de novo.';
+const API_UNREACHABLE_MESSAGE = 'Não foi possível falar com a API. Confira se ela está rodando.';
+const EXPIRED_LOGIN_URL = '/login?expirou=1';
+
+/* Quando a tela mandou para o login pela última vez (ver goToLogin). */
+const LOGIN_REDIRECT_KEY = 'barberflow:login-redirect-at';
+const LOGIN_REDIRECT_INTERVAL_MS = 10000;
 
 /* Uma consulta parada há mais tempo que isso vira erro, para a tela não ficar em "Carregando..." para sempre. */
 const LOAD_TIMEOUT_MS = 15000;
@@ -29,6 +43,8 @@ const COLUMNS = {
         { key: 'name', className: 'text-break' },
         { key: 'email', className: 'text-break' },
         { key: 'phone', empty: 'Não informado' },
+        /* Acesso: o barbeiro tem login (o admin cria ou redefine pelo campo de senha do formulário). */
+        { key: 'has_login', format: (value) => (value ? 'Sim' : 'Não') },
     ],
     clients: [
         { key: 'name', className: 'text-break' },
@@ -43,8 +59,53 @@ const COLUMNS = {
     ],
 };
 
+/* Erro da API que a tela mostra com a mensagem que veio (sem permissão, login que não vale mais). */
+class ApiError extends Error {}
+
+/* Token CSRF da sessão, que o layout das telas põe na meta csrf-token. */
+function csrfToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+}
+
+/*
+ * Leva ao login com o aviso de sessão expirada e devolve true. Se a tela já mandou para o login há
+ * poucos segundos, não manda de novo e devolve false: quem ainda tem sessão nas telas volta do login
+ * direto para cá, e se a API continuar recusando (ex.: o host não está no SANCTUM_STATEFUL_DOMAINS)
+ * as duas páginas ficariam se mandando uma para a outra sem parar.
+ */
+function goToLogin() {
+    const now = Date.now();
+    let last = 0;
+
+    try {
+        last = Number(window.sessionStorage.getItem(LOGIN_REDIRECT_KEY)) || 0;
+        window.sessionStorage.setItem(LOGIN_REDIRECT_KEY, String(now));
+    } catch {
+        /* Navegador sem sessionStorage (ex.: bloqueado): segue sem essa proteção. */
+    }
+
+    if (now - last < LOGIN_REDIRECT_INTERVAL_MS) {
+        return false;
+    }
+
+    window.location.assign(EXPIRED_LOGIN_URL);
+
+    return true;
+}
+
+/*
+ * Chamada à API com o cookie da sessão das telas. O Sanctum reconhece as telas pelo Referer (por isso o
+ * referrerPolicy) e confere o X-CSRF-TOKEN nos POST, PUT e DELETE.
+ * - 401 (sem login) e 419 (sessão expirada) levam ao login;
+ * - 403 devolve a mensagem de permissão, para a tela mostrar.
+ */
 async function apiRequest(method, url, body) {
-    const options = { method, headers: JSON_HEADERS };
+    const options = {
+        method,
+        headers: { ...JSON_HEADERS, 'X-CSRF-TOKEN': csrfToken(), 'X-Requested-With': 'XMLHttpRequest' },
+        credentials: 'same-origin',
+        referrerPolicy: 'same-origin',
+    };
 
     if (body !== undefined) {
         options.body = JSON.stringify(body);
@@ -55,6 +116,15 @@ async function apiRequest(method, url, body) {
     }
 
     const response = await fetch(url, options);
+
+    if (response.status === HTTP_UNAUTHORIZED || response.status === HTTP_SESSION_EXPIRED) {
+        if (goToLogin()) {
+            /* A página vai mudar: a promessa fica sem resposta, para a tela não piscar um erro antes de sair. */
+            return new Promise(() => {});
+        }
+
+        return { ok: false, status: response.status, data: { message: SESSION_PROBLEM_MESSAGE } };
+    }
 
     if (response.status === HTTP_NO_CONTENT) {
         return { ok: true, status: response.status, data: null };
@@ -68,12 +138,20 @@ async function apiRequest(method, url, body) {
         data = null;
     }
 
+    if (response.status === HTTP_FORBIDDEN) {
+        return { ok: false, status: response.status, data: { message: data?.message ?? FORBIDDEN_MESSAGE } };
+    }
+
     return { ok: response.ok, status: response.status, data };
 }
 
 /* As listagens da API são paginadas: devolvem { data, links, meta: { current_page, last_page, total, ... } }. */
 async function fetchPage(url) {
     const result = await apiRequest('GET', url);
+
+    if ([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN, HTTP_SESSION_EXPIRED].includes(result.status)) {
+        throw new ApiError(result.data.message);
+    }
 
     if (!result.ok || !Array.isArray(result.data?.data) || !result.data.meta) {
         throw new Error(`Falha ao carregar ${url}`);
@@ -157,6 +235,64 @@ function removeDescription(field, id) {
     }
 }
 
+/* Limpa os erros de validação mostrados no formulário e o alerta dele. */
+function clearFormErrors(form, formAlerts) {
+    formAlerts.replaceChildren();
+    form.querySelectorAll('[data-error-for]').forEach((feedback) => {
+        const field = form.elements.namedItem(feedback.dataset.errorFor);
+        feedback.textContent = '';
+
+        if (field) {
+            field.classList.remove('is-invalid');
+            field.removeAttribute('aria-invalid');
+            removeDescription(field, feedback.id);
+        }
+    });
+}
+
+/* Mostra os erros do 422 embaixo de cada campo. Erro de campo que não está na tela vai para o alerta do formulário. */
+function showFormErrors(form, formAlerts, errors) {
+    const orphanMessages = [];
+
+    Object.entries(errors).forEach(([name, messages]) => {
+        const field = form.elements.namedItem(name);
+        const feedback = form.querySelector(`[data-error-for="${name}"]`);
+
+        if (!field || !feedback) {
+            orphanMessages.push(...messages);
+
+            return;
+        }
+
+        feedback.textContent = messages.join(' ');
+        field.classList.add('is-invalid');
+        field.setAttribute('aria-invalid', 'true');
+        addDescription(field, feedback.id);
+    });
+
+    if (orphanMessages.length > 0) {
+        showAlert(formAlerts, 'danger', orphanMessages.join(' '));
+    }
+
+    form.querySelector('[aria-invalid="true"]')?.focus();
+}
+
+/*
+ * Valores do formulário para mandar à API: texto vazio vira null. Os textos perdem os espaços das pontas,
+ * menos as senhas, que vão como foram digitadas (o Laravel também não apara senha).
+ */
+function formValues(form) {
+    const data = {};
+
+    new FormData(form).forEach((value, key) => {
+        const isPassword = form.elements.namedItem(key)?.type === 'password';
+        const text = isPassword ? String(value) : String(value).trim();
+        data[key] = text === '' ? null : text;
+    });
+
+    return data;
+}
+
 function fillSelect(select, items, placeholder) {
     const empty = document.createElement('option');
     empty.value = '';
@@ -205,6 +341,8 @@ function initCrud(root) {
     const plural = root.dataset.plural;
     const endpoint = `/api/${resource}`;
     const columns = COLUMNS[resource];
+    /* Sem permissão para excluir (ex.: o barbeiro nos clientes), a tabela não mostra o botão Excluir. */
+    const canDelete = root.dataset.canDelete !== 'false';
 
     const alerts = root.querySelector('[data-alerts]');
     const rows = root.querySelector('[data-rows]');
@@ -288,10 +426,12 @@ function initCrud(root) {
 
         const group = document.createElement('div');
         group.className = 'd-flex flex-wrap gap-2 justify-content-end';
-        group.append(
-            actionButton('Editar', 'btn-outline-primary', item, openForm),
-            actionButton('Excluir', 'btn-outline-danger', item, openDelete),
-        );
+        group.append(actionButton('Editar', 'btn-outline-primary', item, openForm));
+
+        if (canDelete) {
+            group.append(actionButton('Excluir', 'btn-outline-danger', item, openDelete));
+        }
+
         cell.append(group);
 
         return cell;
@@ -368,14 +508,23 @@ function initCrud(root) {
             render(page);
             loadErrorAlert?.remove();
             loadErrorAlert = null;
-        } catch {
+        } catch (error) {
             if (loadNumber !== loadCount) {
                 return;
             }
 
             rows.replaceChildren(messageRow(colspan, 'Não foi possível carregar a lista.'));
             pageStatus.textContent = 'Não foi possível carregar a lista.';
-            const retry = showRetryAlert(alerts, 'Não foi possível falar com a API. Confira se ela está rodando.', () => {
+
+            /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
+            if (error instanceof ApiError) {
+                showAlert(alerts, 'danger', error.message);
+                loadErrorAlert = alerts.querySelector('.alert');
+
+                return;
+            }
+
+            const retry = showRetryAlert(alerts, API_UNREACHABLE_MESSAGE, () => {
                 alerts.replaceChildren();
                 load();
             });
@@ -412,49 +561,9 @@ function initCrud(root) {
         }, SEARCH_DEBOUNCE_MS);
     }
 
-    function clearErrors() {
-        formAlerts.replaceChildren();
-        form.querySelectorAll('[data-error-for]').forEach((feedback) => {
-            const field = form.elements.namedItem(feedback.dataset.errorFor);
-            feedback.textContent = '';
-
-            if (field) {
-                field.classList.remove('is-invalid');
-                field.removeAttribute('aria-invalid');
-                removeDescription(field, feedback.id);
-            }
-        });
-    }
-
-    function showErrors(errors) {
-        const orphanMessages = [];
-
-        Object.entries(errors).forEach(([name, messages]) => {
-            const field = form.elements.namedItem(name);
-            const feedback = form.querySelector(`[data-error-for="${name}"]`);
-
-            if (!field || !feedback) {
-                orphanMessages.push(...messages);
-
-                return;
-            }
-
-            feedback.textContent = messages.join(' ');
-            field.classList.add('is-invalid');
-            field.setAttribute('aria-invalid', 'true');
-            addDescription(field, feedback.id);
-        });
-
-        if (orphanMessages.length > 0) {
-            showAlert(formAlerts, 'danger', orphanMessages.join(' '));
-        }
-
-        form.querySelector('[aria-invalid="true"]')?.focus();
-    }
-
     function openForm(item) {
         form.reset();
-        clearErrors();
+        clearFormErrors(form, formAlerts);
         editingId = item ? item.id : null;
         formTitle.textContent = item ? `Editar ${singular}` : `Novo ${singular}`;
 
@@ -469,30 +578,19 @@ function initCrud(root) {
         formModal.show();
     }
 
-    function formData() {
-        const data = {};
-
-        new FormData(form).forEach((value, key) => {
-            const text = String(value).trim();
-            data[key] = text === '' ? null : text;
-        });
-
-        return data;
-    }
-
     async function save(event) {
         event.preventDefault();
-        clearErrors();
+        clearFormErrors(form, formAlerts);
         submitButton.disabled = true;
 
         const method = editingId ? 'PUT' : 'POST';
         const url = editingId ? `${endpoint}/${editingId}` : endpoint;
 
         try {
-            const result = await apiRequest(method, url, formData());
+            const result = await apiRequest(method, url, formValues(form));
 
             if (result.status === HTTP_UNPROCESSABLE && result.data?.errors) {
-                showErrors(result.data.errors);
+                showFormErrors(form, formAlerts, result.data.errors);
 
                 return;
             }
@@ -619,10 +717,10 @@ function initSchedule(root) {
             render(barbers);
             loadingStatus.textContent = 'Agenda carregada.';
         })
-        .catch(() => {
+        .catch((error) => {
             loadingStatus.textContent = '';
             body.replaceChildren(messageRow(1, 'Não foi possível carregar os barbeiros.'));
-            showAlert(alerts, 'danger', 'Não foi possível falar com a API. Confira se ela está rodando.');
+            showAlert(alerts, 'danger', error instanceof ApiError ? error.message : API_UNREACHABLE_MESSAGE);
         })
         .finally(() => table.removeAttribute('aria-busy'));
 }
@@ -713,10 +811,17 @@ function initBooking(root) {
             if (retrying) {
                 clientSelect.focus();
             }
-        } catch {
+        } catch (error) {
             services = [];
             lists.forEach((select) => fillSelect(select, [], 'Não foi possível carregar'));
             loadingStatus.textContent = '';
+
+            /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
+            if (error instanceof ApiError) {
+                showAlert(alerts, 'danger', error.message);
+
+                return;
+            }
 
             const retry = showRetryAlert(alerts, 'Não foi possível carregar clientes, barbeiros e serviços.', () =>
                 loadLists({ retrying: true }),
@@ -752,24 +857,46 @@ function initBooking(root) {
     loadLists();
 }
 
-/* Login: só visual. O Sanctum ainda não está ativado na API. */
-function initLogin(root) {
-    const form = root.querySelector('[data-login-form]');
+/*
+ * Minha conta: troca da senha pela API (PUT /api/user/password, que confere a senha atual). Os outros
+ * aparelhos conectados à conta saem; esta sessão continua.
+ */
+function initPasswordChange(root) {
+    const form = root.querySelector('[data-password-form]');
     const alerts = root.querySelector('[data-alerts]');
+    const submitButton = root.querySelector('[data-submit]');
 
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        form.classList.add('was-validated');
+        clearFormErrors(form, alerts);
+        submitButton.disabled = true;
 
-        if (!form.checkValidity()) {
-            return;
+        try {
+            const result = await apiRequest('PUT', '/api/user/password', formValues(form));
+
+            if (result.status === HTTP_UNPROCESSABLE && result.data?.errors) {
+                showFormErrors(form, alerts, result.data.errors);
+
+                return;
+            }
+
+            if (!result.ok) {
+                showAlert(alerts, 'danger', result.data?.message ?? 'Não foi possível trocar a senha. Tente de novo.');
+
+                return;
+            }
+
+            form.reset();
+            showAlert(alerts, 'success', 'Senha trocada. Quem estava conectado à sua conta em outro aparelho vai precisar entrar de novo.');
+        } catch {
+            showAlert(alerts, 'danger', API_UNREACHABLE_MESSAGE);
+        } finally {
+            submitButton.disabled = false;
         }
-
-        showAlert(alerts, 'warning', 'O login ainda não está disponível: a API não tem autenticação ativada.');
     });
 }
 
 document.querySelectorAll('[data-crud]').forEach(initCrud);
 document.querySelectorAll('[data-schedule]').forEach(initSchedule);
 document.querySelectorAll('[data-booking]').forEach(initBooking);
-document.querySelectorAll('[data-login]').forEach(initLogin);
+document.querySelectorAll('[data-password-change]').forEach(initPasswordChange);
