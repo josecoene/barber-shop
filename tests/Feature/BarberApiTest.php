@@ -2,14 +2,30 @@
 
 namespace Tests\Feature;
 
+use App\Enums\UserRole;
 use App\Models\Barber;
+use App\Models\Client;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class BarberApiTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * O CRUD é testado como admin, que pode tudo. As regras dos outros perfis
+     * ficam no AuthorizationTest.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->actingAsAdmin();
+    }
 
     private function payload(array $overrides = []): array
     {
@@ -329,5 +345,179 @@ class BarberApiTest extends TestCase
         $this->getJson('/api/barbers/999')
             ->assertNotFound()
             ->assertExactJson(['message' => 'Registro não encontrado.']);
+    }
+
+    public function test_barber_created_without_password_has_no_login(): void
+    {
+        $this->postJson('/api/barbers', $this->payload())
+            ->assertCreated()
+            ->assertJsonPath('has_login', false)
+            ->assertJsonMissingPath('user_id')
+            ->assertJsonMissingPath('user');
+
+        $this->assertDatabaseMissing('users', ['email' => 'joao@barberflow.com']);
+    }
+
+    public function test_password_on_create_gives_the_barber_a_login(): void
+    {
+        // O login não sai na resposta: nem o user_id, nem a relação user (com o id e o perfil do login).
+        $response = $this->postJson('/api/barbers', $this->payload(['password' => 'senha-do-joao']))
+            ->assertCreated()
+            ->assertJsonPath('has_login', true)
+            ->assertJsonMissingPath('user_id')
+            ->assertJsonMissingPath('user')
+            ->assertJsonMissingPath('password');
+
+        $user = Barber::findOrFail($response->json('id'))->user;
+
+        $this->assertSame(UserRole::Barber, $user->role);
+        $this->assertSame('João Barbeiro', $user->name);
+        $this->assertSame('joao@barberflow.com', $user->email);
+        $this->assertNotNull($user->email_verified_at);
+
+        $this->postJson('/api/login', ['email' => 'joao@barberflow.com', 'password' => 'senha-do-joao'])
+            ->assertOk()
+            ->assertJsonPath('user.id', $user->id)
+            ->assertJsonPath('user.role', 'barber');
+    }
+
+    public function test_rejects_a_short_password_and_an_email_that_is_already_a_login(): void
+    {
+        $this->postJson('/api/barbers', $this->payload(['password' => 'curta']))
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.password.0', 'O campo senha deve ter pelo menos 8 caracteres.');
+
+        $client = $this->makeClientUser();
+
+        $this->postJson('/api/barbers', $this->payload(['email' => $client->email]))
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.email.0', 'Este e-mail já está cadastrado.');
+
+        $this->assertSame(0, Barber::count());
+    }
+
+    /**
+     * O Laravel não apara senha e trata texto só de espaços como vazio, sem rodar o mínimo de
+     * 8 caracteres nele: a senha "        " virava a senha do login.
+     */
+    public function test_rejects_a_password_made_only_of_spaces(): void
+    {
+        $this->postJson('/api/barbers', $this->payload(['password' => str_repeat(' ', 8)]))
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.password.0', 'O campo senha não pode ter só espaços.');
+
+        $this->assertSame(0, Barber::count());
+        $this->assertDatabaseMissing('users', ['email' => 'joao@barberflow.com']);
+
+        // Sem senha (null, como a tela manda o campo vazio) continua valendo: o barbeiro fica sem login.
+        $this->postJson('/api/barbers', $this->payload(['password' => null]))
+            ->assertCreated()
+            ->assertJsonPath('has_login', false);
+    }
+
+    public function test_password_of_spaces_on_update_returns_422_even_when_the_email_is_already_a_login(): void
+    {
+        $barber = Barber::create($this->payload());
+        // Outra pessoa já entra com o e-mail que está no cadastro do barbeiro.
+        $this->makeClientUser(Client::create(['name' => 'Cliente', 'email' => 'joao@barberflow.com']));
+
+        // Antes, o filled() via a senha de espaços como vazia: o e-mail não passava pelo unique de users
+        // e o banco recusava o login repetido com erro 500.
+        $this->putJson("/api/barbers/{$barber->id}", ['password' => "\t".str_repeat(' ', 8)])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['email', 'password'])
+            ->assertJsonPath('errors.password.0', 'O campo senha não pode ter só espaços.');
+
+        $this->assertNull($barber->fresh()->user_id);
+    }
+
+    public function test_password_on_update_creates_the_login_of_a_barber_without_one(): void
+    {
+        $barber = Barber::create($this->payload());
+
+        $this->putJson("/api/barbers/{$barber->id}", ['password' => 'senha-do-joao'])
+            ->assertOk()
+            ->assertJsonPath('has_login', true)
+            ->assertJsonMissingPath('user');
+
+        $this->assertSame('joao@barberflow.com', $barber->fresh()->user->email);
+    }
+
+    public function test_password_without_email_on_update_needs_the_current_email_to_be_free(): void
+    {
+        $barber = Barber::create($this->payload());
+        // Outra pessoa já entra com o e-mail que está no cadastro do barbeiro.
+        $this->makeClientUser(Client::create(['name' => 'Cliente', 'email' => 'joao@barberflow.com']));
+
+        $this->putJson("/api/barbers/{$barber->id}", ['password' => 'senha-do-joao'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['email']);
+
+        $this->assertNull($barber->fresh()->user_id);
+    }
+
+    public function test_admin_resets_the_barber_password_and_the_old_logins_end(): void
+    {
+        $barber = Barber::create($this->payload());
+        $user = $this->makeBarberUser($barber);
+        $user->createToken('celular');
+
+        $this->putJson("/api/barbers/{$barber->id}", ['password' => 'senha-nova-123'])
+            ->assertOk()
+            ->assertJsonPath('has_login', true)
+            ->assertJsonMissingPath('user');
+
+        $this->assertTrue(Hash::check('senha-nova-123', $user->fresh()->password));
+        $this->assertSame(0, $user->tokens()->count());
+
+        $this->postJson('/api/login', ['email' => $barber->email, 'password' => self::PASSWORD])
+            ->assertUnprocessable();
+
+        $this->postJson('/api/login', ['email' => $barber->email, 'password' => 'senha-nova-123'])
+            ->assertOk();
+    }
+
+    public function test_name_and_email_changes_reach_the_login(): void
+    {
+        $barber = Barber::create($this->payload());
+        $user = $this->makeBarberUser($barber);
+        $password = $user->password;
+
+        // A resposta tem o mesmo formato do GET: sem o login que o syncLogin carregou.
+        $this->patchJson("/api/barbers/{$barber->id}", ['name' => 'João Novo', 'email' => 'joao.novo@barberflow.com'])
+            ->assertOk()
+            ->assertJsonPath('has_login', true)
+            ->assertJsonMissingPath('user_id')
+            ->assertJsonMissingPath('user');
+
+        $user->refresh();
+        $this->assertSame('João Novo', $user->name);
+        $this->assertSame('joao.novo@barberflow.com', $user->email);
+        $this->assertSame($password, $user->password);
+    }
+
+    public function test_deleting_a_barber_deletes_the_login_its_tokens_and_sessions(): void
+    {
+        $barber = Barber::create($this->payload());
+        $user = $this->makeBarberUser($barber);
+        $token = $user->createToken('celular')->plainTextToken;
+        DB::table('sessions')->insert([
+            'id' => 'sessao-do-barbeiro',
+            'user_id' => $user->id,
+            'payload' => '',
+            'last_activity' => now()->timestamp,
+        ]);
+
+        $this->deleteJson("/api/barbers/{$barber->id}")->assertNoContent();
+
+        $this->assertModelMissing($user);
+        $this->assertDatabaseMissing('personal_access_tokens', ['tokenable_id' => $user->id]);
+        $this->assertDatabaseMissing('sessions', ['user_id' => $user->id]);
+        $this->assertSoftDeleted('barbers', ['id' => $barber->id, 'user_id' => null, 'name' => 'João Barbeiro']);
+
+        // O token que o barbeiro tinha não abre mais a API.
+        $this->app['auth']->forgetGuards();
+        $this->getJson('/api/user', ['Authorization' => "Bearer {$token}"])->assertUnauthorized();
+        $this->assertSame(1, User::count());
     }
 }

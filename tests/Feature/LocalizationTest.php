@@ -24,6 +24,8 @@ class LocalizationTest extends TestCase
 
     public function test_pagination_links_are_in_portuguese(): void
     {
+        $this->actingAsAdmin();
+
         $this->getJson('/api/services')
             ->assertOk()
             ->assertJsonPath('meta.links.0.label', '&laquo; Anterior')

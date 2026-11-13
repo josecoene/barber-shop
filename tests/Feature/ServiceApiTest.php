@@ -11,6 +11,17 @@ class ServiceApiTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * O CRUD é testado como admin, que pode tudo. As regras dos outros perfis
+     * ficam no AuthorizationTest.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->actingAsAdmin();
+    }
+
     private function payload(array $overrides = []): array
     {
         return array_merge([

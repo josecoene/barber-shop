@@ -5,15 +5,23 @@ namespace App\Http\Controllers;
 use App\Models\Service;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\Gate;
 
+/**
+ * Permissões na ServicePolicy: o admin faz tudo, o barbeiro só vê e o cliente vê
+ * só os serviços ativos.
+ */
 class ServiceController extends Controller
 {
     /**
      * Lista paginada e em ordem de nome. Filtros opcionais: ?search= (nome),
      * ?status=active|inactive, ?per_page= (1 a 100, padrão 15) e ?page= (1 a 100000).
+     * Para o cliente, o status fica sempre active.
      */
     public function index(Request $request)
     {
+        Gate::authorize('viewAny', Service::class);
+
         // O teto do page evita que a conta do offset ((page - 1) * per_page) estoure o inteiro e vire erro 500.
         $filters = $request->validate([
             'page' => 'nullable|integer|min:1|max:100000',
@@ -23,7 +31,7 @@ class ServiceController extends Controller
         ]);
 
         $search = $filters['search'] ?? null;
-        $status = $filters['status'] ?? null;
+        $status = Gate::allows('viewInactive', Service::class) ? ($filters['status'] ?? null) : 'active';
 
         // JsonResource::collection() devolve a página como data, links e meta, sem precisar de classe própria.
         return JsonResource::collection(
@@ -39,6 +47,8 @@ class ServiceController extends Controller
 
     public function store(Request $request)
     {
+        Gate::authorize('create', Service::class);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'duration' => 'required|integer|min:5|max:480', // duração em minutos
@@ -49,13 +59,20 @@ class ServiceController extends Controller
         return response()->json(Service::create($validated), 201);
     }
 
+    /**
+     * Serviço inativo dá 404 para o cliente, como um id que não existe.
+     */
     public function show(Service $service)
     {
+        Gate::authorize('view', $service);
+
         return $service;
     }
 
     public function update(Request $request, Service $service)
     {
+        Gate::authorize('update', $service);
+
         $validated = $request->validate([
             'name' => 'sometimes|required|string|max:255',
             'duration' => 'sometimes|required|integer|min:5|max:480',
@@ -73,6 +90,8 @@ class ServiceController extends Controller
      */
     public function destroy(Service $service)
     {
+        Gate::authorize('delete', $service);
+
         $service->delete();
 
         return response()->noContent();

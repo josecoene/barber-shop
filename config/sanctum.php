@@ -48,9 +48,12 @@ return [
     | considered expired. This will override any values set in the token's
     | "expires_at" attribute, but first-party sessions are not affected.
     |
+    | BarberFlow: o token da API vale SANCTUM_EXPIRATION minutos (padrão 480,
+    | um expediente). O login das telas usa sessão e não depende deste valor.
+    |
     */
 
-    'expiration' => null,
+    'expiration' => (int) (env('SANCTUM_EXPIRATION') ?: 480),
 
     /*
     |--------------------------------------------------------------------------
@@ -65,7 +68,7 @@ return [
     |
     */
 
-    'token_prefix' => env('SANCTUM_TOKEN_PREFIX', ''),
+    'token_prefix' => env('SANCTUM_TOKEN_PREFIX') ?: 'barberflow_',
 
     /*
     |--------------------------------------------------------------------------

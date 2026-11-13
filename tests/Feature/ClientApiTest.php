@@ -4,12 +4,24 @@ namespace Tests\Feature;
 
 use App\Models\Client;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ClientApiTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * O CRUD é testado como admin, que pode tudo. As regras dos outros perfis
+     * ficam no AuthorizationTest.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->actingAsAdmin();
+    }
 
     private function payload(array $overrides = []): array
     {
@@ -325,5 +337,46 @@ class ClientApiTest extends TestCase
         $this->getJson('/api/clients/999')
             ->assertNotFound()
             ->assertExactJson(['message' => 'Registro não encontrado.']);
+    }
+
+    public function test_shows_whether_the_client_has_an_account_without_the_user_id(): void
+    {
+        $withAccount = Client::create($this->payload());
+        $this->makeClientUser($withAccount);
+        $withoutAccount = Client::create($this->payload(['name' => 'Ana', 'email' => 'ana@example.com']));
+
+        $this->getJson("/api/clients/{$withAccount->id}")
+            ->assertOk()
+            ->assertJsonPath('has_login', true)
+            ->assertJsonMissingPath('user_id');
+
+        $this->getJson("/api/clients/{$withoutAccount->id}")
+            ->assertOk()
+            ->assertJsonPath('has_login', false);
+    }
+
+    public function test_deleting_a_client_deletes_the_account_its_tokens_and_sessions(): void
+    {
+        $client = Client::create($this->payload());
+        $user = $this->makeClientUser($client);
+        $token = $user->createToken('celular')->plainTextToken;
+        DB::table('sessions')->insert([
+            'id' => 'sessao-do-cliente',
+            'user_id' => $user->id,
+            'payload' => '',
+            'last_activity' => now()->timestamp,
+        ]);
+
+        $this->deleteJson("/api/clients/{$client->id}")->assertNoContent();
+
+        $this->assertModelMissing($user);
+        $this->assertDatabaseMissing('personal_access_tokens', ['tokenable_id' => $user->id]);
+        $this->assertDatabaseMissing('sessions', ['user_id' => $user->id]);
+        $this->assertSoftDeleted('clients', ['id' => $client->id, 'user_id' => null, 'name' => 'Cliente removido']);
+
+        // O e-mail fica livre para uma conta nova, e o token antigo não abre mais a API.
+        $this->assertDatabaseMissing('users', ['email' => 'carlos@example.com']);
+        $this->app['auth']->forgetGuards();
+        $this->getJson('/api/user', ['Authorization' => "Bearer {$token}"])->assertUnauthorized();
     }
 }

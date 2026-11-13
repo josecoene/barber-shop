@@ -3,11 +3,20 @@
 namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Session\TokenMismatchException;
+use Illuminate\Support\Facades\Route;
 use Tests\TestCase;
 
 class ApiErrorsTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->actingAsAdmin();
+    }
 
     public function test_unknown_record_returns_404_without_the_model_name(): void
     {
@@ -56,9 +65,42 @@ class ApiErrorsTest extends TestCase
 
     public function test_unknown_page_outside_the_api_keeps_the_html_error_page(): void
     {
+        // A página de erro usa o layout das telas, com o @vite: o teste não depende do npm run build.
+        $this->withoutVite();
+
         $response = $this->get('/pagina-que-nao-existe')->assertNotFound();
 
         $this->assertStringStartsWith('text/html', $response->headers->get('Content-Type'));
         $response->assertSee('Página não encontrada');
+    }
+
+    public function test_expired_session_returns_419_in_portuguese(): void
+    {
+        // Nos testes o Laravel não confere o CSRF. A rota de teste lança o mesmo erro que ele
+        // lançaria com o token da sessão vencido.
+        Route::middleware('api')->post('/api/teste-sessao-vencida', fn () => throw new TokenMismatchException('CSRF token mismatch.'));
+
+        $this->postJson('/api/teste-sessao-vencida')
+            ->assertStatus(419)
+            ->assertExactJson(['message' => 'Sua sessão expirou. Recarregue a página.']);
+    }
+
+    public function test_unconfirmed_email_message_is_in_portuguese(): void
+    {
+        // Os cadastros da API usam o verified: a conta de cliente sem o e-mail confirmado não passa.
+        $this->actingAsClient(verified: false);
+
+        $this->getJson('/api/services')
+            ->assertForbidden()
+            ->assertExactJson(['message' => 'Confirme seu e-mail para continuar.']);
+
+        // Sem o cabeçalho Accept também sai JSON, porque a rota é da API.
+        $this->get('/api/services')
+            ->assertForbidden()
+            ->assertExactJson(['message' => 'Confirme seu e-mail para continuar.']);
+
+        $this->actingAsClient();
+
+        $this->getJson('/api/services')->assertOk();
     }
 }

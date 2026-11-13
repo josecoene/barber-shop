@@ -122,6 +122,8 @@ return [
     'missing_with_all' => 'O campo :attribute não deve ser enviado quando :values estiverem presentes.',
     'multiple_of' => 'O campo :attribute deve ser um múltiplo de :value.',
     'not_in' => 'O valor escolhido no campo :attribute é inválido.',
+    // Regra própria do BarberFlow (App\Rules\NotOnlySpaces).
+    'not_only_spaces' => 'O campo :attribute não pode ter só espaços.',
     'not_regex' => 'O formato do campo :attribute é inválido.',
     'numeric' => 'O campo :attribute deve ser um número.',
     'password' => [
@@ -183,6 +185,8 @@ return [
         'email' => [
             'unique' => 'Este e-mail já está cadastrado.',
             'not_regex' => 'O domínio barberflow.invalid é reservado para cadastros excluídos. Use outro e-mail.',
+            // O cliente editando o próprio cadastro (ClientController::update).
+            'missing' => 'O campo e-mail não é permitido.',
         ],
         // Mesmo máximo do ServiceController (decimal 8,2). Se um mudar, mude o outro.
         'price' => [
@@ -206,6 +210,10 @@ return [
         'duration' => 'duração',
         'price' => 'preço',
         'password' => 'senha',
+        'password_confirmation' => 'confirmação da senha',
+        'current_password' => 'senha atual',
+        'device_name' => 'nome do dispositivo',
+        'token' => 'código do link',
         'client_id' => 'cliente',
         'barber_id' => 'barbeiro',
         'service_id' => 'serviço',
