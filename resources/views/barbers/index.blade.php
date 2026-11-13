@@ -7,6 +7,8 @@
         'resource' => 'barbers',
         'title' => 'Barbeiros',
         'singular' => 'barbeiro',
+        'plural' => 'barbeiros',
+        'searchLabel' => 'Buscar por nome ou e-mail',
         'columns' => ['Nome', 'E-mail', 'Telefone'],
         'fields' => 'partials.person-fields',
     ])

@@ -18,6 +18,7 @@
         </div>
 
         <div data-alerts></div>
+        <p class="visually-hidden" role="status" aria-live="polite" data-loading-status></p>
 
         <div class="card shadow-sm">
             <div class="table-responsive">

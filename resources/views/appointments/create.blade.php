@@ -11,6 +11,7 @@
         </div>
 
         <div data-alerts></div>
+        <p class="visually-hidden" role="status" aria-live="polite" data-loading-status></p>
 
         <div class="row g-4">
             <div class="col-lg-8">

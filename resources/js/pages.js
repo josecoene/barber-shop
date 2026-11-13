@@ -5,6 +5,12 @@ const JSON_HEADERS = { Accept: 'application/json', 'Content-Type': 'application/
 const HTTP_NO_CONTENT = 204;
 const HTTP_UNPROCESSABLE = 422;
 
+/* Uma consulta parada há mais tempo que isso vira erro, para a tela não ficar em "Carregando..." para sempre. */
+const LOAD_TIMEOUT_MS = 15000;
+const SEARCH_DEBOUNCE_MS = 300;
+/* Maior página que a API aceita: as listas do Agendar e da Agenda carregam até esse número de itens. */
+const MAX_PER_PAGE = 100;
+
 const OPENING_HOUR = 9;
 const CLOSING_HOUR = 19;
 const SLOT_MINUTES = 30;
@@ -17,13 +23,20 @@ const STATUS_LABELS = {
     inactive: { text: 'Inativo', badge: 'text-bg-secondary' },
 };
 
-const showPhone = (value) => value || '—';
-
+/* text-break deixa nome e e-mail longos quebrarem linha, para a tabela caber no celular. */
 const COLUMNS = {
-    barbers: [{ key: 'name' }, { key: 'email' }, { key: 'phone', format: showPhone }],
-    clients: [{ key: 'name' }, { key: 'email' }, { key: 'phone', format: showPhone }],
+    barbers: [
+        { key: 'name', className: 'text-break' },
+        { key: 'email', className: 'text-break' },
+        { key: 'phone', empty: 'Não informado' },
+    ],
+    clients: [
+        { key: 'name', className: 'text-break' },
+        { key: 'email', className: 'text-break' },
+        { key: 'phone', empty: 'Não informado' },
+    ],
     services: [
-        { key: 'name' },
+        { key: 'name', className: 'text-break' },
         { key: 'duration', format: (value) => `${value} min` },
         { key: 'price', format: (value) => currency.format(Number(value)) },
         { key: 'status', badge: true },
@@ -35,6 +48,10 @@ async function apiRequest(method, url, body) {
 
     if (body !== undefined) {
         options.body = JSON.stringify(body);
+    }
+
+    if (method === 'GET') {
+        options.signal = AbortSignal.timeout(LOAD_TIMEOUT_MS);
     }
 
     const response = await fetch(url, options);
@@ -54,14 +71,22 @@ async function apiRequest(method, url, body) {
     return { ok: response.ok, status: response.status, data };
 }
 
-async function fetchList(url) {
+/* As listagens da API são paginadas: devolvem { data, links, meta: { current_page, last_page, total, ... } }. */
+async function fetchPage(url) {
     const result = await apiRequest('GET', url);
 
-    if (!result.ok) {
+    if (!result.ok || !Array.isArray(result.data?.data) || !result.data.meta) {
         throw new Error(`Falha ao carregar ${url}`);
     }
 
     return result.data;
+}
+
+/* Só os itens da primeira página. Quem chama pede per_page=100 para trazer o máximo que a API deixa. */
+async function fetchItems(url) {
+    const page = await fetchPage(url);
+
+    return page.data;
 }
 
 function showAlert(container, type, message) {
@@ -80,6 +105,27 @@ function showAlert(container, type, message) {
     container.replaceChildren(alert);
 }
 
+/* Alerta de erro com o botão "Tentar de novo". Devolve o botão, para quem chama poder dar foco nele. */
+function showRetryAlert(container, message, onRetry) {
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-danger d-flex flex-wrap gap-2 justify-content-between align-items-center';
+    alert.setAttribute('role', 'alert');
+
+    const text = document.createElement('span');
+    text.textContent = message;
+
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn-sm btn-danger';
+    retry.textContent = 'Tentar de novo';
+    retry.addEventListener('click', onRetry);
+
+    alert.append(text, retry);
+    container.replaceChildren(alert);
+
+    return retry;
+}
+
 function messageRow(colspan, text) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
@@ -93,6 +139,22 @@ function messageRow(colspan, text) {
 
 function capitalize(text) {
     return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/* aria-describedby guarda vários ids separados por espaço: o do erro entra na frente da dica do campo. */
+function addDescription(field, id) {
+    const ids = (field.getAttribute('aria-describedby') ?? '').split(' ').filter((token) => token && token !== id);
+    field.setAttribute('aria-describedby', [id, ...ids].join(' '));
+}
+
+function removeDescription(field, id) {
+    const ids = (field.getAttribute('aria-describedby') ?? '').split(' ').filter((token) => token && token !== id);
+
+    if (ids.length > 0) {
+        field.setAttribute('aria-describedby', ids.join(' '));
+    } else {
+        field.removeAttribute('aria-describedby');
+    }
 }
 
 function fillSelect(select, items, placeholder) {
@@ -140,12 +202,19 @@ function today() {
 function initCrud(root) {
     const resource = root.dataset.resource;
     const singular = root.dataset.singular;
+    const plural = root.dataset.plural;
     const endpoint = `/api/${resource}`;
     const columns = COLUMNS[resource];
 
     const alerts = root.querySelector('[data-alerts]');
     const rows = root.querySelector('[data-rows]');
+    const table = rows.closest('table');
     const colspan = root.querySelectorAll('thead th').length;
+
+    const searchInput = root.querySelector('[data-search]');
+    const pageStatus = root.querySelector('[data-page-status]');
+    const previousButton = root.querySelector('[data-page-previous]');
+    const nextButton = root.querySelector('[data-page-next]');
 
     const formModalElement = root.querySelector('[data-form-modal]');
     const formModal = new Modal(formModalElement);
@@ -160,10 +229,22 @@ function initCrud(root) {
 
     let editingId = null;
     let deletingItem = null;
+    let currentPage = 1;
+    let lastPage = 1;
+    let search = '';
+    let searchTimer = null;
+    /* Conta as cargas: se o usuário digita ou troca de página rápido, só a resposta da última é desenhada. */
+    let loadCount = 0;
+    /* Alerta de "não foi possível carregar": sai assim que uma carga seguinte der certo. */
+    let loadErrorAlert = null;
 
     function renderCell(item, column) {
         const cell = document.createElement('td');
         const value = item[column.key];
+
+        if (column.className) {
+            cell.className = column.className;
+        }
 
         if (column.badge) {
             const status = STATUS_LABELS[value] ?? { text: value, badge: 'text-bg-light' };
@@ -175,40 +256,78 @@ function initCrud(root) {
             return cell;
         }
 
+        if (column.empty && (value === null || value === '')) {
+            const empty = document.createElement('span');
+            empty.className = 'text-body-secondary';
+            empty.textContent = column.empty;
+            cell.append(empty);
+
+            return cell;
+        }
+
         cell.textContent = column.format ? column.format(value) : value;
 
         return cell;
     }
 
+    function actionButton(label, className, item, onClick) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `btn btn-sm ${className}`;
+        button.textContent = label;
+        button.setAttribute('aria-label', `${label} ${item.name}`);
+        button.addEventListener('click', () => onClick(item));
+
+        return button;
+    }
+
+    /* Os botões ficam num flex-wrap: no celular, "Excluir" desce para baixo de "Editar" em vez de alargar a tabela. */
     function renderActions(item) {
         const cell = document.createElement('td');
-        cell.className = 'text-end text-nowrap';
+        cell.className = 'text-end';
 
-        const edit = document.createElement('button');
-        edit.type = 'button';
-        edit.className = 'btn btn-sm btn-outline-primary me-2';
-        edit.textContent = 'Editar';
-        edit.addEventListener('click', () => openForm(item));
-
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'btn btn-sm btn-outline-danger';
-        remove.textContent = 'Excluir';
-        remove.addEventListener('click', () => openDelete(item));
-
-        cell.append(edit, remove);
+        const group = document.createElement('div');
+        group.className = 'd-flex flex-wrap gap-2 justify-content-end';
+        group.append(
+            actionButton('Editar', 'btn-outline-primary', item, openForm),
+            actionButton('Excluir', 'btn-outline-danger', item, openDelete),
+        );
+        cell.append(group);
 
         return cell;
     }
 
-    function render(items) {
-        if (items.length === 0) {
-            rows.replaceChildren(messageRow(colspan, `Nenhum ${singular} cadastrado ainda.`));
+    function updatePager(meta) {
+        const total = `${meta.total} ${meta.total === 1 ? singular : plural}`;
+        pageStatus.textContent = `Página ${meta.current_page} de ${meta.last_page} (${total})`;
+
+        /* Botão desabilitado perde o foco: se o foco estava num deles, passa para o outro. */
+        const focused = document.activeElement;
+        previousButton.disabled = meta.current_page <= 1;
+        nextButton.disabled = meta.current_page >= meta.last_page;
+
+        if (focused === nextButton && nextButton.disabled && !previousButton.disabled) {
+            previousButton.focus();
+        } else if (focused === previousButton && previousButton.disabled && !nextButton.disabled) {
+            nextButton.focus();
+        }
+    }
+
+    function render(page) {
+        currentPage = page.meta.current_page;
+        lastPage = page.meta.last_page;
+        updatePager(page.meta);
+
+        if (page.data.length === 0) {
+            const message = search
+                ? `Nenhum ${singular} encontrado para "${search}".`
+                : `Nenhum ${singular} cadastrado ainda.`;
+            rows.replaceChildren(messageRow(colspan, message));
 
             return;
         }
 
-        const lines = items.map((item) => {
+        const lines = page.data.map((item) => {
             const row = document.createElement('tr');
             columns.forEach((column) => row.append(renderCell(item, column)));
             row.append(renderActions(item));
@@ -220,37 +339,117 @@ function initCrud(root) {
     }
 
     async function load() {
+        const loadNumber = ++loadCount;
+        const params = new URLSearchParams({ page: String(currentPage) });
+
+        if (search) {
+            params.set('search', search);
+        }
+
         rows.replaceChildren(messageRow(colspan, 'Carregando...'));
+        pageStatus.textContent = 'Carregando...';
+        table.setAttribute('aria-busy', 'true');
 
         try {
-            render(await fetchList(endpoint));
+            const page = await fetchPage(`${endpoint}?${params}`);
+
+            if (loadNumber !== loadCount) {
+                return;
+            }
+
+            /* A página pedida não existe mais (ex.: excluiu o último item dela): volta para a última que existe. */
+            if (page.data.length === 0 && page.meta.current_page > page.meta.last_page) {
+                currentPage = page.meta.last_page;
+                await load();
+
+                return;
+            }
+
+            render(page);
+            loadErrorAlert?.remove();
+            loadErrorAlert = null;
         } catch {
+            if (loadNumber !== loadCount) {
+                return;
+            }
+
             rows.replaceChildren(messageRow(colspan, 'Não foi possível carregar a lista.'));
-            showAlert(alerts, 'danger', 'Não foi possível falar com a API. Confira se ela está rodando.');
+            pageStatus.textContent = 'Não foi possível carregar a lista.';
+            const retry = showRetryAlert(alerts, 'Não foi possível falar com a API. Confira se ela está rodando.', () => {
+                alerts.replaceChildren();
+                load();
+            });
+            loadErrorAlert = retry.closest('.alert');
+        } finally {
+            if (loadNumber === loadCount) {
+                table.removeAttribute('aria-busy');
+            }
         }
+    }
+
+    function goToPage(page) {
+        if (page < 1 || page > lastPage || page === currentPage) {
+            return;
+        }
+
+        currentPage = page;
+        load();
+    }
+
+    function onSearch() {
+        clearTimeout(searchTimer);
+
+        searchTimer = setTimeout(() => {
+            const term = searchInput.value.trim();
+
+            if (term === search) {
+                return;
+            }
+
+            search = term;
+            currentPage = 1;
+            load();
+        }, SEARCH_DEBOUNCE_MS);
     }
 
     function clearErrors() {
         formAlerts.replaceChildren();
-        form.querySelectorAll('.is-invalid').forEach((field) => field.classList.remove('is-invalid'));
         form.querySelectorAll('[data-error-for]').forEach((feedback) => {
+            const field = form.elements.namedItem(feedback.dataset.errorFor);
             feedback.textContent = '';
+
+            if (field) {
+                field.classList.remove('is-invalid');
+                field.removeAttribute('aria-invalid');
+                removeDescription(field, feedback.id);
+            }
         });
     }
 
     function showErrors(errors) {
-        Object.entries(errors).forEach(([field, messages]) => {
-            const input = form.elements.namedItem(field);
-            const feedback = form.querySelector(`[data-error-for="${field}"]`);
+        const orphanMessages = [];
 
-            if (input) {
-                input.classList.add('is-invalid');
+        Object.entries(errors).forEach(([name, messages]) => {
+            const field = form.elements.namedItem(name);
+            const feedback = form.querySelector(`[data-error-for="${name}"]`);
+
+            if (!field || !feedback) {
+                orphanMessages.push(...messages);
+
+                return;
             }
 
-            if (feedback) {
-                feedback.textContent = messages.join(' ');
-            }
+            feedback.textContent = messages.join(' ');
+            field.classList.add('is-invalid');
+            field.setAttribute('aria-invalid', 'true');
+            addDescription(field, feedback.id);
         });
+
+        if (orphanMessages.length > 0) {
+            showAlert(formAlerts, 'danger', orphanMessages.join(' '));
+        }
+
+        form.querySelector('[aria-invalid="true"]')?.focus();
     }
 
     function openForm(item) {
@@ -299,7 +498,7 @@ function initCrud(root) {
             }
 
             if (!result.ok) {
-                showAlert(formAlerts, 'danger', 'Não foi possível salvar. Tente de novo.');
+                showAlert(formAlerts, 'danger', result.data?.message ?? 'Não foi possível salvar. Tente de novo.');
 
                 return;
             }
@@ -329,7 +528,7 @@ function initCrud(root) {
             deleteModal.hide();
 
             if (!result.ok) {
-                showAlert(alerts, 'danger', 'Não foi possível excluir.');
+                showAlert(alerts, 'danger', result.data?.message ?? 'Não foi possível excluir.');
 
                 return;
             }
@@ -345,6 +544,9 @@ function initCrud(root) {
     }
 
     root.querySelector('[data-action="create"]').addEventListener('click', () => openForm(null));
+    searchInput.addEventListener('input', onSearch);
+    previousButton.addEventListener('click', () => goToPage(currentPage - 1));
+    nextButton.addEventListener('click', () => goToPage(currentPage + 1));
     form.addEventListener('submit', save);
     confirmDeleteButton.addEventListener('click', confirmDelete);
     formModalElement.addEventListener('shown.bs.modal', () => form.querySelector('input')?.focus());
@@ -357,7 +559,9 @@ function initSchedule(root) {
     const dateInput = root.querySelector('[data-date]');
     const head = root.querySelector('[data-schedule-head]');
     const body = root.querySelector('[data-schedule-body]');
+    const table = body.closest('table');
     const alerts = root.querySelector('[data-alerts]');
+    const loadingStatus = root.querySelector('[data-loading-status]');
 
     dateInput.value = today();
 
@@ -406,24 +610,35 @@ function initSchedule(root) {
         body.replaceChildren(...lines);
     }
 
-    fetchList('/api/barbers')
-        .then(render)
+    /* O status escondido (aria-live) avisa o leitor de tela que a agenda está carregando e quando terminou. */
+    loadingStatus.textContent = 'Carregando a agenda...';
+    table.setAttribute('aria-busy', 'true');
+
+    fetchItems(`/api/barbers?per_page=${MAX_PER_PAGE}`)
+        .then((barbers) => {
+            render(barbers);
+            loadingStatus.textContent = 'Agenda carregada.';
+        })
         .catch(() => {
+            loadingStatus.textContent = '';
             body.replaceChildren(messageRow(1, 'Não foi possível carregar os barbeiros.'));
             showAlert(alerts, 'danger', 'Não foi possível falar com a API. Confira se ela está rodando.');
-        });
+        })
+        .finally(() => table.removeAttribute('aria-busy'));
 }
 
 /* Agendamento online: só visual. Os selects usam dados reais, mas nada é salvo. */
 function initBooking(root) {
     const form = root.querySelector('[data-booking-form]');
     const alerts = root.querySelector('[data-alerts]');
+    const loadingStatus = root.querySelector('[data-loading-status]');
     const clientSelect = form.elements.namedItem('client_id');
     const barberSelect = form.elements.namedItem('barber_id');
     const serviceSelect = form.elements.namedItem('service_id');
     const dateInput = form.elements.namedItem('date');
     const timeSelect = form.elements.namedItem('start_time');
     const summary = root.querySelector('[data-summary]');
+    const lists = [clientSelect, barberSelect, serviceSelect];
 
     let services = [];
 
@@ -475,16 +690,46 @@ function initBooking(root) {
         summary.replaceChildren(...lines);
     }
 
-    Promise.all([fetchList('/api/clients'), fetchList('/api/barbers'), fetchList('/api/services')])
-        .then(([clients, barbers, allServices]) => {
-            services = allServices.filter((service) => service.status === 'active');
+    /* Carrega até 100 clientes, barbeiros e serviços ativos. Se falhar, mostra o erro com "Tentar de novo". */
+    async function loadLists({ retrying = false } = {}) {
+        alerts.replaceChildren();
+        lists.forEach((select) => fillSelect(select, [], 'Carregando...'));
+        loadingStatus.textContent = 'Carregando clientes, barbeiros e serviços...';
+        form.setAttribute('aria-busy', 'true');
+
+        try {
+            const [clients, barbers, activeServices] = await Promise.all([
+                fetchItems(`/api/clients?per_page=${MAX_PER_PAGE}`),
+                fetchItems(`/api/barbers?per_page=${MAX_PER_PAGE}`),
+                fetchItems(`/api/services?status=active&per_page=${MAX_PER_PAGE}`),
+            ]);
+
+            services = activeServices;
             fillSelect(clientSelect, clients, 'Escolha o cliente');
             fillSelect(barberSelect, barbers, 'Escolha o barbeiro');
             fillSelect(serviceSelect, services, 'Escolha o serviço');
-        })
-        .catch(() => {
-            showAlert(alerts, 'danger', 'Não foi possível carregar clientes, barbeiros e serviços.');
-        });
+            loadingStatus.textContent = 'Clientes, barbeiros e serviços carregados.';
+
+            if (retrying) {
+                clientSelect.focus();
+            }
+        } catch {
+            services = [];
+            lists.forEach((select) => fillSelect(select, [], 'Não foi possível carregar'));
+            loadingStatus.textContent = '';
+
+            const retry = showRetryAlert(alerts, 'Não foi possível carregar clientes, barbeiros e serviços.', () =>
+                loadLists({ retrying: true }),
+            );
+
+            if (retrying) {
+                retry.focus();
+            }
+        } finally {
+            form.removeAttribute('aria-busy');
+            updateSummary();
+        }
+    }
 
     serviceSelect.addEventListener('change', updateSummary);
     timeSelect.addEventListener('change', updateSummary);
@@ -504,7 +749,7 @@ function initBooking(root) {
         );
     });
 
-    updateSummary();
+    loadLists();
 }
 
 /* Login: só visual. O Sanctum ainda não está ativado na API. */

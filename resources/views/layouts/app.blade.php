@@ -17,6 +17,8 @@
         ];
     @endphp
 
+    <a class="visually-hidden-focusable btn btn-light position-absolute top-0 start-0 m-2 z-3" href="#conteudo">Pular para o conteúdo</a>
+
     <nav class="navbar navbar-expand-lg bg-dark" data-bs-theme="dark">
         <div class="container">
             <a class="navbar-brand fw-semibold" href="{{ route('appointments.index') }}">BarberFlow</a>
@@ -39,7 +41,7 @@
         </div>
     </nav>
 
-    <main class="container py-4">
+    <main class="container py-4" id="conteudo" tabindex="-1">
         @yield('content')
     </main>
 </body>

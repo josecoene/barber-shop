@@ -1,5 +1,5 @@
-{{-- Tela de cadastro genérica. Parâmetros: $resource, $title, $singular, $columns, $fields --}}
-<div data-crud data-resource="{{ $resource }}" data-singular="{{ $singular }}">
+{{-- Tela de cadastro genérica. Parâmetros: $resource, $title, $singular, $plural, $searchLabel, $columns, $fields --}}
+<div data-crud data-resource="{{ $resource }}" data-singular="{{ $singular }}" data-plural="{{ $plural }}">
     <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
         <h1 class="h3 mb-0">{{ $title }}</h1>
         <button type="button" class="btn btn-primary" data-action="create">Novo {{ $singular }}</button>
@@ -7,9 +7,19 @@
 
     <div data-alerts></div>
 
+    <div class="row mb-3">
+        <div class="col-sm-8 col-lg-5">
+            <label for="{{ $resource }}-search" class="form-label">{{ $searchLabel }}</label>
+            <input type="search" class="form-control" id="{{ $resource }}-search" maxlength="100" autocomplete="off"
+                aria-controls="{{ $resource }}-table" data-search>
+        </div>
+    </div>
+
     <div class="card shadow-sm">
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
+            {{-- aria-label em vez de <caption> escondido: o caption ocupa 1px e cria uma barra de rolagem na .table-responsive --}}
+            <table class="table table-hover align-middle mb-0" id="{{ $resource }}-table"
+                aria-label="{{ $title }} cadastrados, em ordem de nome" aria-describedby="{{ $resource }}-page-status">
                 <thead class="table-light">
                     <tr>
                         @foreach ($columns as $column)
@@ -25,6 +35,14 @@
                 </tbody>
             </table>
         </div>
+
+        <nav class="card-footer d-flex flex-wrap gap-2 justify-content-between align-items-center" aria-label="Páginas de {{ mb_strtolower($title) }}">
+            <p class="mb-0 small text-body-secondary" id="{{ $resource }}-page-status" role="status" aria-live="polite" data-page-status>Carregando...</p>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-page-previous disabled>Anterior</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-page-next disabled>Próxima</button>
+            </div>
+        </nav>
     </div>
 
     <div class="modal fade" tabindex="-1" aria-labelledby="{{ $resource }}-form-title" aria-hidden="true" data-form-modal>
@@ -36,6 +54,7 @@
                 </div>
                 <div class="modal-body">
                     <div data-form-alerts></div>
+                    <p class="small text-body-secondary">Campos com <span class="text-danger">*</span> são obrigatórios.</p>
                     @include($fields)
                 </div>
                 <div class="modal-footer">
