@@ -1,13 +1,83 @@
 {
   "info": {
     "name": "BarberFlow API",
-    "description": "Coleção de requisições da API do BarberFlow. Defina a variável baseUrl (padrão http://localhost:8000/api). As listagens são paginadas: page e per_page vêm ligados, e search e status de exemplo vêm desligados na aba Params.",
+    "description": "Coleção de requisições da API do BarberFlow.\n\n1. Nas variáveis da coleção, confira baseUrl (padrão http://localhost:8000/api) e preencha loginEmail e loginPassword. No local, o usuário de teste é test@example.com, e a senha dele está em database/seeders/DatabaseSeeder.php.\n2. Rode Autenticação > Login: o teste guarda o token na variável token.\n3. A coleção manda Authorization: Bearer {{token}} em todos os requests. Login, cadastro de conta, esqueci a senha, redefinição e health vão sem token.\n4. Os requests de criar guardam o id em serviceId, clientId e barberId, que os de mostrar, atualizar e remover usam.\n5. O Logout (pasta Sair) apaga o token: rode por último.\n\nAs listagens são paginadas: page e per_page vêm ligados, e search e status de exemplo vêm desligados na aba Params.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
   },
   "variable": [
     {
       "key": "baseUrl",
       "value": "http://localhost:8000/api"
+    },
+    {
+      "key": "loginEmail",
+      "value": "test@example.com",
+      "description": "E-mail do login. No local, o usuário de teste com perfil admin."
+    },
+    {
+      "key": "loginPassword",
+      "value": "",
+      "description": "Senha do login. A do usuário de teste está em database/seeders/DatabaseSeeder.php."
+    },
+    {
+      "key": "token",
+      "value": "",
+      "description": "Preenchido pelo request Login e apagado pelo Logout."
+    },
+    {
+      "key": "serviceId",
+      "value": "",
+      "description": "Preenchido pelo Criar (services)."
+    },
+    {
+      "key": "clientId",
+      "value": "",
+      "description": "Preenchido pelo Criar (clients)."
+    },
+    {
+      "key": "barberId",
+      "value": "",
+      "description": "Preenchido pelo Criar (barbers)."
+    },
+    {
+      "key": "barberPassword",
+      "value": "",
+      "description": "Opcional: com uma senha de 8 caracteres ou mais, o Criar (barbers) dá login ao barbeiro."
+    },
+    {
+      "key": "clientPassword",
+      "value": "",
+      "description": "Senha da conta criada em Conta de cliente > Criar conta (mínimo 8 caracteres)."
+    },
+    {
+      "key": "currentPassword",
+      "value": "",
+      "description": "Senha atual, para Trocar a senha."
+    },
+    {
+      "key": "newPassword",
+      "value": "",
+      "description": "Senha nova, para Trocar a senha e Redefinir a senha (mínimo 8 caracteres)."
+    },
+    {
+      "key": "resetEmail",
+      "value": "",
+      "description": "E-mail que recebeu o link de redefinição."
+    },
+    {
+      "key": "resetToken",
+      "value": "",
+      "description": "Token do link de redefinição (/reset-password/{token}?email=...)."
     }
   ],
   "item": [
@@ -16,11 +86,29 @@
       "item": [
         {
           "name": "Saúde da aplicação",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Banco e cache no ar', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
               {
                 "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
                 "value": "application/json"
               }
             ],
@@ -33,16 +121,184 @@
                 "health"
               ]
             },
-            "description": "200 com {\"status\":\"ok\"} quando banco e cache respondem; 503 com o que falhou (\"falhou\") quando não. Fica fora do limite de requisições da API."
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "200 com {\"status\":\"ok\"} quando banco e cache respondem; 503 com o que falhou (\"falhou\") quando não. É aberta e fica fora do limite de requisições da API."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Autenticação",
+      "description": "Rode o Login primeiro. O Logout fica na pasta Sair, no fim da coleção.",
+      "item": [
+        {
+          "name": "Login (guarda o token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login devolve o token e guarda na coleção', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.token).to.be.a('string');",
+                  "    pm.expect(body.token_type).to.eql('Bearer');",
+                  "    pm.collectionVariables.set('token', body.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{loginEmail}}\",\n  \"password\": \"{{loginPassword}}\",\n  \"device_name\": \"postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Devolve um token Bearer que vale 480 minutos (SANCTUM_EXPIRATION) e guarda na variável token. E-mail ou senha errados dão 422; 5 recusas no mesmo minuto bloqueiam o login (429, com o cabeçalho Retry-After dizendo em quantos segundos libera)."
+          }
+        },
+        {
+          "name": "Usuário logado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra o usuário com o perfil', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().role).to.be.oneOf(['admin', 'barber', 'client']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user"
+              ]
+            },
+            "description": "Usuário do token, com o perfil (role) e o cadastro ligado (barber_id ou client_id)."
+          }
+        },
+        {
+          "name": "Trocar a senha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Senha trocada', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "password"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"{{currentPassword}}\",\n  \"password\": \"{{newPassword}}\",\n  \"password_confirmation\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Preencha currentPassword e newPassword nas variáveis (vazias, a resposta é 422 e nada muda). Os outros tokens da conta param de valer; o desta chamada continua. Não troque a senha do usuário de teste."
           }
         }
       ]
     },
     {
       "name": "Services",
+      "description": "Rode o \"Criar (services)\" antes dos outros: ele guarda o id criado em serviceId.",
       "item": [
         {
           "name": "Listar services",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista services paginada', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -93,6 +349,20 @@
         },
         {
           "name": "Criar (services)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria serviço e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('serviceId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -116,18 +386,31 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Corte de cabelo\",\n  \"duration\": 30,\n  \"price\": 40.0\n}",
+              "raw": "{\n  \"name\": \"Corte de cabelo\",\n  \"duration\": 30,\n  \"price\": 40\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "status é opcional: sem ele, o serviço nasce active. duration de 5 a 480 minutos e price de 0 a 999999.99."
+            "description": "Só o admin. status é opcional: sem ele, o serviço nasce active. duration de 5 a 480 minutos e price de 0 a 999999.99."
           }
         },
         {
           "name": "Mostrar (services)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra serviço', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -141,19 +424,32 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/services/1",
+              "raw": "{{baseUrl}}/services/{{serviceId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "services",
-                "1"
+                "{{serviceId}}"
               ]
             }
           }
         },
         {
           "name": "Atualizar parcialmente (services)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Atualiza serviço', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "PATCH",
             "header": [
@@ -167,18 +463,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/services/1",
+              "raw": "{{baseUrl}}/services/{{serviceId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "services",
-                "1"
+                "{{serviceId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"price\": 45.0\n}",
+              "raw": "{\n  \"price\": 45\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -189,6 +485,19 @@
         },
         {
           "name": "Remover (services)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remove serviço', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "DELETE",
             "header": [
@@ -202,25 +511,40 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/services/1",
+              "raw": "{{baseUrl}}/services/{{serviceId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "services",
-                "1"
+                "{{serviceId}}"
               ]
             },
-            "description": "Exclusão lógica: o serviço sai das listas, mas a linha continua no banco."
+            "description": "Só o admin. Exclusão lógica: o serviço sai das listas, mas a linha continua no banco."
           }
         }
       ]
     },
     {
       "name": "Clients",
+      "description": "Rode o \"Criar (clients)\" antes dos outros: ele guarda o id criado em clientId.",
       "item": [
         {
           "name": "Listar clients",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista clients paginada', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -265,6 +589,20 @@
         },
         {
           "name": "Criar (clients)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria cliente e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('clientId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -294,11 +632,25 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Admin e barbeiro. A resposta traz has_login (true quando o cliente tem conta)."
           }
         },
         {
           "name": "Mostrar (clients)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra cliente', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -312,19 +664,32 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/clients/1",
+              "raw": "{{baseUrl}}/clients/{{clientId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "clients",
-                "1"
+                "{{clientId}}"
               ]
             }
           }
         },
         {
           "name": "Atualizar parcialmente (clients)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Atualiza cliente', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "PATCH",
             "header": [
@@ -338,13 +703,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/clients/1",
+              "raw": "{{baseUrl}}/clients/{{clientId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "clients",
-                "1"
+                "{{clientId}}"
               ]
             },
             "body": {
@@ -360,6 +725,19 @@
         },
         {
           "name": "Remover (clients)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remove cliente', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "DELETE",
             "header": [
@@ -373,25 +751,40 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/clients/1",
+              "raw": "{{baseUrl}}/clients/{{clientId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "clients",
-                "1"
+                "{{clientId}}"
               ]
             },
-            "description": "Exclusão lógica com anonimização (LGPD): nome vira \"Cliente removido\", e-mail vira removido+{id}@barberflow.invalid e o telefone fica vazio."
+            "description": "Só o admin. Exclusão lógica com anonimização (LGPD): nome vira \"Cliente removido\", e-mail vira removido+{id}@barberflow.invalid e o telefone fica vazio. A conta do cliente, se existir, é apagada."
           }
         }
       ]
     },
     {
       "name": "Barbers",
+      "description": "Rode o \"Criar (barbers)\" antes dos outros: ele guarda o id criado em barberId.",
       "item": [
         {
           "name": "Listar barbers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista barbers paginada', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -436,6 +829,20 @@
         },
         {
           "name": "Criar (barbers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria barbeiro e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('barberId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -459,17 +866,31 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"João Barbeiro\",\n  \"email\": \"joao@barberflow.com\",\n  \"phone\": \"67988880000\"\n}",
+              "raw": "{\n  \"name\": \"João Barbeiro\",\n  \"email\": \"joao@barberflow.com\",\n  \"phone\": \"67988880000\",\n  \"password\": \"{{barberPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Só o admin. password é opcional (mínimo 8 caracteres, sem ser só de espaços): com ele, o barbeiro ganha login com o e-mail do cadastro (has_login: true). Com a variável barberPassword vazia, o barbeiro fica sem login."
           }
         },
         {
           "name": "Mostrar (barbers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra barbeiro', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -483,19 +904,32 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/barbers/1",
+              "raw": "{{baseUrl}}/barbers/{{barberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "barbers",
-                "1"
+                "{{barberId}}"
               ]
             }
           }
         },
         {
           "name": "Atualizar parcialmente (barbers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Atualiza barbeiro', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "PATCH",
             "header": [
@@ -509,13 +943,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/barbers/1",
+              "raw": "{{baseUrl}}/barbers/{{barberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "barbers",
-                "1"
+                "{{barberId}}"
               ]
             },
             "body": {
@@ -531,6 +965,19 @@
         },
         {
           "name": "Remover (barbers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remove barbeiro', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "DELETE",
             "header": [
@@ -544,16 +991,260 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/barbers/1",
+              "raw": "{{baseUrl}}/barbers/{{barberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "barbers",
-                "1"
+                "{{barberId}}"
               ]
             },
-            "description": "Exclusão lógica: mantém o nome, troca o e-mail por removido+{id}@barberflow.invalid (liberando o original) e apaga o telefone."
+            "description": "Só o admin. Exclusão lógica: mantém o nome, troca o e-mail por removido+{id}@barberflow.invalid (liberando o original), apaga o telefone e apaga o login do barbeiro."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Conta de cliente",
+      "description": "Cadastro de conta pelo próprio cliente, confirmação do e-mail e \"esqueci minha senha\".",
+      "item": [
+        {
+          "name": "Criar conta de cliente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Conta criada', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "register"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cliente Postman\",\n  \"email\": \"cliente.postman@example.com\",\n  \"phone\": \"67999990000\",\n  \"password\": \"{{clientPassword}}\",\n  \"password_confirmation\": \"{{clientPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cria a conta com perfil client e manda o link de confirmação por e-mail (no local, ele aparece no storage/logs/laravel.log). Preencha clientPassword antes. O e-mail não pode ter conta. Até confirmar o e-mail, a conta só usa as rotas da própria conta (usuário logado, troca de senha, reenvio do link e logout): services, clients e barbers respondem 403."
+          }
+        },
+        {
+          "name": "Reenviar confirmação do e-mail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pedido de reenvio respondido', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 202]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/email/verification-notification",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "email",
+                "verification-notification"
+              ]
+            },
+            "description": "Com o token da conta: 202 quando reenvia o link, 200 quando o e-mail já está confirmado."
+          }
+        },
+        {
+          "name": "Esqueci minha senha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pedido de link aceito', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/forgot-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "forgot-password"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{loginEmail}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Manda o link de redefinição. A resposta é sempre a mesma, com e-mail cadastrado ou não. Até 5 pedidos por minuto por e-mail e IP."
+          }
+        },
+        {
+          "name": "Redefinir a senha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Senha redefinida', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reset-password"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"email\": \"{{resetEmail}}\",\n  \"password\": \"{{newPassword}}\",\n  \"password_confirmation\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Preencha resetToken e resetEmail com os dados do link do e-mail (/reset-password/{token}?email=...) e newPassword. Encerra todos os logins da conta. Conta de cliente que ainda não tinha confirmado o e-mail perde o nome e o telefone digitados no cadastro (o nome vira a parte do e-mail antes do @). Token inválido ou vencido dá 422."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sair",
+      "item": [
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Token apagado', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "    pm.collectionVariables.set('token', '');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logout"
+              ]
+            },
+            "description": "Apaga o token usado na chamada (os outros tokens da conta continuam valendo) e limpa a variável token."
           }
         }
       ]
