@@ -1,0 +1,60 @@
+# Alertas do trivy config aceitos de propósito, cada um preso ao arquivo do recurso (paths)
+# e com o motivo (statement). O mesmo problema num recurso de outro arquivo continua sendo
+# acusado: um RDS novo sem criptografia num arquivo novo falha, mesmo com o AWS-0080 aqui.
+# Rode na pasta terraform/ com --ignorefile .trivyignore.yaml (docs/nuvem/TERRAFORM.md).
+# Os paths são relativos à pasta analisada.
+# Quando o motivo deixar de valer, apague o item junto com a correção.
+
+misconfigurations:
+  # EC2 solta da Sprint 1 (aws_instance.barbershop_server). A feat/infra-computacao troca
+  # essa EC2 pelo Auto Scaling, com IMDSv2 obrigatório e disco criptografado no launch
+  # template, e apaga estes dois itens.
+  - id: AWS-0028
+    paths:
+      - main.tf
+    statement: A EC2 solta do main.tf não exige IMDSv2. Sai na feat/infra-computacao.
+  - id: AWS-0131
+    paths:
+      - main.tf
+    statement: Disco da EC2 solta do main.tf sem criptografia. Sai na feat/infra-computacao.
+
+  # RDS da Sprint 1 (aws_db_instance.barbershop_db). Fica como está nesta branch: a decisão
+  # do Leonam de 13/11 mantém o recurso e a senha da linha 23. A feat/infra-dados-seguranca
+  # liga backup de 7 dias, criptografia e proteção contra exclusão e apaga os itens do que corrigir.
+  - id: AWS-0077
+    paths:
+      - main.tf
+    statement: Retenção de backup do RDS no padrão de 1 dia. A feat/infra-dados-seguranca liga 7 dias.
+  - id: AWS-0080
+    paths:
+      - main.tf
+    statement: RDS sem criptografia. A feat/infra-dados-seguranca liga.
+  - id: AWS-0177
+    paths:
+      - main.tf
+    statement: RDS sem proteção contra exclusão. A feat/infra-dados-seguranca liga.
+  - id: AWS-0176
+    paths:
+      - main.tf
+    statement: Login no RDS por IAM desligado; a aplicação entra com usuário e senha. A feat/infra-dados-seguranca decide se o item fica e escreve o motivo.
+  - id: AWS-0133
+    paths:
+      - main.tf
+    statement: Performance Insights desligado no RDS. A feat/infra-dados-seguranca decide se o item fica e escreve o motivo.
+
+  # VPC sem Flow Logs (aws_vpc.main). Cortado no plano como excesso: o log de tráfego da VPC
+  # paga ingestão e armazenamento no CloudWatch, e o projeto não tem quem analise.
+  - id: AWS-0178
+    paths:
+      - network.tf
+    statement: VPC sem Flow Logs, cortados no plano como excesso. Ligue se precisar investigar tráfego bloqueado.
+
+  # Bucket do state (aws_s3_bucket.state e a criptografia dele).
+  - id: AWS-0132
+    paths:
+      - bootstrap/main.tf
+    statement: Bucket do state com SSE-S3, e não com uma chave do KMS do grupo, que custa US$ 1 por mês e teria de entrar no backend.hcl (kms_key_id). O bucket é privado, só aceita HTTPS e só quem tem acesso à conta lê o state.
+  - id: AWS-0089
+    paths:
+      - bootstrap/main.tf
+    statement: Bucket do state sem log de acesso, que pediria um segundo bucket só para os logs. O versionamento guarda cada versão do state, e o CloudTrail registra quem mudou a configuração do bucket.

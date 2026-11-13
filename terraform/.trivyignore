@@ -1,0 +1,5 @@
+# Vazio de propósito. A lista de alertas aceitos está no .trivyignore.yaml, em que cada
+# alerta vale só no arquivo do recurso (paths). Rode o trivy com --ignorefile .trivyignore.yaml
+# (docs/nuvem/TERRAFORM.md, seção Trivy).
+# Não escreva IDs aqui: o trivy lê este arquivo quando o --ignorefile fica de fora, e um ID
+# nele vale para o projeto todo, inclusive para um recurso novo com a mesma falha.
