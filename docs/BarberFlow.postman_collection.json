@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "BarberFlow API",
-    "description": "Coleção de requisições da API do BarberFlow.\n\n1. Nas variáveis da coleção, confira baseUrl (padrão http://localhost:8000/api) e preencha loginEmail e loginPassword. No local, o usuário de teste é test@example.com, e a senha dele está em database/seeders/DatabaseSeeder.php.\n2. Rode Autenticação > Login: o teste guarda o token na variável token.\n3. A coleção manda Authorization: Bearer {{token}} em todos os requests. Login, cadastro de conta, esqueci a senha, redefinição e health vão sem token.\n4. Os requests de criar guardam o id em serviceId, clientId e barberId, que os de mostrar, atualizar e remover usam.\n5. O Logout (pasta Sair) apaga o token: rode por último.\n\nAs listagens são paginadas: page e per_page vêm ligados, e search e status de exemplo vêm desligados na aba Params.",
+    "description": "Coleção de requisições da API do BarberFlow.\n\n1. Nas variáveis da coleção, confira baseUrl (padrão http://localhost:8000/api) e preencha loginEmail e loginPassword. No local, o usuário de teste é test@example.com, e a senha dele está em database/seeders/DatabaseSeeder.php.\n2. Rode Autenticação > Login: o teste guarda o token na variável token.\n3. A coleção manda Authorization: Bearer {{token}} em todos os requests. Login, cadastro de conta, esqueci a senha, redefinição e health vão sem token.\n4. Os requests de criar guardam o id em serviceId, clientId e barberId, que os de mostrar, atualizar e remover usam.\n5. A pasta Agendamentos cria o próprio cliente, barbeiro e serviço e roda na ordem: Preparar, Horários livres, Criar, Listar, Mostrar, Remarcar, Mudar status e a exclusão que dá 409.\n6. O Logout (pasta Sair) apaga o token: rode por último.\n\nAs listagens são paginadas: page e per_page vêm ligados, e search e status de exemplo vêm desligados na aba Params.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -78,6 +78,41 @@
       "key": "resetToken",
       "value": "",
       "description": "Token do link de redefinição (/reset-password/{token}?email=...)."
+    },
+    {
+      "key": "appointmentClientId",
+      "value": "",
+      "description": "Preenchido pelo Preparar cliente (agendamentos)."
+    },
+    {
+      "key": "appointmentBarberId",
+      "value": "",
+      "description": "Preenchido pelo Preparar barbeiro (agendamentos)."
+    },
+    {
+      "key": "appointmentServiceId",
+      "value": "",
+      "description": "Preenchido pelo Preparar serviço (agendamentos)."
+    },
+    {
+      "key": "appointmentDate",
+      "value": "",
+      "description": "Dia do agendamento (Y-m-d). Vazio, o Horários livres escolhe o próximo dia de segunda a sábado."
+    },
+    {
+      "key": "appointmentTime",
+      "value": "",
+      "description": "Primeiro horário livre, preenchido pelo Horários livres."
+    },
+    {
+      "key": "appointmentNewTime",
+      "value": "",
+      "description": "Último horário livre, preenchido pelo Horários livres e usado no Remarcar."
+    },
+    {
+      "key": "appointmentId",
+      "value": "",
+      "description": "Preenchido pelo Criar (appointments)."
     }
   ],
   "item": [
@@ -1001,6 +1036,569 @@
               ]
             },
             "description": "Só o admin. Exclusão lógica: mantém o nome, troca o e-mail por removido+{id}@barberflow.invalid (liberando o original), apaga o telefone e apaga o login do barbeiro."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agendamentos",
+      "description": "Cria o próprio cliente, barbeiro e serviço (os \"Preparar\"), para não depender dos que as outras pastas excluem. Rode na ordem: os três \"Preparar\", Horários livres (escolhe o próximo dia de segunda a sábado e guarda o primeiro e o último horário livre), Criar (guarda appointmentId), Listar, Mostrar, Remarcar, Mudar status e, por último, a exclusão que dá 409. Com outro BUSINESS_DAYS no servidor, preencha appointmentDate com um dia de expediente.",
+      "item": [
+        {
+          "name": "Preparar cliente (agendamentos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria o cliente da agenda e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('appointmentClientId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cliente da Agenda\",\n  \"email\": \"cliente.agenda.{{$timestamp}}@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin ou barbeiro. Cliente só para esta pasta: o id vai para appointmentClientId."
+          }
+        },
+        {
+          "name": "Preparar barbeiro (agendamentos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria o barbeiro da agenda e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('appointmentBarberId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/barbers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "barbers"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Barbeiro da Agenda\",\n  \"email\": \"barbeiro.agenda.{{$timestamp}}@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Só o admin. Barbeiro sem login, só para esta pasta: o id vai para appointmentBarberId."
+          }
+        },
+        {
+          "name": "Preparar serviço (agendamentos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria o serviço da agenda e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('appointmentServiceId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/services",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "services"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Corte da Agenda\",\n  \"duration\": 30,\n  \"price\": 35\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Só o admin. Serviço ativo de 30 minutos, só para esta pasta: o id vai para appointmentServiceId."
+          }
+        },
+        {
+          "name": "Horários livres",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Próximo dia de segunda a sábado (o expediente padrão), a partir de amanhã. Uma data já preenchida",
+                  "// em appointmentDate fica, se ainda não passou.",
+                  "const pad = (value) => String(value).padStart(2, '0');",
+                  "const format = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;",
+                  "const day = new Date();",
+                  "day.setDate(day.getDate() + 1);",
+                  "const current = pm.collectionVariables.get('appointmentDate');",
+                  "if (!current || current < format(day)) {",
+                  "    while (day.getDay() === 0) {",
+                  "        day.setDate(day.getDate() + 1);",
+                  "    }",
+                  "    pm.collectionVariables.set('appointmentDate', format(day));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista os horários livres e guarda o primeiro e o último', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const slots = pm.response.json().data;",
+                  "    pm.expect(slots).to.be.an('array').that.is.not.empty;",
+                  "    pm.collectionVariables.set('appointmentTime', slots[0]);",
+                  "    pm.collectionVariables.set('appointmentNewTime', slots[slots.length - 1]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/barbers/{{appointmentBarberId}}/available-slots?date={{appointmentDate}}&service_id={{appointmentServiceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "barbers",
+                "{{appointmentBarberId}}",
+                "available-slots"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{appointmentDate}}",
+                  "description": "Dia (Y-m-d). O script antes do request escolhe o próximo dia de segunda a sábado."
+                },
+                {
+                  "key": "service_id",
+                  "value": "{{appointmentServiceId}}",
+                  "description": "Serviço ativo: a duração dele decide quais inícios cabem."
+                },
+                {
+                  "key": "appointment_id",
+                  "value": "{{appointmentId}}",
+                  "description": "Ao remarcar: o horário deste agendamento conta como livre. Só admin e o barbeiro dele.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Todos os perfis. Inícios livres (H:i) do barbeiro no dia para a duração do serviço, em {\"data\": [...]}. Dia que já passou ou sem expediente devolve a lista vazia."
+          }
+        },
+        {
+          "name": "Criar (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria o agendamento e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    const appointment = pm.response.json();",
+                  "    pm.expect(appointment.status).to.eql('scheduled');",
+                  "    pm.expect(appointment.start_time).to.eql(pm.collectionVariables.get('appointmentTime') + ':00');",
+                  "    pm.expect(appointment.end_time).to.be.a('string');",
+                  "    pm.collectionVariables.set('appointmentId', appointment.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": {{appointmentClientId}},\n  \"barber_id\": {{appointmentBarberId}},\n  \"service_id\": {{appointmentServiceId}},\n  \"date\": \"{{appointmentDate}}\",\n  \"start_time\": \"{{appointmentTime}}\",\n  \"notes\": \"Agendado pelo Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin para qualquer cliente; barbeiro só na própria agenda (sem barber_id, vale o dele); cliente só para si (sem client_id, vale o dele). O servidor calcula end_time, copia o price do serviço e começa com status scheduled."
+          }
+        },
+        {
+          "name": "Listar (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista os agendamentos do dia com o criado', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const ids = pm.response.json().data.map((item) => item.id);",
+                  "    pm.expect(ids).to.include(Number(pm.collectionVariables.get('appointmentId')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments?date={{appointmentDate}}&barber_id={{appointmentBarberId}}&page=1&per_page=15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{appointmentDate}}",
+                  "description": "Só os desse dia (Y-m-d)."
+                },
+                {
+                  "key": "barber_id",
+                  "value": "{{appointmentBarberId}}",
+                  "description": "Só os desse barbeiro."
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "from",
+                  "value": "2026-11-01",
+                  "description": "Início do período (Y-m-d).",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "2026-11-30",
+                  "description": "Fim do período (Y-m-d), igual ou depois de from.",
+                  "disabled": true
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{appointmentClientId}}",
+                  "description": "Só os desse cliente.",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "scheduled",
+                  "description": "scheduled, confirmed, in_progress, completed, cancelled ou no_show.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Lista paginada em ordem de data e horário. O barbeiro vê só a agenda dele e o cliente só os próprios, seja qual for o filtro."
+          }
+        },
+        {
+          "name": "Mostrar (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra o agendamento', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const appointment = pm.response.json();",
+                  "    pm.expect(appointment.id).to.eql(Number(pm.collectionVariables.get('appointmentId')));",
+                  "    pm.expect(appointment.client).to.have.all.keys('id', 'name');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}"
+              ]
+            },
+            "description": "Cliente, barbeiro e serviço vêm só com id e name."
+          }
+        },
+        {
+          "name": "Remarcar (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remarca para o último horário livre', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().start_time).to.eql(pm.collectionVariables.get('appointmentNewTime') + ':00');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start_time\": \"{{appointmentNewTime}}\",\n  \"notes\": \"Remarcado pelo Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin ou o barbeiro do agendamento, só com status scheduled ou confirmed. Aceita date, start_time, barber_id, service_id e notes; client_id e status são ignorados."
+          }
+        },
+        {
+          "name": "Mudar status (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Confirma o agendamento', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "    pm.expect(pm.response.json().status_label).to.eql('Confirmado');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "status"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"confirmed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Transições: scheduled vai para confirmed, in_progress, cancelled ou no_show; confirmed para in_progress, cancelled ou no_show; in_progress para completed. in_progress, completed e no_show só depois do horário de início. O cliente só cancela, até CLIENT_CANCEL_MIN_HOURS horas antes."
+          }
+        },
+        {
+          "name": "Excluir cliente com horário marcado (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa a exclusão com 409', function () {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().message).to.include('agendamentos futuros');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients/{{appointmentClientId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients",
+                "{{appointmentClientId}}"
+              ]
+            },
+            "description": "Só o admin. Cliente, barbeiro ou serviço com agendamento de hoje em diante ainda ativo não é excluído: 409, e nada muda."
           }
         }
       ]

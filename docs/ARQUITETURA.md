@@ -40,7 +40,7 @@ Controller                → confere a permissão (Gate::authorize + Policy) e 
 Model (Eloquent)          → lê/grava no MySQL (sem as linhas excluídas)
         │
         ▼
-Resposta JSON             → 200, 201, 204, 401, 403, 404, 405, 422, 429 ou 503
+Resposta JSON             → 200, 201, 204, 401, 403, 404, 405, 409, 422, 429 ou 503
 ```
 
 Padrões adotados:
@@ -49,8 +49,8 @@ Padrões adotados:
 - **Route model binding**: os métodos `show`, `update` e `destroy` recebem o model já carregado (ex.: `Service $service`). Se o ID não existe ou foi excluído, a API responde `404` com `{"message": "Registro não encontrado."}`.
 - **Validação nos controllers**: regras declaradas em `$request->validate(...)`. Falhas retornam `422` com a lista de erros por campo, em português.
 - **Limites iguais aos do banco**: `name` e `email` até 255 caracteres, `phone` até 20, `duration` de 5 a 480 minutos e `price` até 999999.99 (o máximo do `decimal(8,2)`). Assim um valor grande demais vira `422`, e não um erro 500 do MySQL.
-- **Mesmo estilo nos três controllers**: `store` devolve `201` com o registro, `show` e `update` devolvem o registro e `destroy` devolve `204` sem corpo.
-- **Listagens paginadas**: `index` devolve uma página por vez, em ordem de nome, com `page` (1 a 100000), `per_page` (1 a 100, padrão 15) e `search`. Serviços aceitam também `status`. A resposta tem `data` (itens), `links` (primeira, última, anterior e próxima página) e `meta` (página atual, última página, total etc.), montada pelo `JsonResource::collection()` do Laravel, sem classe de Resource própria. O teto do `page` existe porque a conta do offset (`(page - 1) * per_page`) estoura o inteiro do PHP com uma página enorme e viraria erro 500.
+- **Mesmo estilo nos controllers**: `store` devolve `201` com o registro, `show` e `update` devolvem o registro e `destroy` devolve `204` sem corpo. A agenda não tem `destroy`: cancelar é `PATCH /appointments/{id}/status`, que devolve o agendamento.
+- **Listagens paginadas**: `index` devolve uma página por vez, em ordem de nome, com `page` (1 a 100000), `per_page` (1 a 100, padrão 15) e `search`. Serviços aceitam também `status`. Os agendamentos saem em ordem de data e horário, sem `search`, com os filtros `date`, `from`, `to`, `barber_id`, `client_id` e `status`. A resposta tem `data` (itens), `links` (primeira, última, anterior e próxima página) e `meta` (página atual, última página, total etc.), montada pelo `JsonResource::collection()` do Laravel, sem classe de Resource própria. O teto do `page` existe porque a conta do offset (`(page - 1) * per_page`) estoura o inteiro do PHP com uma página enorme e viraria erro 500.
 - **Respostas sempre em JSON** para qualquer rota `api/*` (configurado em `bootstrap/app.php`). Lá também ficam as mensagens de `404` (registro ou rota inexistente) e `405` (método errado) em português, sem o nome da classe do model que o Laravel colocaria na mensagem.
 - **Mass assignment protegido**: cada model declara `$fillable` com os campos permitidos.
 - **Casts no model**: `Service` converte `duration` para inteiro e `price` para texto com 2 casas (`"35.00"`), então o JSON sai igual no SQLite e no MySQL.
@@ -97,12 +97,12 @@ Senha trocada encerra os outros logins: o `authenticateSessions()` guarda na ses
 | Serviços | tudo | ver | ver os ativos |
 | Barbeiros | tudo (o campo `password` cria ou redefine o login) | ver | ver só nome e id (sem e-mail e telefone) |
 | Clientes | tudo | ver, criar, editar | só o próprio cadastro, sem listar os outros |
-| Agendamentos (próxima etapa) | tudo | só os próprios | criar para si, ver os próprios, cancelar até 2h antes (`CLIENT_CANCEL_MIN_HOURS`) |
+| Agendamentos | tudo | só os da própria agenda (ver, agendar, remarcar e mudar o status) | agendar para si (até 3 ativos, `CLIENT_MAX_ACTIVE_APPOINTMENTS`), ver os próprios, cancelar até 2h antes (`CLIENT_CANCEL_MIN_HOURS`) |
 | Pagamentos (planejado) | tudo | registrar e ver os próprios | ver os próprios |
 | Dashboard (planejado) | ver | não | não |
 | Fidelidade (planejado) | ver | ver | ver a própria |
 
-Menu das telas por perfil: o admin vê Agenda, Agendar, Clientes, Barbeiros e Serviços; o barbeiro vê Agenda, Agendar e Clientes; o cliente vê Minha conta, que é a tela inicial dele (Agendar e Meus horários entram com a agenda).
+Menu das telas por perfil: o admin vê Agenda, Agendar, Clientes, Barbeiros e Serviços; o barbeiro vê Agenda, Agendar e Clientes; o cliente vê Agendar, Meus horários (a tela inicial dele) e Minha conta. As telas do cliente (`/booking` e `/my-appointments`) usam o Gate `access-client` e exigem o e-mail confirmado.
 
 ### Conta de cliente
 
@@ -110,7 +110,7 @@ Decisão do Leonam (13/11/2026): o cliente também tem conta e vai agendar sozin
 
 1. **Cadastro** (`/register` ou `POST /api/register`): a conta nasce com o perfil `client` e o e-mail não confirmado (`MustVerifyEmail`), e o BarberFlow manda o link de confirmação.
 2. **Confirmação:** o link é assinado e vale 60 minutos. Ao confirmar, o listener `LinkClientToVerifiedUser` liga a conta ao cliente que já tem o mesmo e-mail ou cria um cadastro novo, e a ligação fica em `clients.user_id`.
-3. **Telas do cliente e rotas da API:** exigem o e-mail confirmado (middleware `verified`). Na API ficam de fora só as rotas da própria conta (`/user`, `/user/password`, `/logout` e o reenvio do link). As rotas da agenda entram no mesmo grupo.
+3. **Telas do cliente e rotas da API:** exigem o e-mail confirmado (middleware `verified`). Na API ficam de fora só as rotas da própria conta (`/user`, `/user/password`, `/logout` e o reenvio do link). As rotas da agenda ficam no mesmo grupo, e toda rota nova da API também entra nele.
 
 A ligação só acontece depois da confirmação porque é ela que prova que a pessoa é dona do e-mail. Sem isso, qualquer um veria o histórico de outra pessoa só digitando o e-mail dela no cadastro. Pelo mesmo motivo, o cliente não muda o e-mail do próprio cadastro (nem manda o campo, mesmo vazio): um e-mail trocado para o de outra pessoa abriria caminho para tomar a conta pelo "esqueci minha senha".
 
@@ -119,6 +119,53 @@ O "esqueci minha senha" usa o broker de senha do Laravel (tabela `password_reset
 **Conta criada com o e-mail de outra pessoa.** O dono do e-mail recebe "Este e-mail já está cadastrado." no cadastro e recupera a conta pelo "esqueci minha senha". Se a conta ainda não tinha o e-mail confirmado, a redefinição descarta o nome e o telefone digitados no cadastro (o nome vira a parte do e-mail antes do `@`), porque quem os digitou pode não ser o dono do e-mail. Assim, o telefone de outra pessoa nunca chega ao cadastro de cliente na confirmação.
 
 **Links dos e-mails:** fora do local, o `AppServiceProvider` fixa a raiz das URLs no `APP_URL` (`URL::forceRootUrl`, e `forceScheme('https')` quando o `APP_URL` é `https`). O `trustHosts` aceita os IPs privados por causa do health check do ALB. Sem a raiz fixa, quem pedisse o e-mail de outra pessoa com `Host: 192.168.0.23` faria o link levar o token para uma máquina da rede dele.
+
+### Agenda
+
+Decisão do Leonam (13/11/2026): a barbearia agenda para quem chega no balcão (admin, ou o barbeiro na própria agenda) e o cliente agenda sozinho pela conta dele. As regras ficam em `App\Services\AppointmentScheduler`, e os status e as transições só em `App\Enums\AppointmentStatus`.
+
+**Regras** (as recusas são `422`, no campo do formulário):
+
+- o término (`end_time`) é calculado no servidor: início + duração do serviço. O preço é copiado do serviço (`price`), para mudar o preço depois não reescrever o histórico;
+- só em dia de expediente, começando e terminando dentro dele, com o início numa fatia contada a partir da abertura. Os valores ficam em `config/barberflow.php` (`BUSINESS_OPENING`, `BUSINESS_CLOSING`, `BUSINESS_SLOT_MINUTES` e `BUSINESS_DAYS`; padrão 09:00 às 19:00, de 30 em 30 minutos, de segunda a sábado);
+- nada no passado. O "agora" é o `now()` do PHP, no fuso `America/Sao_Paulo`, e nunca o relógio do banco: assim o resultado é o mesmo no SQLite e no MySQL e os testes controlam o relógio com `travelTo`;
+- nada depois de `BOOKING_DAYS_AHEAD` dias a partir de hoje (padrão 60), em qualquer perfil. Assim ninguém marca um horário no ano 9999, que não aparece na Agenda e trava com `409` a exclusão do barbeiro e do serviço;
+- serviço ativo; cliente, barbeiro e serviço não excluídos. Para o cliente, serviço inativo ou excluído é como um id que não existe (a mesma mensagem do `exists`), igual ao `404` do `GET /api/services/{id}`; a barbearia vê o motivo;
+- sem sobreposição `[início, fim)` na agenda do barbeiro (erro em `start_time`) nem na do cliente (erro em `client_id`). Cancelado e faltou não ocupam o horário, e um atendimento pode começar na hora em que o outro termina;
+- o cliente que agenda pela conta dele tem no máximo `CLIENT_MAX_ACTIVE_APPOINTMENTS` agendamentos ativos de hoje em diante (padrão 3; erro em `client_id`). Assim uma conta só não lota a agenda de um barbeiro. A barbearia agenda para ele sem esse limite;
+- remarcar só com o status agendado ou confirmado; as regras rodam de novo sem contar o próprio agendamento, e o preço só muda se o serviço mudar.
+
+**Status** (`appointments.status`):
+
+| Status | Nome | Pode ir para |
+|---|---|---|
+| `scheduled` | Agendado | `confirmed`, `in_progress`, `cancelled`, `no_show` |
+| `confirmed` | Confirmado | `in_progress`, `cancelled`, `no_show` |
+| `in_progress` | Em atendimento | `completed` |
+| `completed` | Concluído | (final) |
+| `cancelled` | Cancelado | (final) |
+| `no_show` | Faltou | (final) |
+
+Em atendimento, concluído e faltou só valem a partir do horário de início. O cliente só cancela, e só até `CLIENT_CANCEL_MIN_HOURS` horas antes; a barbearia cancela a qualquer momento. Não existe exclusão de agendamento: cancelar é mudar o status, e a linha fica no histórico.
+
+**Concorrência.** Dois pedidos podem tentar o mesmo horário ao mesmo tempo (dois atendentes, ou o cliente pelo celular e o barbeiro no balcão). Agendar e remarcar rodam numa transação (`DB::transaction`, com até 3 tentativas se o MySQL desfizer uma por deadlock) que trava as linhas sempre na mesma ordem:
+
+1. o barbeiro (`lockForUpdate`);
+2. o cliente (`lockForUpdate`);
+3. o serviço (`sharedLock`: o agendamento não muda o serviço, mas a exclusão dele, que trava a linha para escrita, espera);
+4. na remarcação, por último, o próprio agendamento.
+
+A ordem fixa evita que dois pedidos esperem um pelo outro em círculo (deadlock). Com o barbeiro travado, dois pedidos para a mesma agenda passam um de cada vez; com o cliente travado, dois pedidos do mesmo cliente também. Todo par de pedidos que pode conflitar divide a trava de um barbeiro ou de um cliente.
+
+Depois das travas vêm as consultas sem trava: o limite do cliente e a sobreposição. No MySQL (InnoDB, nível `REPEATABLE READ`), uma leitura sem trava enxerga a "foto" do banco tirada na primeira leitura sem trava da transação. As leituras com trava não tiram a foto, então ela nasce na consulta do limite ou da sobreposição, depois de o pedido anterior terminar e soltar a trava: o segundo pedido enxerga o agendamento do primeiro. Por isso nenhuma leitura sem trava pode entrar antes das travas.
+
+A sobreposição fica sem `lockForUpdate` de propósito. Com ele, o MySQL trava também o intervalo do índice (`barber_id`, `date`, `start_time`) que a consulta percorreu, e dois agendamentos de barbeiros e clientes diferentes no mesmo dia esperam um pelo outro para gravar: com 10 pedidos assim ao mesmo tempo, 4 ou 5 caíam por deadlock depois das 3 tentativas e saíam como erro 500. Sem a trava na consulta, os 10 passam, e com o mesmo barbeiro ou o mesmo cliente só 1 passa e os outros 9 recebem `422`.
+
+A exclusão de cliente, barbeiro ou serviço (`App\Models\Concerns\HasAppointments`) trava a linha do cadastro antes de procurar agendamentos de hoje em diante ainda ativos. Com eles, a resposta é `409` ("Este cadastro tem agendamentos futuros. Cancele ou remarque antes de excluir."). Um agendamento feito ao mesmo tempo que a exclusão ou termina antes (e a exclusão o vê) ou espera a exclusão terminar (e é recusado, porque o cadastro foi excluído).
+
+O SQLite dos testes não trava linha, então essas travas só são conferidas no MySQL: o `phpunit.mysql.xml` roda a suíte inteira num MySQL 8.4 descartável (`composer test:mysql`, veja o README), e só lá roda o `AppointmentConcurrencyTest` (no `composer test` ele aparece como pulado). Ele abre duas conexões, como dois pedidos ao mesmo tempo, e confere em passos de ordem fixa que agendamentos sem conflito não esperam um pelo outro, que o barbeiro, o cliente e o serviço ficam travados até o agendamento terminar e que o segundo pedido enxerga o que o primeiro gravou enquanto ele esperava. No SQLite local, as transações são `IMMEDIATE` (trava de escrita no começo) com `busy_timeout` de 5 segundos: uma gravação espera a outra em vez de falhar com "database is locked". A prova com pedidos simultâneos de verdade (vários processos) fica para o teste de carga `concorrencia.js` (k6), na trilha de nuvem.
+
+**Telas.** A Agenda monta uma coluna por barbeiro (o barbeiro vê só a dele; no celular, uma lista por barbeiro) e posiciona cada bloco pelo `el.style` (a CSP barra só o `style=""` escrito no HTML). O Agendar busca os horários livres (`GET /api/barbers/{id}/available-slots`) e mostra cada um como um botão; se o horário marcado for tomado no meio do caminho, a API responde `422` em `start_time` e a tela avisa e busca os horários de novo. Na remarcação que mantém barbeiro, serviço, data e horário, a tela manda só as observações: o barbeiro anota algo mesmo depois do início, quando o horário atual já saiu da lista de livres. O expediente, o limite de dias e as regras de cada status chegam às telas por data-attributes (`config/barberflow.php` e `AppointmentStatus::catalog()`), e "hoje" e "agora" são calculados no fuso da barbearia (meta `app-timezone` do layout). A API continua sendo quem decide.
 
 ### Segurança das requisições
 
@@ -134,13 +181,17 @@ O "esqueci minha senha" usa o broker de senha do Laravel (tabela `password_reset
 
 ```
 app/
-  Enums/UserRole.php       # perfis: admin, barber e client
+  Enums/
+    UserRole.php           # perfis: admin, barber e client
+    AppointmentStatus.php  # status da agenda, nomes em português e transições
   Exceptions/
     TooManyLoginAttemptsException.php  # 429 do login bloqueado, com Retry-After na API
   Http/Controllers/
     ServiceController.php
     ClientController.php
     BarberController.php
+    AppointmentController.php    # agenda: listar, agendar, remarcar e mudar o status
+    AvailableSlotController.php  # GET /api/barbers/{id}/available-slots
     HealthController.php   # GET /api/health
     AuthController.php     # login, logout, usuário, senha, cadastro e "esqueci a senha" da API
     HomeController.php     # GET /: tela inicial de cada perfil
@@ -155,14 +206,18 @@ app/
     Service.php
     Client.php
     Barber.php
+    Appointment.php
     User.php
     Concerns/
       ReleasesEmailOnDelete.php  # e-mail removido+{id}@barberflow.invalid de quem é excluído
-  Policies/                # ServicePolicy, BarberPolicy e ClientPolicy
+      HasAppointments.php        # agendamentos do cadastro e o 409 ao excluir com agendamento futuro
+  Policies/                # ServicePolicy, BarberPolicy, ClientPolicy e AppointmentPolicy
   Rules/NotOnlySpaces.php  # recusa texto só de espaços (senha do login do barbeiro)
-  Services/Auth/           # LoginAttempt, ClientRegistration e PasswordResetter
-bootstrap/app.php          # roteamento, middlewares e erros em JSON (401, 403, 404, 405, 419 e 429 em português)
-config/barberflow.php      # limites, segurança e admin inicial, lidos do .env
+  Services/
+    AppointmentScheduler.php  # regras da agenda, horários livres e travas
+    Auth/                  # LoginAttempt, ClientRegistration e PasswordResetter
+bootstrap/app.php          # roteamento, middlewares e erros em JSON (401, 403, 404, 405, 409, 419 e 429 em português)
+config/barberflow.php      # limites, segurança, admin inicial, expediente e janela de cancelamento, lidos do .env
 database/
   migrations/              # definição das tabelas
   seeders/                 # DatabaseSeeder, AdminUserSeeder e ServiceSeeder
@@ -170,13 +225,15 @@ lang/
   pt_BR/                   # mensagens de validação, auth, senha e paginação
   pt_BR.json               # frases soltas do framework (inclusive os e-mails)
 resources/
-  views/                   # telas: layouts (app e guest), auth, account, errors e cadastros
+  views/                   # telas: layouts (app e guest), auth, account, appointments, errors e cadastros
   js/pages.js              # comportamento das telas e chamadas à API
   css/pages.css            # estilos próprios das telas
 routes/
   api.php                  # rotas da API
   web.php                  # rotas das telas
-tests/Feature/             # testes dos endpoints, da autenticação e das telas
+tests/Feature/             # testes dos endpoints, da agenda, da autenticação e das telas
+phpunit.xml                # testes no SQLite em memória (composer test)
+phpunit.mysql.xml          # a mesma suíte num MySQL descartável (composer test:mysql)
 docs/                      # documentação
 ```
 
@@ -188,6 +245,23 @@ Tabelas de domínio implementadas:
 erDiagram
     USERS ||--o| BARBERS : "login do barbeiro"
     USERS ||--o| CLIENTS : "conta do cliente"
+    CLIENTS ||--o{ APPOINTMENTS : agenda
+    BARBERS ||--o{ APPOINTMENTS : atende
+    SERVICES ||--o{ APPOINTMENTS : contém
+    APPOINTMENTS {
+        bigint id PK
+        bigint client_id FK "restrict"
+        bigint barber_id FK "restrict"
+        bigint service_id FK "restrict"
+        date date "Y-m-d"
+        time start_time "H:i:s"
+        time end_time "H:i:s, calculado"
+        string status "padrão scheduled"
+        decimal price "8,2, cópia do serviço"
+        text notes "nullable"
+        timestamp created_at
+        timestamp updated_at
+    }
     SERVICES {
         bigint id PK
         string name
@@ -234,7 +308,9 @@ erDiagram
 
 Tabelas de infraestrutura do Laravel: `password_reset_tokens`, `sessions`, `cache`, `cache_locks`, `jobs`, `job_batches`, `failed_jobs` e `personal_access_tokens` (Sanctum).
 
-`barbers.user_id` e `clients.user_id` ligam o cadastro ao login (`nullOnDelete`: apagar o usuário só desliga o cadastro). `users.phone` guarda o telefone do cadastro de conta até o cliente confirmar o e-mail, quando ele passa para o cadastro de cliente. As tabelas de domínio ainda não se relacionam entre si; esses relacionamentos entram com a agenda.
+`barbers.user_id` e `clients.user_id` ligam o cadastro ao login (`nullOnDelete`: apagar o usuário só desliga o cadastro). `users.phone` guarda o telefone do cadastro de conta até o cliente confirmar o e-mail, quando ele passa para o cadastro de cliente.
+
+`appointments` liga cliente, barbeiro e serviço. As chaves estrangeiras são `restrict`: um cadastro com agendamento nunca é apagado de vez, só excluído de forma lógica, e o histórico continua apontando para ele (as relações do model usam `withTrashed()`). Os índices (`barber_id`, `date`, `start_time`) e (`client_id`, `date`) atendem às consultas de sobreposição e de horários livres. A tabela não tem `deleted_at`: cancelar é um status. O model grava sempre `date` como `Y-m-d` e os horários como `H:i:s`, igual no SQLite e no MySQL.
 
 ### Histórico e LGPD (exclusão lógica)
 
@@ -242,7 +318,7 @@ Tabelas de infraestrutura do Laravel: `password_reset_tokens`, `sessions`, `cach
 
 | Tabela | O que acontece no `DELETE` | Por quê |
 |---|---|---|
-| `clients` | nome vira "Cliente removido", e-mail vira `removido+{id}@barberflow.invalid` e telefone fica nulo (`Client::anonymizeAndDelete()`) | LGPD: o histórico fica, mas sem dado que identifique a pessoa |
+| `clients` | nome vira "Cliente removido", e-mail vira `removido+{id}@barberflow.invalid`, telefone fica nulo e as observações (`notes`) dos agendamentos dele são apagadas (`Client::anonymizeAndDelete()`) | LGPD: o histórico fica, mas sem dado que identifique a pessoa. As observações são texto livre e podem ter telefone, endereço ou dado de saúde |
 | `barbers` | e-mail vira `removido+{id}@barberflow.invalid` e telefone fica nulo; o nome fica (`Barber::releaseEmailAndDelete()`) | o histórico precisa mostrar quem atendeu; o telefone não tem mais uso depois da exclusão (LGPD) |
 | `services` | nada muda além do `deleted_at` | não há dado pessoal |
 
@@ -254,20 +330,7 @@ A validação sozinha não fecha essa porta no MySQL. A collation `utf8mb4_unico
 
 ```mermaid
 erDiagram
-    CLIENTS ||--o{ APPOINTMENTS : agenda
-    BARBERS ||--o{ APPOINTMENTS : atende
-    SERVICES ||--o{ APPOINTMENTS : contém
     APPOINTMENTS ||--o| PAYMENTS : gera
-    APPOINTMENTS {
-        bigint id PK
-        bigint client_id FK
-        bigint barber_id FK
-        bigint service_id FK
-        date date
-        time start_time
-        time end_time
-        string status
-    }
     PAYMENTS {
         bigint id PK
         bigint appointment_id FK
@@ -278,6 +341,8 @@ erDiagram
     }
 ```
 
+Junto com a tabela `payments`, a listagem de agendamentos (`GET /api/appointments`) ganha o filtro `without_payment`, que acha os atendimentos concluídos ainda sem pagamento (a tela de Pagamentos usa para o "Registrar pagamento"). Ele fica para a etapa de pagamentos porque depende dessa tabela.
+
 ### Diferenças em relação ao esboço inicial
 
 O esboço de arquitetura previa campos mais completos. Para o MVP, a equipe implementou o mínimo necessário para validar a API:
@@ -287,6 +352,7 @@ O esboço de arquitetura previa campos mais completos. Para o MVP, a equipe impl
 | `barbers` | `user_id`, `phone`, `commission_rate`, `status` | `user_id`, `name`, `email`, `phone` | O vínculo com `users` entrou com a autenticação; comissão e status ficam para o financeiro |
 | `clients` | `name`, `phone`, `email`, `birth_date`, `notes` | `user_id`, `name`, `email`, `phone` | O `user_id` entrou com a autenticação e liga o cadastro à conta do cliente quando ele confirma o e-mail; `birth_date` e `notes` podem entrar junto com fidelidade e histórico |
 | `services` | `name`, `duration`, `price`, `status` | igual | Implementado como previsto |
+| `appointments` | `client_id`, `barber_id`, `service_id`, `date`, `start_time`, `end_time`, `status` | os mesmos, mais `price` e `notes` | `price` guarda o preço do dia do agendamento, para o histórico e os pagamentos; `notes` são as observações do atendimento |
 
 ## 6. Plano de entrega
 
@@ -294,8 +360,8 @@ O esboço de arquitetura previa campos mais completos. Para o MVP, a equipe impl
 |---|---|---|
 | 1 | Ambiente, migrations, CRUD de `services` | Entregue |
 | 2 | CRUD de `clients` e `barbers`, testes de feature, paginação e busca, exclusão lógica com anonimização, mensagens em pt-BR, fuso de São Paulo, `/api/health`, autenticação (sessão e token), perfis e permissões, conta de cliente com confirmação de e-mail, limites de requisição e cabeçalhos de segurança | Entregue no código |
-| 3 | Agenda e agendamento online (consulta de horários livres) | Planejada |
-| 4 | Status do atendimento, pagamentos, dashboard básico, documentação final | Planejada |
+| 3 | Agenda e agendamento online (consulta de horários livres), sem sobreposição por barbeiro e por cliente, com as telas Agenda, Agendar e, para o cliente, Agendar e Meus horários | Entregue no código |
+| 4 | Status do atendimento (entregue com a agenda), pagamentos, dashboard básico, documentação final | Em andamento |
 
 Prioridades do produto (do esboço inicial): login e cadastros-base (alta) → agenda e agendamento online (alta) → status de atendimento, pagamentos e dashboard (média) → lembretes, fidelidade e relatórios avançados (baixa).
 
@@ -304,7 +370,10 @@ Prioridades do produto (do esboço inicial): login e cadastros-base (alta) → a
 - **Usuário de teste com senha conhecida:** o `DatabaseSeeder` dá o perfil admin ao `test@example.com`, cuja senha está no código. Serve só para o ambiente local. Em produção, o admin vem do `AdminUserSeeder`, com a senha definida por quem instala, e o deploy nunca roda o seed de teste.
 - **Cadastro de conta revela e-mail cadastrado:** o `POST /register` responde "Este e-mail já está cadastrado." (regra `unique`). O login e o "esqueci minha senha" não revelam. Esconder isso no cadastro pediria outro fluxo (avisar por e-mail em vez de responder na tela).
 - **Limite por IP atrás do balanceador:** sem `TRUSTED_PROXIES`, todo visitante parece vir do IP do ALB e todos dividem a mesma contagem de requisições.
-- **Página de até 100 itens:** as listagens não devolvem tudo de uma vez. Telas que precisam da lista inteira (como o Agendar) carregam os 100 primeiros em ordem de nome.
+- **Página de até 100 itens:** as listagens não devolvem tudo de uma vez. Telas que precisam da lista inteira (como o Agendar) carregam os 100 primeiros em ordem de nome. A Agenda e Meus horários leem até 10 páginas de agendamentos.
+- **Travas da agenda só no MySQL:** o SQLite não trava linha. O `composer test:mysql` roda o `AppointmentConcurrencyTest`, que confere as travas com duas conexões num processo só, em passos de ordem fixa; pedidos simultâneos de verdade (vários processos) ficam para o teste de carga `concorrencia.js`.
+- **Horários livres por barbeiro:** a lista olha só a agenda do barbeiro escolhido. O conflito do cliente com outro barbeiro aparece só ao agendar (`422` em `client_id`).
+- **Cancelamento pela barbearia depois do início:** a barbearia pode cancelar um agendamento que já começou. Na taxa de faltas do dashboard (próxima etapa), um cancelamento em cima da hora não conta como falta.
 - **Busca simples:** `search` usa `LIKE '%texto%'`, que não aproveita índice. Serve para o volume de uma barbearia; com muitos milhares de cadastros, vale um índice de texto completo.
 - **Validação nos controllers:** funciona bem no MVP; ao crescer, vale migrar para *Form Requests* e *API Resources* próprias para padronizar entrada e saída. Hoje só a paginação passa pelo `JsonResource::collection()`, que já entrega o formato `data`/`links`/`meta`; os itens saem como o model.
 - **Sem desfazer exclusão:** a exclusão é lógica, mas não há rota para restaurar. No cliente, os dados pessoais já foram apagados e não voltam.
