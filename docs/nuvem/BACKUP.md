@@ -102,10 +102,10 @@ Use quando alguém apagou ou estragou dados (um `DELETE` errado, uma migration r
    aws ssm put-parameter --name /barberflow/prod/DB_HOST --type String --value $endereco --overwrite
    ```
 
-5. Troque as instâncias com o instance refresh do Auto Scaling (`feat/infra-computacao`). Cada instância nova lê o SSM ao subir e já conecta no banco novo:
+5. Troque as instâncias com o instance refresh do Auto Scaling (`feat/infra-computacao`; o nome é a saída `asg_name`). Cada instância nova lê o SSM ao subir e já conecta no banco novo:
 
    ```powershell
-   aws autoscaling start-instance-refresh --auto-scaling-group-name <nome do Auto Scaling, saída da feat/infra-computacao>
+   aws autoscaling start-instance-refresh --auto-scaling-group-name barberflow-prod-app --preferences "MinHealthyPercentage=50,InstanceWarmup=300"
    ```
 
 6. Confira a aplicação (o `/api/health` responde 200 com banco e cache no ar) e os dados que motivaram o restore.
@@ -190,7 +190,7 @@ Os comandos usam as variáveis de "Antes de começar" e o `$novo` do restore (`b
 
    ```powershell
    tfaws apply prod.tfplan
-   aws autoscaling start-instance-refresh --auto-scaling-group-name <nome do Auto Scaling>
+   aws autoscaling start-instance-refresh --auto-scaling-group-name barberflow-prod-app --preferences "MinHealthyPercentage=50,InstanceWarmup=300"
    ```
 
 6. Depois de conferir a aplicação de novo, apague o banco antigo. Na prod, desligue a proteção contra exclusão antes:
