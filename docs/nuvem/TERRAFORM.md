@@ -1,6 +1,6 @@
 # Terraform do BarberFlow
 
-Este guia explica a infraestrutura como código do BarberFlow na AWS: o que cada parte cria, como validar e testar no seu computador sem conta da AWS, como criar o bucket do state remoto, como escolher o ambiente, a ordem do primeiro deploy e o dia a dia das instâncias (Session Manager, administrador, logs e capacidade). O backup e o restore do banco ficam no `docs/nuvem/BACKUP.md`.
+Este guia explica a infraestrutura como código do BarberFlow na AWS: o que cada parte cria, como validar e testar no seu computador sem conta da AWS, como criar o bucket do state remoto, como escolher o ambiente, a ordem do primeiro deploy e o dia a dia das instâncias (Session Manager, administrador, logs e capacidade). O backup e o restore do banco ficam no `docs/nuvem/BACKUP.md`, e o CI, o deploy pelo GitHub Actions e o rollback, no `docs/nuvem/CI-CD.md`.
 
 Nada daqui foi aplicado na AWS. Aplicar cria recursos que cobram por hora, então só acontece com a conta do grupo (veja "Aplicar na AWS").
 
@@ -11,7 +11,7 @@ O Terraform chega em cinco branches:
 | `feat/infra-rede` | Manoel | Versões, state remoto, variáveis, VPC e subnets (seção "A rede") |
 | `feat/infra-dados-seguranca` | Eduardo | Security groups, IAM, ECR, logs, RDS, cache e parâmetros (seção "Dados e segurança") |
 | `feat/infra-computacao` | Manoel | ALB, Auto Scaling, `user_data` e orçamento |
-| `feat/ci-cd` | José (CI) e Manoel (CD) | `cicd.tf`, com a role de deploy por OIDC (o provedor OIDC só é criado se uma variável pedir), e o CI rodando `fmt -check`, `validate`, `test` e `trivy config` |
+| `feat/ci-cd` | José (CI) e Manoel (CD) | `cicd.tf`, com a role de deploy por OIDC (o provedor OIDC só é criado se uma variável pedir), e o CI rodando `fmt -check`, `validate`, `test` e `trivy config` (seção "CI/CD") |
 | `feat/observabilidade` | Leonam | `monitoring.tf`, com o SNS por e-mail, os alarmes de ALB, Auto Scaling, RDS e ElastiCache e o dashboard do CloudWatch |
 
 ## Arquivos
@@ -23,7 +23,7 @@ O Terraform chega em cinco branches:
 | `terraform/backend.tf` | State remoto no S3, com a trava (`use_lockfile`) e a criptografia (`encrypt`); bucket, key e região vêm do `backend.hcl` |
 | `terraform/backend.hcl.example` | Modelo do `backend.hcl`: bucket, key e região |
 | `terraform/providers.tf` | Provider AWS com a região da variável e as tags padrão |
-| `terraform/variables.tf` | Variáveis da base, da rede, dos dados e da computação |
+| `terraform/variables.tf` | Variáveis da base, da rede, dos dados, da computação e do CI/CD |
 | `terraform/locals.tf` | Prefixo dos nomes (ex.: `barberflow-homolog`) e as tags |
 | `terraform/network.tf` | VPC, subnets, internet gateway, tabelas de rotas e o security group padrão sem regras |
 | `terraform/sg.tf` | Security groups do ALB, do app, do banco e do cache, com as regras de entrada e de saída |
@@ -37,11 +37,13 @@ O Terraform chega em cinco branches:
 | `terraform/compute.tf` | Launch template, Auto Scaling e a escala pela CPU |
 | `terraform/templates/user_data.sh.tftpl` | Script de subida das instâncias: Docker, compose, logs, `.env` do SSM e containers |
 | `terraform/budget.tf` | Orçamento mensal com aviso por e-mail |
-| `terraform/outputs.tf` | IDs da VPC e das subnets, zonas, security groups, instance profile, ECR, log groups, banco, cache, caminho do SSM, ALB, `APP_URL`, Auto Scaling, launch template e o SHA-256 do compose embutido no `user_data` |
+| `terraform/cicd.tf` | Provedor OIDC do GitHub (só com `create_github_oidc_provider = true`) e a role do deploy pelo GitHub Actions, com a política mínima |
+| `terraform/outputs.tf` | IDs da VPC e das subnets, zonas, security groups, instance profile, ECR, log groups, banco, cache, caminho do SSM, ALB, `APP_URL`, Auto Scaling, launch template, o SHA-256 do compose embutido no `user_data` e o que o deploy precisa (role, repositórios, parâmetro da tag e as variáveis do environment do GitHub) |
 | `terraform/envs/*.tfvars.example` | Valores de cada ambiente, homolog e prod |
 | `terraform/tests/rede.tftest.hcl` | Testes da rede com o provider simulado |
 | `terraform/tests/dados_seguranca.tftest.hcl` | Testes dos dados e da segurança com o provider simulado |
 | `terraform/tests/computacao.tftest.hcl` | Testes da computação (ALB, instâncias, `user_data`, Auto Scaling e orçamento) com o provider simulado |
+| `terraform/tests/cicd.tftest.hcl` | Testes da role de deploy (trust do OIDC e política) com o provider simulado |
 | `terraform/tests/user_data/` | O `user_data` pronto para o ShellCheck e o teste da montagem do `.env` num container do Amazon Linux 2023 (seção "Como o user_data foi testado") |
 | `terraform/bootstrap/` | Stack separada que cria o bucket do state, com o próprio lock e o próprio teste |
 | `terraform/.trivyignore.yaml` | Alertas do Trivy aceitos de propósito, cada um preso ao arquivo do recurso e com o motivo |
@@ -342,6 +344,26 @@ Mais sobre o `user_data`:
 
 Os padrões seguem a ideia dos anteriores: ALB com proteção contra exclusão e capacidade pequena. O `app_url` (dos dados) e o `certificate_arn` andam juntos: as variáveis recusam domínio em `https://` sem certificado e certificado sem domínio em `https://`.
 
+## CI/CD
+
+Parte do José (CI) e do Manoel (CD), na branch `feat/ci-cd`. O `cicd.tf` cria a role que o deploy do GitHub Actions (`.github/workflows/deploy.yml`) assume por OIDC, sem chave de acesso guardada no GitHub. O passo a passo do CI, do deploy, do rollback e da configuração do GitHub está no `docs/nuvem/CI-CD.md`.
+
+- **Role só com `create_deploy_role = true`** (a prod, no exemplo; o padrão é `false`). O GitHub cria sem nenhuma proteção o environment que um workflow cita e que ainda não existe, e aí um workflow de qualquer branch assumiria a role. Por isso, antes do `apply` que cria a role, o environment `production` precisa existir no GitHub com revisores e com só a `main` e as tags `v*` (`docs/nuvem/CI-CD.md`, "Configurar o GitHub"). A homolog do exemplo fica sem role.
+- **Provedor OIDC** (`token.actions.githubusercontent.com`): um por conta. O ambiente com `create_github_oidc_provider = true` cria (a prod, no exemplo), e um ambiente com a role e `false` lê o que existe. Sem a role, nada é lido, então a homolog do exemplo não depende da prod. Se a homolog ganhar a role na mesma conta, aplique a prod antes; sem isso, o `plan` da homolog para com `reading IAM OIDC Provider (https://token.actions.githubusercontent.com): couldn't find resource`.
+- **Role `barberflow-<ambiente>-deploy`:** só o environment `github_environment` do repositório `github_repository` assume, com o `aud` `sts.amazonaws.com`. Ela faz push nos 2 repositórios do ECR, lê e grava só o parâmetro `image_tag`, começa o instance refresh só no Auto Scaling do app e faz três consultas de leitura (Auto Scaling, andamento do refresh e a tag `ComposeFileSha256` do launch template). Nada de `iam:PassRole` nem do state.
+- **IDs do repositório:** o primeiro commit do repositório é de 24/09/2026, depois de 15/07/2026, então o GitHub deve mandar o `sub` no formato imutável, com os IDs do dono e do repositório. Preencha `github_repository_owner_id` e `github_repository_id` no `envs/prod.tfvars` antes do primeiro deploy (`docs/nuvem/CI-CD.md`, "Como o GitHub entra na AWS").
+- **Saídas:** `deploy_role_arn`, `ecr_repository_names`, `image_tag_parameter_name`, `github_deploy_subjects` e `github_environment_variables`, que junta as 7 variáveis do environment `production` do GitHub, prontas para copiar. Sem a role, as saídas dela ficam nulas ou vazias.
+- As políticas ficam em `jsonencode()` nos `locals`, e o `tests/cicd.tftest.hcl` confere a trust e a política (lista em `docs/nuvem/CI-CD.md`, "O que os testes conferem").
+
+| Variável | Padrão | Homolog | Prod | Para que serve |
+|---|---|---|---|---|
+| `create_deploy_role` | `false` | `false` | `true` | Cria a role de deploy e a política dela, só onde o environment do GitHub já está protegido |
+| `create_github_oidc_provider` | `false` | `false` | `true` | Cria o provedor OIDC do GitHub na conta |
+| `github_repository` | `josecoene/barber-shop` | igual | igual | Repositório (dono/nome) cujo deploy assume a role |
+| `github_environment` | `production` | `homolog` | `production` | Environment do GitHub aceito no `sub` |
+| `github_repository_owner_id` | vazio | vazio | ID do dono (preencha) | Formato imutável do `sub` |
+| `github_repository_id` | vazio | vazio | ID do repositório (preencha) | Formato imutável do `sub`, junto com o anterior |
+
 ## Antes de começar
 
 - Docker Desktop. A imagem `hashicorp/terraform:1.13.3` roda o Terraform sem instalar nada. Quem já tem o Terraform 1.11 ou mais novo instalado pode usar os mesmos comandos sem o `docker run`.
@@ -378,7 +400,9 @@ tf -chdir=bootstrap test
 4. `test` roda os testes com o provider AWS simulado (`mock_provider`): o Terraform finge criar os recursos, sem conta e sem custo.
 5. O `-chdir=bootstrap` faz o mesmo na stack do bucket do state.
 
-O `test` termina com `Success! 45 passed, 0 failed.` na raiz (18 da computação, 19 dos dados e da segurança e 8 da rede) e `Success! 1 passed, 0 failed.` no bootstrap.
+O `test` termina com `Success! 57 passed, 0 failed.` na raiz (12 do CI/CD, 18 da computação, 19 dos dados e da segurança e 8 da rede) e `Success! 1 passed, 0 failed.` no bootstrap.
+
+O CI (`.github/workflows/ci.yml`, job `Terraform`) roda os mesmos comandos em todo pull request, com o `hashicorp/setup-terraform` na mesma versão 1.13.3, além do `trivy config`, do ShellCheck e do teste da montagem do `.env` das seções abaixo.
 
 No Git Bash, a função fica assim (o `MSYS_NO_PATHCONV=1` impede o Git Bash de trocar o `/repo/terraform` por um caminho do Windows):
 
@@ -443,6 +467,8 @@ A `feat/infra-computacao` mexeu em três pontos desse arquivo e no `rede.tftest.
 
 As regras desse arquivo também foram conferidas quebrando a configuração numa cópia da pasta, em 28 defeitos (IMDSv1, hop limit 2, disco sem criptografia ou gp2, sem IP público, instância com o security group do ALB, Auto Scaling numa zona só, health check EC2, fora do target group, `$Latest`, refresh com 90%, tags sem propagar, ALB interno ou sem `drop_invalid_header_fields`, health check fora do `/up`, 80 sempre encaminhando, 443 sempre ligada, TLS antigo, `APP_URL` e cookie fixos, `TRUSTED_PROXIES` com `*`, `user_data` sem `--with-decryption` ou com a senha do RDS, SHA-256 trocado, EC2 solta de volta e o orçamento sempre criado ou com aviso a 90%): o teste falhou em todos.
 
+`terraform/tests/cicd.tftest.hcl`: o padrão sem a role de deploy (nem role, nem política, nem leitura do provedor OIDC), a trust da role (só o `aud` do STS e o `sub` do environment do repositório, com `StringEquals` e sem curinga, nos dois formatos de `sub` quando os IDs estão preenchidos), o provedor OIDC criado só com a variável e sem `thumbprint_list`, a política (lista exata de ações, nenhuma ação com curinga, `Resource "*"` só no login do ECR e nas três consultas de leitura, `PutParameter` só no `image_tag`, nada do IAM nem do S3) e duas travas que leem o texto dos `.tf`: a lista exata dos recursos que ligam política a uma role, na pasta e no `bootstrap/` (qualquer role, e qualquer jeito de citar a role: referência, `local` ou nome escrito), e só a política própria citando a role de deploy. 35 defeitos de propósito fizeram o teste falhar; a lista está no `docs/nuvem/CI-CD.md`, "O que os testes conferem". A `feat/ci-cd` não mexeu nos outros três arquivos de teste: neles, a role de deploy não é criada (`create_deploy_role` fica no padrão, `false`).
+
 `terraform/bootstrap/tests/state.tftest.hcl`: nome do bucket com o ID da conta, versionamento, criptografia, as quatro travas de acesso público, a política que nega acesso sem HTTPS (no bucket e nos objetos) e o bucket sem `force_destroy`.
 
 ### Como o user_data foi testado
@@ -483,6 +509,8 @@ Cinco defeitos de propósito no template, numa cópia montada por cima do origin
 
 O que o `user_data` faz numa instância de verdade (dnf, IMDS, ECR, awslogs) fica validado só no código até o primeiro deploy.
 
+O CI roda as duas conferências em todo pull request (job `Terraform` do `.github/workflows/ci.yml`), com os mesmos comandos, no Linux do runner.
+
 ### Trivy
 
 O `trivy config` procura configuração insegura no Terraform. Na raiz do repositório:
@@ -493,6 +521,7 @@ docker run --rm -v "${PWD}\terraform:/src:ro" -w /src aquasec/trivy:0.76.2@sha25
 
 - A imagem vai fixada por digest: o mesmo `sha256` no Docker Hub, no GHCR e no ECR Public, conferido em 13/11/2026. Nunca use a 0.69.4, publicada por um invasor em 19/03/2026, nem as imagens 0.69.5 e 0.69.6 do Docker Hub, publicadas do mesmo jeito em 22/03/2026 (aviso [GHSA-69fq-xp46-6x23](https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23)). Versões antes da 0.72.0 têm outras falhas, já corrigidas.
 - Para atualizar, leia as notas da versão nova e os avisos de segurança do Trivy e troque a tag e o digest juntos (`docker buildx imagetools inspect aquasec/trivy:<versão>` mostra o digest).
+- O CI roda o mesmo comando no job `Terraform`, com a mesma imagem e o mesmo digest.
 - O `--ignorefile .trivyignore.yaml` é obrigatório. Sem ele, o Trivy lê o `.trivyignore` da pasta onde roda; o da pasta `terraform/` fica vazio de propósito, então todos os alertas da tabela abaixo aparecem e o comando falha.
 - Com o Trivy instalado no computador, rode de dentro da pasta `terraform/` com o mesmo `--ignorefile .trivyignore.yaml`. Da raiz também funciona (`trivy config --ignorefile terraform/.trivyignore.yaml --exit-code 1 terraform`), porque os `paths` valem a partir da pasta analisada.
 
@@ -596,7 +625,7 @@ tfaws plan "-var-file=envs/prod.tfvars" "-out=prod.tfplan"
 
 ## Aplicar na AWS
 
-Aplicar só com a conta do grupo, combinado com todos, porque cria recursos que cobram por hora. Na primeira vez, siga a ordem da seção "Primeiro deploy": o Auto Scaling nasce sem instância, enquanto o ECR não tem imagem.
+Aplicar só com a conta do grupo, combinado com todos, porque cria recursos que cobram por hora. Na primeira vez, siga a ordem da seção "Primeiro deploy": o Auto Scaling nasce sem instância, enquanto o ECR não tem imagem. O `apply` da prod cria a role de deploy do GitHub Actions: antes dele, o environment `production` precisa estar configurado no GitHub (seção "CI/CD"). A homolog do exemplo não tem role e não depende da prod.
 
 Aplique sempre o plano salvo, que é exatamente o que foi revisado:
 
@@ -624,15 +653,29 @@ Na primeira vez, o ECR ainda não tem imagem e o parâmetro `image_tag` tem o va
    tfaws apply prod.tfplan
    ```
 
+   Na prod, com `create_deploy_role = true`, este `apply` cria também a role de deploy do GitHub Actions: configure antes o environment `production` no GitHub (`docs/nuvem/CI-CD.md`, "Primeiro deploy"). Sem o GitHub, use `create_deploy_role = false` e publique as imagens à mão (passo 3).
+
 2. Preencha o `APP_KEY` (seção "Preencher o APP_KEY") e, se o e-mail já tiver provedor, o `MAIL_USERNAME` e o `MAIL_PASSWORD` (seção "Parâmetros do SSM").
-3. Publique as imagens e a `image_tag` pelo deploy da `feat/ci-cd` (`deploy.yml`): ele faz o build, manda as imagens `app` e `web` para o ECR com a tag do commit e grava a tag em `/barberflow/prod/image_tag`. Antes de a `feat/ci-cd` existir, dá para fazer à mão, na raiz do repositório:
+3. Publique as imagens e a `image_tag` pelo deploy (`.github/workflows/deploy.yml`, com o GitHub configurado como no `docs/nuvem/CI-CD.md`): crie uma tag `v*` na `main` e aprove no environment `production`. Ele faz o build, passa o Trivy, manda as imagens `app` e `web` para o ECR com a tag do commit e grava a tag em `/barberflow/prod/image_tag`; com o Auto Scaling em 0, pula o instance refresh. Sem o GitHub configurado (e sempre na homolog, porque o `deploy.yml` só publica na prod), dá para fazer à mão, na raiz do repositório:
 
    ```powershell
-   $tag = git rev-parse --short=12 HEAD
+   git fetch origin
+   $sha = git rev-parse origin/main
+   $tag = "manual-$($sha.Substring(0, 12))-$(Get-Date -Format yyyyMMddHHmm)"
+   $src = "$env:TEMP\barberflow-build"
+   git worktree add --detach $src $sha
    $registry = "<ID da conta>.dkr.ecr.us-east-1.amazonaws.com"
+   docker build -f "$src\docker\php\Dockerfile" --target app -t "$registry/barberflow-prod-app:$tag" $src
+   docker build -f "$src\docker\php\Dockerfile" --target web -t "$registry/barberflow-prod-web:$tag" $src
+   git worktree remove $src
+   ```
+
+   - O build parte de uma cópia limpa do último commit da `main` (`git worktree add`), e não da sua pasta de trabalho: mudança sem commit e arquivo fora do Git não entram na imagem, nem os ignorados pelo Git que o `.dockerignore` não cobre (como o `.idea/` e o `.vscode/`). Se a pasta `$src` sobrou de uma tentativa anterior, apague com `git worktree remove --force $src` antes.
+   - A tag começa com `manual-`, seguida do começo do commit e da data e hora. Ela nunca coincide com a de um deploy, que é só o começo do commit: o deploy pelo GitHub não reaproveita uma imagem feita à mão, e o rollback dele recusa essa tag (para voltar a ela, use o caminho sem o GitHub do `docs/nuvem/CI-CD.md`, "Rollback").
+   - Antes do push, passe o Trivy nas duas imagens, como no `docs/nuvem/CI-CD.md`, "Rodar o mesmo no computador", com os nomes acima no lugar de `barberflow-app:local` e `barberflow-web:local`. Com vulnerabilidade crítica que já tem correção, pare aqui.
+
+   ```powershell
    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $registry
-   docker build -f docker/php/Dockerfile --target app -t "$registry/barberflow-prod-app:$tag" .
-   docker build -f docker/php/Dockerfile --target web -t "$registry/barberflow-prod-web:$tag" .
    docker push "$registry/barberflow-prod-app:$tag"
    docker push "$registry/barberflow-prod-web:$tag"
    aws ssm put-parameter --name /barberflow/prod/image_tag --type String --value $tag --overwrite
@@ -775,8 +818,8 @@ O segundo comando mostra o andamento (`Successful` no fim). Mudança no `user_da
 
 ## Atualizar versões
 
-- **Terraform:** o `required_version` pede 1.11 ou mais novo. Para trocar a imagem, leia as notas da versão nova e troque a tag `1.13.3` e o digest juntos nas três funções deste guia (`tf` no PowerShell e no Git Bash e `tfaws`). O `docker buildx imagetools inspect hashicorp/terraform:<versão>` mostra o digest na linha `Digest`.
-- **Provider AWS:** troque o `version` nos dois `versions.tf` (raiz e `bootstrap/`) e refaça os locks para as quatro plataformas que o grupo usa (CI e Docker no Linux, Windows e Mac Intel e Apple Silicon):
+- **Terraform:** o `required_version` pede 1.11 ou mais novo. Para trocar a imagem, leia as notas da versão nova e troque a tag `1.13.3` e o digest juntos nas três funções deste guia (`tf` no PowerShell e no Git Bash e `tfaws`) e o `terraform_version` do `.github/workflows/ci.yml`. O `docker buildx imagetools inspect hashicorp/terraform:<versão>` mostra o digest na linha `Digest`.
+- **Provider AWS:** o Dependabot abre um pull request por semana quando sai versão nova (`docs/nuvem/CI-CD.md`, "Dependabot"). À mão, troque o `version` nos dois `versions.tf` (raiz e `bootstrap/`) e refaça os locks para as quatro plataformas que o grupo usa (CI e Docker no Linux, Windows e Mac Intel e Apple Silicon):
 
 ```powershell
 tf init -backend=false -upgrade
@@ -799,17 +842,16 @@ O `init -upgrade` escolhe a versão nova e o `providers lock` grava os hashes da
 - **Rotas:** nada de `aws_route` avulso. As duas tabelas declaram as rotas dentro delas (`route`), e a documentação do provider não permite misturar os dois jeitos na mesma tabela: um apaga a rota do outro, e a cada `apply` a rota avulsa some e volta. Na tabela privada seria pior, porque banco e cache ganhariam caminho para a internet. Rota nova na pública entra num bloco `route` do `aws_route_table.public`. O `rede.tftest.hcl` lê os `.tf` da pasta e falha se achar um `resource "aws_route"`.
 - **Testes:** um arquivo por assunto em `terraform/tests/`, cada um com o próprio `mock_provider`. Políticas de IAM e de bucket em `jsonencode()` nos `locals`: o provider simulado não monta o JSON de um `data "aws_iam_policy_document"`, e o teste não consegue ler a política.
 - **Trivy:** alerta novo se corrige. Se ficar, entra no `.trivyignore.yaml` com `paths` (o arquivo do recurso) e `statement` (o motivo), nunca no `.trivyignore`, que valeria para o projeto todo.
-- **CI (`feat/ci-cd`):** o `trivy config` do pipeline precisa do `.trivyignore.yaml` (`--ignorefile terraform/.trivyignore.yaml` rodando da raiz, ou o mesmo arquivo na opção de ignore da action).
-- **Mocks:** recurso novo cujo ID ou ARN vai para outro recurso (ex.: o ARN de um tópico SNS num alarme) pode precisar de um `mock_resource` com um valor no formato certo nos três arquivos de teste, porque o provider confere o formato e o texto que o mock inventa não passa. Foi o que a `feat/infra-computacao` fez com o ALB, o target group e o launch template.
-- **Para a `feat/ci-cd`:**
-  - o deploy grava a tag nova em `/barberflow/<ambiente>/image_tag`, e o `ignore_changes` impede o Terraform de desfazer. A role de deploy precisa de `ssm:PutParameter` só nesse parâmetro. As imagens vão para o ECR só com a tag do commit, nunca com `latest`;
-  - depois de gravar a tag, o deploy troca as instâncias: `autoscaling:StartInstanceRefresh` e `autoscaling:DescribeInstanceRefreshes` no Auto Scaling `aws_autoscaling_group.app` (saída `asg_name`), com `MinHealthyPercentage=50` e `InstanceWarmup=300`, como o `instance_refresh` do `compute.tf`. Cada instância nova lê a `image_tag` do SSM ao subir;
-  - o deploy não leva mudança no `docker-compose.prod.yml` nem no `user_data`: os dois vão no launch template, e só o `apply` cria a versão nova (seção "Launch template e user_data"). Antes de gravar a `image_tag`, o deploy confere se o compose do commit é o embutido e para, pedindo o `apply`, quando não é. O valor embutido está na tag `ComposeFileSha256` do launch template (`aws ec2 describe-launch-templates --launch-template-names barberflow-prod-app --query "LaunchTemplates[0].Tags[?Key=='ComposeFileSha256'].Value | [0]" --output text`), e o do commit sai do `sha256sum docker-compose.prod.yml`. A role de deploy precisa de `ec2:DescribeLaunchTemplates`, só de leitura, que a AWS só aceita com `Resource "*"`. Assim o deploy confere sem ler o state, que guarda a senha do RDS. A saída `compose_file_sha256` traz o mesmo valor para quem roda o Terraform;
-  - o teste do `/api/health` usa a saída `app_url`;
-  - o job do Terraform no CI precisa do repositório inteiro (o `checkout` padrão já traz), porque o `user_data` lê o `../docker-compose.prod.yml`;
-  - o ShellCheck do `user_data` e o teste da montagem do `.env` já estão no repositório (`terraform/tests/user_data/`, seção "Como o user_data foi testado"): no CI, são dois passos com os mesmos comandos, o do teste na forma do Git Bash, com `$(pwd)` no lugar do `$(pwd -W)` e sem o `MSYS_NO_PATHCONV`;
-  - se o `cicd.tf` citar a role das instâncias (`aws_iam_role.ec2`, num `iam:PassRole`, por exemplo), a trava do run `iam_role` conta essa linha: atualize o teste junto.
+- **CI:** o job `Terraform` do `.github/workflows/ci.yml` roda `fmt -check`, `validate`, `test`, `trivy config` (com o `.trivyignore.yaml`), o ShellCheck do `user_data` e a montagem do `.env` em todo pull request. Arquivo de teste novo em `terraform/tests/` entra sozinho no `terraform test`.
+- **Mocks:** recurso novo cujo ID ou ARN vai para outro recurso (ex.: o ARN de um tópico SNS num alarme) pode precisar de um `mock_resource` com um valor no formato certo nos quatro arquivos de teste, porque o provider confere o formato e o texto que o mock inventa não passa. Foi o que a `feat/infra-computacao` fez com o ALB, o target group e o launch template.
+- **Deploy (feito na `feat/ci-cd`):** o que a `feat/infra-computacao` deixou anotado virou o `deploy.yml` e o `cicd.tf` (`docs/nuvem/CI-CD.md`):
+  - o deploy grava a tag nova em `/barberflow/<ambiente>/image_tag` (o `ignore_changes` impede o Terraform de desfazer), com `ssm:PutParameter` só nesse parâmetro, e as imagens vão para o ECR só com a tag do commit, nunca com `latest`;
+  - depois de gravar a tag, ele faz o instance refresh do `aws_autoscaling_group.app`, com `MinHealthyPercentage=50` e `InstanceWarmup=300`, como o `instance_refresh` do `compute.tf`, espera terminar e testa o `/api/health` no `APP_URL` (saída `app_url`);
+  - antes de tudo, compara o `sha256sum docker-compose.prod.yml` do commit com a tag `ComposeFileSha256` do launch template (`ec2:DescribeLaunchTemplates`, só de leitura, com `Resource "*"`) e para pedindo o `apply` quando são diferentes, sem ler o state;
+  - permissão nova do deploy entra no `local.deploy_role_policy` e na lista exata de ações do `tests/cicd.tftest.hcl`. Uma trava desse teste confere a lista exata dos recursos que ligam política a uma role, nos `.tf` da pasta e do `bootstrap/` e para qualquer role: anexo novo (à role das instâncias também) entra nessa lista de propósito. A do run `iam_role` do `dados_seguranca.tftest.hcl` continua contando quem cita a role das instâncias (`aws_iam_role.ec2`);
+  - a role de deploy só existe com `create_deploy_role = true` (`aws_iam_role.deploy[0]`): saída ou recurso novo que use a role precisa tratar o caso sem ela, como o `one(aws_iam_role.deploy[*].arn)` do `outputs.tf`.
 - **Para a `feat/observabilidade`:**
+  - o `docs/nuvem/DEPLOY.md`, se for criado, só aponta para o que já existe, sem repetir o passo a passo: "O deploy", "Rollback", "Migrations: só para frente" e "Ordem com o terraform apply" do `docs/nuvem/CI-CD.md`, e "Primeiro deploy" deste guia. Duas cópias do mesmo roteiro passariam a divergir na primeira mudança (um rollback sem a conferência do compose, por exemplo);
   - os alarmes do RDS usam `aws_db_instance.barbershop_db.identifier`, e os do cache, os nós de `aws_elasticache_replication_group.cache.member_clusters` (as métricas do ElastiCache vêm por nó);
   - os do ALB (5xx, latência e hosts sem saúde) usam `aws_lb.main.arn_suffix` e `aws_lb_target_group.app.arn_suffix`, e os do Auto Scaling, `aws_autoscaling_group.app.name`. As métricas do grupo (`GroupInServiceInstances` e outras) já estão ligadas no `compute.tf`;
   - o orçamento mensal já existe (`budget.tf`, com o e-mail em `budget_alert_email`): o SNS dos alarmes não precisa repetir o aviso de custo;
@@ -819,6 +861,7 @@ O `init -upgrade` escolhe a versão nova e o `providers lock` grava os hashes da
 ## Problemas comuns
 
 - **`No valid credential sources found`** no `plan` ou no `apply`: falta credencial da AWS. Validar e testar não precisam dela; o resto precisa da conta do grupo (função `tfaws`).
+- **`reading IAM OIDC Provider (https://token.actions.githubusercontent.com): couldn't find resource`** no `plan`: o ambiente tem a role de deploy (`create_deploy_role = true`) e lê o provedor OIDC do GitHub (`create_github_oidc_provider = false`), e ele ainda não existe na conta. Aplique antes o ambiente que cria (a prod, no exemplo) ou, numa conta só desse ambiente, use `true` (seção "CI/CD").
 - **`No value for required variable` (ou o Terraform pedindo o `environment`)**: faltou o `-var-file=envs/<ambiente>.tfvars`.
 - **`Inconsistent dependency lock file`**: o `versions.tf` mudou e o lock não acompanhou. Siga "Atualizar versões".
 - **`Error acquiring the state lock`**: outra pessoa está rodando `plan` ou `apply` no mesmo ambiente. Espere ela terminar. Se a trava ficou presa porque o comando caiu no meio, `terraform force-unlock <ID da trava>` libera, mas só com certeza de que ninguém está rodando.

@@ -168,12 +168,14 @@ O `docker-compose.prod.yml` tem só `app`, `web` e `scheduler`. O banco é o RDS
 | Estágio | O que faz |
 |---|---|
 | `composer` | Só fornece o binário do Composer 2.11.2 |
-| `base` | PHP-FPM 8.4.27 com `pdo_mysql`, `redis` e OPcache (já vem ligado na imagem oficial; o build confere), `php.ini-production`, os `.ini` do BarberFlow, o bundle de CA do RDS, o pool e o healthcheck |
+| `base` | PHP-FPM 8.4.27 com `pdo_mysql`, `redis` e OPcache (já vem ligado na imagem oficial; o build confere), sem as ferramentas de compilação, `php.ini-production`, os `.ini` do BarberFlow, o bundle de CA do RDS, o pool e o healthcheck |
 | `dev` | `base` com Composer e `unzip`; o OPcache volta a conferir a data dos arquivos |
 | `vendor` | `composer install --no-dev --no-scripts` e `composer dump-autoload --optimize --no-dev` |
 | `assets` | `npm ci` e `npm run build` no Node 24 (gera o `public/build`) |
 | `web` | Nginx com o `default.conf`, o `public/` e o `public/build` |
 | `app` | `base` com o código, o `vendor` e o `public/build`, tudo do usuário `www-data`; roda `php artisan package:discover` no build e sobe como `www-data` |
+
+O CI (job `Docker` do `.github/workflows/ci.yml`) faz o build dos alvos `app` e `web` em todo pull request e passa o Trivy nas duas imagens. O deploy faz o build de novo, a partir do commit que vai para a AWS, passa o mesmo Trivy e só então manda as duas para o ECR (`docs/nuvem/CI-CD.md`). Os dois usam o BuildKit fixado pela versão e pelo digest.
 
 ### Versões fixas
 
@@ -197,6 +199,14 @@ Para atualizar, troque a versão no arquivo e rode o build de novo. A extensão 
 - OPcache ligado com os ajustes da rodada otimizada da Sprint 4 (`otimizado.ini`): 128 MB, até 20 mil arquivos e cache de caminhos. Na produção ele não confere a data dos arquivos (`validate_timestamps=0`), porque o código só muda com imagem nova. No dev confere em toda requisição.
 - Pool `www` em `pm = dynamic`, com até 10 processos (cada um usa por volta de 30 a 50 MB) e reciclagem a cada 500 requisições. O `docker.conf` oficial continua valendo: logs no stderr e `clear_env = no`, para o Laravel enxergar as variáveis do container.
 - Na imagem `app` o PHP-FPM roda como `www-data`, então ele avisa no log que ignora as linhas `user` e `group` do pool. É esperado.
+
+### Extensões do PHP
+
+- Além do que a imagem oficial já traz (`mbstring`, `curl`, `openssl`, `pdo_sqlite`, `sodium` e outras), o build compila só o `pdo_mysql` e o `redis` e confere que o OPcache está ligado.
+- **Sem a `intl`.** O Laravel 13 não exige a extensão: nenhum pacote do `composer.lock` pede `ext-intl`, e os que sugerem usam os polyfills `symfony/polyfill-intl-*`, que já estão no vendor. Ela só faria falta no `Number::` do Laravel (`Number::format`, `Number::currency` e parecidos) e nas validações de e-mail `email:dns` e `email:spoof`, que a aplicação não usa (conferido em 14/11/2026 no código das branches da aplicação, até a `feat/pagamentos-dashboard`). O CI roda os testes com a intl desligada (`docs/nuvem/CI-CD.md`), e um uso novo falha no pull request, e não na AWS. Se a aplicação passar a precisar dela, a extensão entra no estágio `base`, no mesmo `RUN` das outras, e o `:intl` sai do `ci.yml`.
+- **Sem ferramentas de compilação.** A imagem oficial do PHP (Debian) deixa instaladas as ferramentas que compilam extensões (`PHPIZE_DEPS`: `gcc`, `g++`, `make`, `autoconf` e outras). O estágio `base` tira tudo no fim do mesmo `RUN` que compila o `pdo_mysql` e o `redis`, e o build para se `gcc`, `make` ou os cabeçalhos do sistema sobrarem. A imagem `app` passou de 175 para 117 pacotes, e o Trivy, de 311 alertas altos e críticos (4 críticos) para 115 (3 críticos), em 14/11/2026. Nenhum deles tinha correção publicada nessa data, então o Trivy do CI (`--ignore-unfixed`, CRITICAL) passa. E quem invadir o container não acha um compilador pronto.
+- O tamanho da imagem não muda: os arquivos tirados ficam na camada da imagem oficial, e a camada nova só os esconde. O que conta é o sistema de arquivos final, que é o que o Trivy e o container enxergam.
+- Para compilar outra extensão, instale as ferramentas no mesmo `RUN` dela (`apt-get install $PHPIZE_DEPS`) e tire no fim, como o estágio `base` faz. O `dev` herda o `base` e também não tem compilador.
 
 ### Nginx
 
