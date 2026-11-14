@@ -1,10 +1,13 @@
 # Produção (EC2 da AWS): app, web e scheduler, com as imagens do ECR.
 # O banco (RDS) e o cache (ElastiCache) são serviços gerenciados e não estão aqui.
 #
-# Na EC2, o user_data (N4) gera o .env ao lado deste arquivo a partir do SSM e roda:
+# Na EC2, o user_data (terraform/templates/user_data.sh.tftpl) grava este arquivo e o .env ao
+# lado dele, com os parâmetros do SSM, e roda:
 #   docker compose -f docker-compose.prod.yml up -d
-# Os logs vão para o CloudWatch pelo driver awslogs, configurado no daemon do Docker da EC2
-# (por isso não há "logging:" aqui, e a homolog sobe no Docker Desktop sem credencial da AWS).
+# Os logs vão para o CloudWatch pelo driver awslogs. O padrão fica no daemon do Docker da EC2
+# (log group app, que atende o app e o scheduler); só o web tem "logging:" aqui, para escrever no
+# log group web. A homolog troca esse bloco pelo driver padrão do Docker e sobe no Docker Desktop
+# sem credencial da AWS.
 #
 # Homologação local com estas mesmas imagens: docker-compose.homolog.yml (veja docs/nuvem/DOCKER.md).
 
@@ -112,6 +115,19 @@ services:
       - no-new-privileges:true
     networks:
       - frontend
+    # Logs do Nginx no log group web do CloudWatch. Região, grupo e ID da instância vêm do .env
+    # que o user_data monta (AWSLOGS_REGION, AWSLOGS_WEB_GROUP e INSTANCE_ID). As opções repetem
+    # as do daemon.json da EC2, só com outro grupo. Sem ${VAR:?} pelo mesmo motivo das imagens:
+    # o docker-compose.homolog.yml troca este bloco inteiro pelo driver padrão do Docker.
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWSLOGS_REGION:-}
+        awslogs-group: ${AWSLOGS_WEB_GROUP:-}
+        awslogs-create-group: "false"
+        tag: "${INSTANCE_ID:-}/{{.Name}}"
+        mode: non-blocking
+        max-buffer-size: 4m
 
 networks:
   # web e app
