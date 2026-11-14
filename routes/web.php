@@ -34,9 +34,14 @@ Route::middleware('auth')->group(function () {
         ->middleware('throttle:6,1')
         ->name('verification.send');
 
-    // Telas do cliente: só depois de confirmar o e-mail.
+    // Telas do cliente: só depois de confirmar o e-mail. Minha conta vale para todos os perfis.
     Route::middleware('verified')->group(function () {
         Route::view('/account', 'account.show')->name('account.show');
+
+        Route::middleware('can:access-client')->group(function () {
+            Route::view('/booking', 'appointments.booking')->name('booking.create');
+            Route::view('/my-appointments', 'appointments.mine')->name('my-appointments.index');
+        });
     });
 
     Route::middleware('can:access-admin')->group(function () {

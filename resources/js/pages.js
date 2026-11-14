@@ -6,6 +6,9 @@ const JSON_HEADERS = { Accept: 'application/json', 'Content-Type': 'application/
 const HTTP_NO_CONTENT = 204;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
+const HTTP_NOT_FOUND = 404;
+/* 409: a API recusou por causa da agenda (ex.: excluir um cadastro com agendamento futuro). */
+const HTTP_CONFLICT = 409;
 /* 419: o token CSRF não vale mais (a sessão expirou ou foi encerrada em outra aba). */
 const HTTP_SESSION_EXPIRED = 419;
 const HTTP_UNPROCESSABLE = 422;
@@ -22,19 +25,75 @@ const LOGIN_REDIRECT_INTERVAL_MS = 10000;
 /* Uma consulta parada há mais tempo que isso vira erro, para a tela não ficar em "Carregando..." para sempre. */
 const LOAD_TIMEOUT_MS = 15000;
 const SEARCH_DEBOUNCE_MS = 300;
-/* Maior página que a API aceita: as listas do Agendar e da Agenda carregam até esse número de itens. */
+/* Maior página que a API aceita: as listas do Agendar carregam até esse número de itens. */
 const MAX_PER_PAGE = 100;
+/* A agenda do dia e Meus horários leem até esse número de páginas (de 100 itens cada). */
+const MAX_PAGES = 10;
 
-const OPENING_HOUR = 9;
-const CLOSING_HOUR = 19;
-const SLOT_MINUTES = 30;
+const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
+const SECONDS_PER_HOUR = 3600;
+const MS_PER_SECOND = 1000;
+const DAYS_PER_WEEK = 7;
+
+/* Fuso da barbearia (meta app-timezone do layout). "Hoje" e "agora" da agenda são sempre nele. */
+const APP_TIMEZONE = document.querySelector('meta[name="app-timezone"]')?.content || undefined;
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+/* As datas da agenda chegam como "2026-11-16" e viram meia-noite em UTC (ver parseDay): o formato também usa UTC. */
+const LONG_DATE = new Intl.DateTimeFormat('pt-BR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+});
+const SHORT_DATE = new Intl.DateTimeFormat('pt-BR', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'UTC',
+});
 
 const STATUS_LABELS = {
     active: { text: 'Ativo', badge: 'text-bg-success' },
     inactive: { text: 'Inativo', badge: 'text-bg-secondary' },
+};
+
+/*
+ * Cor da etiqueta de cada status do agendamento. O nome em português e as regras de cada status
+ * vêm do servidor (AppointmentStatus::catalog(), no data-statuses das telas).
+ */
+const APPOINTMENT_BADGES = {
+    scheduled: 'text-bg-secondary',
+    confirmed: 'text-bg-primary',
+    in_progress: 'text-bg-warning',
+    completed: 'text-bg-success',
+    cancelled: 'text-bg-light border',
+    no_show: 'text-bg-danger',
+};
+
+/*
+ * Botões do detalhe do agendamento, na ordem em que aparecem. Cada um muda para o status da chave e só
+ * aparece quando a transição vale (catalog().transitions). Os com confirm pedem confirmação antes.
+ */
+const STATUS_ACTIONS = {
+    confirmed: { label: 'Confirmar', className: 'btn-primary' },
+    in_progress: { label: 'Iniciar', className: 'btn-primary' },
+    completed: { label: 'Concluir', className: 'btn-success' },
+    no_show: {
+        label: 'Faltou',
+        className: 'btn-outline-danger',
+        confirm: (who, time) => `Marcar que ${who} faltou ao horário das ${time}? Essa mudança não pode ser desfeita.`,
+        confirmLabel: 'Sim, marcar a falta',
+    },
+    cancelled: {
+        label: 'Cancelar',
+        className: 'btn-outline-danger',
+        confirm: (who, time) => `Cancelar o agendamento de ${who} às ${time}? Essa mudança não pode ser desfeita.`,
+        confirmLabel: 'Sim, cancelar',
+    },
 };
 
 /* text-break deixa nome e e-mail longos quebrarem linha, para a tabela caber no celular. */
@@ -95,7 +154,7 @@ function goToLogin() {
 
 /*
  * Chamada à API com o cookie da sessão das telas. O Sanctum reconhece as telas pelo Referer (por isso o
- * referrerPolicy) e confere o X-CSRF-TOKEN nos POST, PUT e DELETE.
+ * referrerPolicy) e confere o X-CSRF-TOKEN nos POST, PUT, PATCH e DELETE.
  * - 401 (sem login) e 419 (sessão expirada) levam ao login;
  * - 403 devolve a mensagem de permissão, para a tela mostrar.
  */
@@ -167,7 +226,28 @@ async function fetchItems(url) {
     return page.data;
 }
 
-function showAlert(container, type, message) {
+/*
+ * Todos os itens de uma listagem, de 100 em 100, até MAX_PAGES páginas. Devolve { items, complete }:
+ * complete fica false quando ainda sobrou página sem carregar.
+ */
+async function fetchAllItems(url) {
+    const items = [];
+    const separator = url.includes('?') ? '&' : '?';
+
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+        const result = await fetchPage(`${url}${separator}per_page=${MAX_PER_PAGE}&page=${page}`);
+        items.push(...result.data);
+
+        if (result.meta.current_page >= result.meta.last_page) {
+            return { items, complete: true };
+        }
+    }
+
+    return { items, complete: false };
+}
+
+/* Alerta do Bootstrap com o botão de fechar. Com append, entra depois dos alertas que já estão lá. */
+function showAlert(container, type, message, { append = false } = {}) {
     const alert = document.createElement('div');
     alert.className = `alert alert-${type} alert-dismissible fade show`;
     alert.setAttribute('role', 'alert');
@@ -180,7 +260,13 @@ function showAlert(container, type, message) {
     close.setAttribute('aria-label', 'Fechar');
     alert.append(close);
 
-    container.replaceChildren(alert);
+    if (append) {
+        container.append(alert);
+    } else {
+        container.replaceChildren(alert);
+    }
+
+    return alert;
 }
 
 /* Alerta de erro com o botão "Tentar de novo". Devolve o botão, para quem chama poder dar foco nele. */
@@ -215,6 +301,15 @@ function messageRow(colspan, text) {
     return row;
 }
 
+/* Parágrafo de aviso das listas (ex.: "Nenhum agendamento neste dia."). */
+function emptyMessage(text) {
+    const paragraph = document.createElement('p');
+    paragraph.className = 'text-body-secondary mb-0';
+    paragraph.textContent = text;
+
+    return paragraph;
+}
+
 function capitalize(text) {
     return text.charAt(0).toUpperCase() + text.slice(1);
 }
@@ -235,19 +330,52 @@ function removeDescription(field, id) {
     }
 }
 
+/*
+ * Onde o erro de um campo aparece: no próprio campo ou, num grupo de opções (ex.: os horários livres,
+ * que são vários botões de rádio), no elemento marcado com data-error-group. null quando o campo não
+ * está na tela.
+ */
+function errorTarget(form, name) {
+    const target = form.querySelector(`[data-error-group="${name}"]`) ?? form.elements.namedItem(name);
+
+    return target instanceof Element ? target : null;
+}
+
+/* Tira o erro de validação de um campo. */
+function clearFieldError(form, name) {
+    const feedback = form.querySelector(`[data-error-for="${name}"]`);
+    const field = errorTarget(form, name);
+
+    if (feedback) {
+        feedback.textContent = '';
+    }
+
+    if (field && feedback) {
+        field.classList.remove('is-invalid');
+        field.removeAttribute('aria-invalid');
+        removeDescription(field, feedback.id);
+    }
+}
+
 /* Limpa os erros de validação mostrados no formulário e o alerta dele. */
 function clearFormErrors(form, formAlerts) {
     formAlerts.replaceChildren();
-    form.querySelectorAll('[data-error-for]').forEach((feedback) => {
-        const field = form.elements.namedItem(feedback.dataset.errorFor);
-        feedback.textContent = '';
+    form.querySelectorAll('[data-error-for]').forEach((feedback) => clearFieldError(form, feedback.dataset.errorFor));
+}
 
-        if (field) {
-            field.classList.remove('is-invalid');
-            field.removeAttribute('aria-invalid');
-            removeDescription(field, feedback.id);
-        }
-    });
+/* Dá foco no primeiro campo com erro. Num grupo de opções, na opção marcada, na primeira ou no próprio grupo. */
+function focusFirstInvalid(form) {
+    const invalid = form.querySelector('[aria-invalid="true"]');
+
+    if (!invalid) {
+        return;
+    }
+
+    const target = invalid.matches('input, select, textarea')
+        ? invalid
+        : (invalid.querySelector('input:checked') ?? invalid.querySelector('input') ?? invalid);
+
+    target.focus();
 }
 
 /* Mostra os erros do 422 embaixo de cada campo. Erro de campo que não está na tela vai para o alerta do formulário. */
@@ -255,7 +383,7 @@ function showFormErrors(form, formAlerts, errors) {
     const orphanMessages = [];
 
     Object.entries(errors).forEach(([name, messages]) => {
-        const field = form.elements.namedItem(name);
+        const field = errorTarget(form, name);
         const feedback = form.querySelector(`[data-error-for="${name}"]`);
 
         if (!field || !feedback) {
@@ -274,7 +402,7 @@ function showFormErrors(form, formAlerts, errors) {
         showAlert(formAlerts, 'danger', orphanMessages.join(' '));
     }
 
-    form.querySelector('[aria-invalid="true"]')?.focus();
+    focusFirstInvalid(form);
 }
 
 /*
@@ -309,14 +437,16 @@ function fillSelect(select, items, placeholder) {
     select.replaceChildren(empty, ...options);
 }
 
-function timeSlots() {
-    const slots = [];
-
-    for (let minutes = OPENING_HOUR * MINUTES_PER_HOUR; minutes < CLOSING_HOUR * MINUTES_PER_HOUR; minutes += SLOT_MINUTES) {
-        slots.push(formatMinutes(minutes));
+/* Acrescenta a opção do item ({ id, name }) quando ela não está na lista (ex.: barbeiro excluído). */
+function ensureOption(select, item) {
+    if (!item || Array.from(select.options).some((option) => option.value === String(item.id))) {
+        return;
     }
 
-    return slots;
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = item.name;
+    select.append(option);
 }
 
 function formatMinutes(totalMinutes) {
@@ -326,15 +456,154 @@ function formatMinutes(totalMinutes) {
     return `${hours}:${minutes}`;
 }
 
-function today() {
-    const now = new Date();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
+/* "10:00:00" ou "10:00" em minutos desde a meia-noite (600). */
+function toMinutes(time) {
+    const [hours, minutes] = String(time).split(':').map(Number);
 
-    return `${now.getFullYear()}-${month}-${day}`;
+    return hours * MINUTES_PER_HOUR + minutes;
 }
 
-/* Cadastros: barbeiros, clientes e serviços (funcionam de verdade com a API). */
+/* "10:00:00" vira "10:00". */
+function shortTime(time) {
+    return String(time).slice(0, 5);
+}
+
+/* "10:00 às 10:30", do início ao fim do agendamento. */
+function timeRange(appointment) {
+    return `${shortTime(appointment.start_time)} às ${shortTime(appointment.end_time)}`;
+}
+
+/* "2026-11-16" vira a meia-noite desse dia em UTC (só para contar dias, sem fuso no meio), ou null se não for uma data. */
+function parseDay(text) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text ?? '');
+
+    if (!match) {
+        return null;
+    }
+
+    const [year, month, day] = match.slice(1).map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+
+    return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
+}
+
+function formatDay(date) {
+    return date.toISOString().slice(0, 10);
+}
+
+function addDays(day, amount) {
+    const date = parseDay(day);
+    date.setUTCDate(date.getUTCDate() + amount);
+
+    return formatDay(date);
+}
+
+/* Dia da semana no padrão ISO, de 1 (segunda) a 7 (domingo), como o BUSINESS_DAYS. */
+function isoWeekday(day) {
+    return parseDay(day).getUTCDay() || DAYS_PER_WEEK;
+}
+
+/* "Segunda-feira, 16 de novembro de 2026", para títulos. */
+function longDate(day) {
+    return capitalize(longDateInSentence(day));
+}
+
+/* "segunda-feira, 16 de novembro de 2026", para o meio de uma frase. */
+function longDateInSentence(day) {
+    return LONG_DATE.format(parseDay(day));
+}
+
+/* "seg., 16/11/2026". */
+function shortDate(day) {
+    return SHORT_DATE.format(parseDay(day));
+}
+
+/*
+ * Agora no fuso da barbearia: { day: "2026-11-16", seconds: segundos desde a meia-noite }. O relógio é o
+ * do navegador; a API confere tudo de novo com o relógio do servidor.
+ */
+function nowInAppTimezone() {
+    const now = new Date();
+
+    try {
+        const parts = Object.fromEntries(
+            new Intl.DateTimeFormat('en-CA', {
+                timeZone: APP_TIMEZONE,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hourCycle: 'h23',
+            })
+                .formatToParts(now)
+                .map((part) => [part.type, part.value]),
+        );
+
+        return {
+            day: `${parts.year}-${parts.month}-${parts.day}`,
+            seconds: Number(parts.hour) * SECONDS_PER_HOUR + Number(parts.minute) * SECONDS_PER_MINUTE + Number(parts.second),
+        };
+    } catch {
+        /* Fuso que o navegador não conhece: fica o do próprio navegador. */
+        const pad = (value) => String(value).padStart(2, '0');
+
+        return {
+            day: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+            seconds: now.getHours() * SECONDS_PER_HOUR + now.getMinutes() * SECONDS_PER_MINUTE + now.getSeconds(),
+        };
+    }
+}
+
+function today() {
+    return nowInAppTimezone().day;
+}
+
+/*
+ * Segundos que faltam até o horário (negativo quando ele já passou). A conta é feita com dia e hora "de
+ * parede" no fuso da barbearia, como o servidor faz.
+ */
+function secondsUntil(day, time) {
+    const now = nowInAppTimezone();
+    const target = parseDay(day).getTime() / MS_PER_SECOND + toMinutes(time) * SECONDS_PER_MINUTE;
+
+    return target - (parseDay(now.day).getTime() / MS_PER_SECOND + now.seconds);
+}
+
+/* Etiqueta com o status do agendamento em português. */
+function statusBadge(appointment) {
+    const badge = document.createElement('span');
+    badge.className = `badge ${APPOINTMENT_BADGES[appointment.status] ?? 'text-bg-light border'}`;
+    badge.textContent = appointment.status_label ?? appointment.status;
+
+    return badge;
+}
+
+/* Lista de nomes em português: "A", "A e B", "A, B e C". */
+function joinNames(names) {
+    return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} e ${names[names.length - 1]}`;
+}
+
+/* Linha "nome: valor" de um resumo em <dl>. */
+function summaryLine(label, value) {
+    const line = document.createElement('div');
+    line.className = 'd-flex justify-content-between gap-3 py-1';
+
+    const term = document.createElement('dt');
+    term.className = 'fw-normal text-body-secondary';
+    term.textContent = label;
+
+    const description = document.createElement('dd');
+    description.className = 'mb-0 fw-semibold text-end text-break';
+    description.textContent = value;
+
+    line.append(term, description);
+
+    return line;
+}
+
+/* Cadastros: barbeiros, clientes e serviços. */
 function initCrud(root) {
     const resource = root.dataset.resource;
     const singular = root.dataset.singular;
@@ -518,8 +787,7 @@ function initCrud(root) {
 
             /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
             if (error instanceof ApiError) {
-                showAlert(alerts, 'danger', error.message);
-                loadErrorAlert = alerts.querySelector('.alert');
+                loadErrorAlert = showAlert(alerts, 'danger', error.message);
 
                 return;
             }
@@ -626,7 +894,9 @@ function initCrud(root) {
             deleteModal.hide();
 
             if (!result.ok) {
-                showAlert(alerts, 'danger', result.data?.message ?? 'Não foi possível excluir.');
+                /* 409: o cadastro tem agendamento futuro, e a mensagem da API diz o que fazer antes de excluir. */
+                const type = result.status === HTTP_CONFLICT ? 'warning' : 'danger';
+                showAlert(alerts, type, result.data?.message ?? 'Não foi possível excluir.');
 
                 return;
             }
@@ -652,180 +922,958 @@ function initCrud(root) {
     load();
 }
 
-/* Agenda: só visual. A API ainda não tem agendamentos, então a grade fica sem horários marcados. */
+/* Texto que o leitor de tela lê num agendamento: horário, cliente, serviço e status. */
+function describeAppointment(appointment) {
+    return `${timeRange(appointment)}, ${appointment.client?.name ?? 'cliente'}, ${appointment.service?.name ?? 'serviço'}, ${appointment.status_label}`;
+}
+
+/*
+ * Agenda do dia: uma coluna por barbeiro (o barbeiro vê só a dele), com cada agendamento num bloco da
+ * altura da duração. No celular, as colunas viram uma lista por barbeiro. Clicar num agendamento abre o
+ * detalhe, com as mudanças de status que valem agora e o atalho para remarcar.
+ */
 function initSchedule(root) {
+    const opening = toMinutes(root.dataset.opening);
+    const closing = toMinutes(root.dataset.closing);
+    const slotMinutes = Math.max(1, Number(root.dataset.slotMinutes) || 1);
+    const statuses = JSON.parse(root.dataset.statuses);
+    const createUrl = root.dataset.createUrl;
+    /* O barbeiro logado vê só a própria coluna. */
+    const ownBarber = root.dataset.ownBarberId
+        ? { id: Number(root.dataset.ownBarberId), name: root.dataset.ownBarberName }
+        : null;
+
     const dateInput = root.querySelector('[data-date]');
-    const head = root.querySelector('[data-schedule-head]');
-    const body = root.querySelector('[data-schedule-body]');
-    const table = body.closest('table');
+    const dayTitle = root.querySelector('[data-day-title]');
+    const newLink = root.querySelector('[data-new-appointment]');
     const alerts = root.querySelector('[data-alerts]');
-    const loadingStatus = root.querySelector('[data-loading-status]');
+    const live = root.querySelector('[data-live]');
+    const board = root.querySelector('[data-board]');
+    const boardMessage = root.querySelector('[data-board-message]');
+    const gridCard = root.querySelector('[data-grid-card]');
+    const grid = root.querySelector('[data-grid]');
+    const list = root.querySelector('[data-list]');
+    const inactive = root.querySelector('[data-inactive]');
 
-    dateInput.value = today();
+    const modalElement = root.querySelector('[data-appointment-modal]');
+    const modal = new Modal(modalElement);
+    const modalTitle = root.querySelector('[data-modal-title]');
+    const modalAlerts = root.querySelector('[data-modal-alerts]');
+    const modalDetails = root.querySelector('[data-modal-details]');
+    const modalHint = root.querySelector('[data-modal-hint]');
+    const modalActions = root.querySelector('[data-modal-actions]');
+    const confirmArea = root.querySelector('[data-modal-confirm]');
+    const confirmText = root.querySelector('[data-modal-confirm-text]');
+    const confirmBack = root.querySelector('[data-modal-confirm-back]');
+    const confirmYes = root.querySelector('[data-modal-confirm-yes]');
 
-    function render(barbers) {
-        const timeHeader = document.createElement('th');
-        timeHeader.scope = 'col';
-        timeHeader.className = 'text-nowrap';
-        timeHeader.textContent = 'Horário';
+    const initialParams = new URLSearchParams(window.location.search);
+    let day = parseDay(initialParams.get('date')) ? initialParams.get('date') : today();
+    let barbers = null;
+    let appointments = [];
+    /* Agendamento aberto no detalhe e o status que espera confirmação (cancelar ou faltou). */
+    let current = null;
+    let pendingStatus = null;
+    /* Conta as cargas: se a pessoa troca de dia rápido, só a resposta da última é desenhada. */
+    let loadCount = 0;
+    let loadErrorAlert = null;
 
-        const barberHeaders = barbers.map((barber) => {
-            const header = document.createElement('th');
-            header.scope = 'col';
-            header.textContent = barber.name;
+    function setDay(newDay) {
+        if (!parseDay(newDay)) {
+            return;
+        }
 
-            return header;
+        day = newDay;
+        dateInput.value = day;
+        dayTitle.textContent = day === today() ? `${longDate(day)} (hoje)` : longDate(day);
+        newLink.href = `${createUrl}?date=${day}`;
+
+        /* O dia fica no endereço: recarregar a página, ou voltar do Agendar, abre no mesmo dia. */
+        const url = new URL(window.location.href);
+        url.searchParams.set('date', day);
+        url.searchParams.delete('notice');
+        window.history.replaceState(null, '', url);
+
+        load();
+    }
+
+    async function loadBarbers() {
+        if (ownBarber) {
+            return [ownBarber];
+        }
+
+        return fetchItems(`/api/barbers?per_page=${MAX_PER_PAGE}`);
+    }
+
+    async function load() {
+        const loadNumber = ++loadCount;
+
+        board.setAttribute('aria-busy', 'true');
+        boardMessage.hidden = false;
+        boardMessage.textContent = 'Carregando a agenda...';
+        live.textContent = 'Carregando a agenda...';
+        gridCard.hidden = true;
+        [grid, list, inactive].forEach((element) => element.replaceChildren());
+
+        try {
+            const [barberList, result] = await Promise.all([
+                barbers ?? loadBarbers(),
+                fetchAllItems(`/api/appointments?date=${day}`),
+            ]);
+
+            if (loadNumber !== loadCount) {
+                return;
+            }
+
+            barbers = barberList;
+            appointments = result.items;
+            render();
+            loadErrorAlert?.remove();
+            loadErrorAlert = null;
+
+            const total = appointments.length;
+            const count = total === 1 ? '1 agendamento' : `${total === 0 ? 'nenhum' : total} agendamento${total === 0 ? '' : 's'}`;
+            live.textContent = barbers.length === 0 && total === 0 ? boardMessage.textContent : `Agenda de ${longDateInSentence(day)}: ${count}.`;
+
+            if (!result.complete) {
+                loadErrorAlert = showAlert(alerts, 'warning', 'Este dia tem agendamentos demais para a tela: só parte deles aparece.');
+            }
+        } catch (error) {
+            if (loadNumber !== loadCount) {
+                return;
+            }
+
+            boardMessage.textContent = 'Não foi possível carregar a agenda.';
+            live.textContent = '';
+
+            /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
+            if (error instanceof ApiError) {
+                loadErrorAlert = showAlert(alerts, 'danger', error.message);
+
+                return;
+            }
+
+            const retry = showRetryAlert(alerts, API_UNREACHABLE_MESSAGE, () => {
+                alerts.replaceChildren();
+                load();
+            });
+            loadErrorAlert = retry.closest('.alert');
+        } finally {
+            if (loadNumber === loadCount) {
+                board.removeAttribute('aria-busy');
+            }
+        }
+    }
+
+    /*
+     * Barbeiros do dia: os da lista e, no histórico, quem foi excluído mas tem algum dos agendamentos
+     * informados naquele dia.
+     */
+    function barbersFor(items) {
+        const columns = new Map(barbers.map((barber) => [barber.id, barber.name]));
+
+        items.forEach((appointment) => {
+            if (!columns.has(appointment.barber_id)) {
+                columns.set(appointment.barber_id, appointment.barber?.name ?? `Barbeiro ${appointment.barber_id}`);
+            }
         });
 
-        const headerRow = document.createElement('tr');
-        headerRow.append(timeHeader, ...barberHeaders);
-        head.replaceChildren(headerRow);
+        return [...columns].map(([id, name]) => ({ id, name }));
+    }
 
-        if (barbers.length === 0) {
-            body.replaceChildren(messageRow(1, 'Nenhum barbeiro cadastrado. Cadastre barbeiros para montar a agenda.'));
+    function render() {
+        /* Na grade, só ganha coluna extra quem ocupa horário; na lista do celular entram também os cancelados. */
+        const occupying = appointments.filter((appointment) => statuses[appointment.status]?.occupies_time);
+        const listed = barbersFor(appointments);
+
+        if (listed.length === 0) {
+            boardMessage.textContent = 'Nenhum barbeiro cadastrado. Cadastre barbeiros para montar a agenda.';
 
             return;
         }
 
-        const lines = timeSlots().map((slot) => {
-            const row = document.createElement('tr');
-            const time = document.createElement('th');
-            time.scope = 'row';
-            time.className = 'text-body-secondary fw-normal';
-            time.textContent = slot;
-            row.append(time);
-
-            barbers.forEach(() => {
-                const cell = document.createElement('td');
-                cell.className = 'text-body-tertiary';
-                cell.textContent = '—';
-                row.append(cell);
-            });
-
-            return row;
-        });
-
-        body.replaceChildren(...lines);
+        boardMessage.hidden = true;
+        renderGrid(barbersFor(occupying), occupying);
+        renderList(listed);
+        renderInactive();
     }
 
-    /* O status escondido (aria-live) avisa o leitor de tela que a agenda está carregando e quando terminou. */
-    loadingStatus.textContent = 'Carregando a agenda...';
-    table.setAttribute('aria-busy', 'true');
+    function openButton(appointment, className) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = className;
+        button.dataset.appointmentId = appointment.id;
+        button.setAttribute('aria-label', describeAppointment(appointment));
+        button.addEventListener('click', () => openDetails(appointment.id));
 
-    fetchItems(`/api/barbers?per_page=${MAX_PER_PAGE}`)
-        .then((barbers) => {
-            render(barbers);
-            loadingStatus.textContent = 'Agenda carregada.';
-        })
-        .catch((error) => {
-            loadingStatus.textContent = '';
-            body.replaceChildren(messageRow(1, 'Não foi possível carregar os barbeiros.'));
-            showAlert(alerts, 'danger', error instanceof ApiError ? error.message : API_UNREACHABLE_MESSAGE);
-        })
-        .finally(() => table.removeAttribute('aria-busy'));
+        return button;
+    }
+
+    function textSpan(className, text) {
+        const span = document.createElement('span');
+        span.className = className;
+        span.textContent = text;
+
+        return span;
+    }
+
+    /*
+     * Colunas com os blocos. A grade vai da abertura ao fechamento e cresce, de fatia em fatia, se algum
+     * agendamento sair do expediente (ex.: o expediente mudou depois de agendar). Altura e posição dos
+     * blocos vão por el.style, que a CSP permite (ela barra só o style="" escrito no HTML).
+     */
+    function renderGrid(columns, occupying) {
+        const first = Math.min(opening, ...occupying.map((appointment) => toMinutes(appointment.start_time)));
+        const last = Math.max(closing, ...occupying.map((appointment) => toMinutes(appointment.end_time)));
+        const gridStart = opening - Math.ceil((opening - first) / slotMinutes) * slotMinutes;
+        const gridEnd = opening + Math.ceil((last - opening) / slotMinutes) * slotMinutes;
+        const rows = (gridEnd - gridStart) / slotMinutes;
+        const height = `calc(${rows} * var(--schedule-slot-height))`;
+
+        const schedule = document.createElement('div');
+        schedule.className = 'schedule';
+
+        /* Coluna das horas: só visual, porque cada bloco já diz o horário para o leitor de tela. */
+        const times = document.createElement('div');
+        times.className = 'schedule-times';
+        times.setAttribute('aria-hidden', 'true');
+
+        const corner = document.createElement('div');
+        corner.className = 'schedule-head';
+
+        const labels = document.createElement('div');
+        labels.className = 'schedule-labels';
+        labels.style.height = height;
+
+        for (let minutes = gridStart; minutes < gridEnd; minutes += slotMinutes) {
+            labels.append(textSpan('schedule-time', formatMinutes(minutes)));
+        }
+
+        times.append(corner, labels);
+        schedule.append(times);
+
+        columns.forEach((column) => {
+            const section = document.createElement('section');
+            section.className = 'schedule-column';
+            section.setAttribute('aria-labelledby', `schedule-column-${column.id}`);
+
+            const head = document.createElement('h3');
+            head.className = 'schedule-head';
+            head.id = `schedule-column-${column.id}`;
+            head.append(textSpan('text-truncate', column.name));
+
+            const body = document.createElement('div');
+            body.className = 'schedule-body';
+            body.style.height = height;
+
+            const own = occupying.filter((appointment) => appointment.barber_id === column.id);
+
+            if (own.length === 0) {
+                body.append(textSpan('visually-hidden', 'Nenhum agendamento neste dia.'));
+            }
+
+            own.forEach((appointment) => {
+                const start = toMinutes(appointment.start_time);
+                const end = toMinutes(appointment.end_time);
+                const block = openButton(appointment, 'schedule-block');
+                block.dataset.status = appointment.status;
+                block.style.top = `calc(${(start - gridStart) / slotMinutes} * var(--schedule-slot-height))`;
+                block.style.height = `calc(${(end - start) / slotMinutes} * var(--schedule-slot-height))`;
+                block.append(
+                    textSpan('schedule-block-time', timeRange(appointment)),
+                    textSpan('fw-semibold', appointment.client?.name ?? ''),
+                    textSpan('', appointment.service?.name ?? ''),
+                    textSpan('schedule-block-status', appointment.status_label),
+                );
+                body.append(block);
+            });
+
+            section.append(head, body);
+            schedule.append(section);
+        });
+
+        grid.replaceChildren(schedule);
+        gridCard.hidden = columns.length === 0;
+    }
+
+    /* Item de lista de um agendamento (celular e "Cancelados e faltas"). */
+    function listItem(appointment, withBarber = false) {
+        const item = document.createElement('li');
+        item.className = 'list-group-item p-0';
+
+        const button = openButton(
+            appointment,
+            'list-group-item-action border-0 bg-transparent w-100 text-start d-flex flex-wrap gap-2 justify-content-between align-items-center px-3 py-2',
+        );
+
+        const text = document.createElement('span');
+        text.className = 'd-flex flex-column';
+        text.append(textSpan('fw-semibold', timeRange(appointment)));
+
+        const who = withBarber
+            ? `${appointment.client?.name ?? ''} com ${appointment.barber?.name ?? ''}`
+            : (appointment.client?.name ?? '');
+        text.append(textSpan('text-break', who), textSpan('small text-body-secondary', appointment.service?.name ?? ''));
+
+        if (withBarber) {
+            button.setAttribute('aria-label', `${describeAppointment(appointment)}, com ${appointment.barber?.name ?? 'o barbeiro'}`);
+        }
+
+        button.append(text, statusBadge(appointment));
+        item.append(button);
+
+        return item;
+    }
+
+    function renderList(columns) {
+        const sections = columns.map((column) => {
+            const section = document.createElement('section');
+            section.className = 'mb-4';
+            section.setAttribute('aria-labelledby', `schedule-list-${column.id}`);
+
+            const title = document.createElement('h3');
+            title.className = 'h6 mb-2';
+            title.id = `schedule-list-${column.id}`;
+            title.textContent = column.name;
+            section.append(title);
+
+            const own = appointments.filter((appointment) => appointment.barber_id === column.id);
+
+            if (own.length === 0) {
+                section.append(emptyMessage('Nenhum agendamento neste dia.'));
+
+                return section;
+            }
+
+            const items = document.createElement('ul');
+            items.className = 'list-group';
+            items.append(...own.map((appointment) => listItem(appointment)));
+            section.append(items);
+
+            return section;
+        });
+
+        list.replaceChildren(...sections);
+    }
+
+    function renderInactive() {
+        const others = appointments.filter((appointment) => !statuses[appointment.status]?.occupies_time);
+
+        if (others.length === 0) {
+            inactive.replaceChildren();
+
+            return;
+        }
+
+        const title = document.createElement('h3');
+        title.className = 'h6 mb-2';
+        title.textContent = 'Cancelados e faltas';
+
+        const items = document.createElement('ul');
+        items.className = 'list-group';
+        items.append(...others.map((appointment) => listItem(appointment, true)));
+
+        inactive.replaceChildren(title, items);
+    }
+
+    /* Mudanças de status que valem agora: as do catálogo, e as que pedem o início só depois dele. */
+    function availableActions(appointment) {
+        const rules = statuses[appointment.status];
+        const started = secondsUntil(appointment.date, appointment.start_time) <= 0;
+        const now = [];
+        const later = [];
+
+        Object.keys(STATUS_ACTIONS).forEach((status) => {
+            if (!rules?.transitions.includes(status)) {
+                return;
+            }
+
+            if (statuses[status]?.requires_start && !started) {
+                later.push(status);
+            } else {
+                now.push(status);
+            }
+        });
+
+        return { now, later };
+    }
+
+    function detail(term, value) {
+        const dt = document.createElement('dt');
+        dt.className = 'col-sm-4 fw-normal text-body-secondary';
+        dt.textContent = term;
+
+        const dd = document.createElement('dd');
+        dd.className = 'col-sm-8 text-break';
+
+        if (value instanceof Node) {
+            dd.append(value);
+        } else {
+            dd.textContent = value;
+        }
+
+        return [dt, dd];
+    }
+
+    function renderDetails() {
+        const appointment = current;
+        const { now, later } = availableActions(appointment);
+
+        modalTitle.textContent = `${appointment.client?.name ?? 'Agendamento'} às ${shortTime(appointment.start_time)}`;
+
+        const details = [
+            ...detail('Cliente', appointment.client?.name ?? ''),
+            ...detail('Barbeiro', appointment.barber?.name ?? ''),
+            ...detail('Serviço', appointment.service?.name ?? ''),
+            ...detail('Data', longDate(appointment.date)),
+            ...detail('Horário', timeRange(appointment)),
+            ...detail('Status', statusBadge(appointment)),
+            ...detail('Valor', currency.format(Number(appointment.price))),
+        ];
+
+        if (appointment.notes) {
+            details.push(...detail('Observações', appointment.notes));
+        }
+
+        modalDetails.replaceChildren(...details);
+
+        const waiting = later.map((status) => STATUS_ACTIONS[status].label);
+        modalHint.hidden = waiting.length === 0;
+        modalHint.textContent = waiting.length === 0
+            ? ''
+            : `${joinNames(waiting)} ${waiting.length === 1 ? 'fica disponível' : 'ficam disponíveis'} a partir das ${shortTime(appointment.start_time)} de ${shortDate(appointment.date)}.`;
+
+        const buttons = now.map((status) => {
+            const action = STATUS_ACTIONS[status];
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `btn ${action.className}`;
+            button.textContent = action.label;
+            button.dataset.status = status;
+
+            if (action.confirm) {
+                button.dataset.confirm = 'true';
+            }
+
+            button.addEventListener('click', () => (action.confirm ? askConfirmation(status) : changeStatus(status)));
+
+            return button;
+        });
+
+        if (statuses[appointment.status]?.reschedulable) {
+            const reschedule = document.createElement('a');
+            reschedule.className = 'btn btn-outline-secondary';
+            reschedule.href = `${createUrl}?appointment=${appointment.id}`;
+            reschedule.textContent = 'Remarcar';
+            buttons.push(reschedule);
+        }
+
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'btn btn-secondary';
+        close.setAttribute('data-bs-dismiss', 'modal');
+        close.textContent = 'Fechar';
+
+        modalActions.replaceChildren(...buttons, close);
+        confirmArea.hidden = true;
+        modalActions.hidden = false;
+        pendingStatus = null;
+    }
+
+    function openDetails(id) {
+        current = appointments.find((appointment) => appointment.id === id) ?? null;
+
+        if (!current) {
+            return;
+        }
+
+        modalAlerts.replaceChildren();
+        renderDetails();
+        modal.show();
+    }
+
+    function askConfirmation(status) {
+        const action = STATUS_ACTIONS[status];
+        pendingStatus = status;
+        confirmText.textContent = action.confirm(current.client?.name ?? 'o cliente', shortTime(current.start_time));
+        confirmYes.textContent = action.confirmLabel;
+        modalActions.hidden = true;
+        confirmArea.hidden = false;
+        confirmBack.focus();
+    }
+
+    function setActionsDisabled(disabled) {
+        [...modalActions.querySelectorAll('button'), confirmBack, confirmYes].forEach((button) => {
+            button.disabled = disabled;
+        });
+    }
+
+    /*
+     * Depois de mudar o status, o foco vai para a próxima ação que leva o atendimento adiante (ex.: Concluir
+     * depois de Iniciar) ou, sem ela, para Fechar. Nunca para Cancelar ou Faltou.
+     */
+    function focusFirstAction() {
+        const forward = modalActions.querySelector('button[data-status]:not([data-confirm])');
+        (forward ?? modalActions.querySelector('[data-bs-dismiss="modal"]'))?.focus();
+    }
+
+    async function changeStatus(status) {
+        const appointment = current;
+        setActionsDisabled(true);
+        modalAlerts.replaceChildren();
+
+        try {
+            const result = await apiRequest('PATCH', `/api/appointments/${appointment.id}/status`, { status });
+
+            if (result.ok) {
+                appointments = appointments.map((item) => (item.id === result.data.id ? result.data : item));
+                render();
+
+                if (current?.id === result.data.id) {
+                    current = result.data;
+                    renderDetails();
+                    focusFirstAction();
+                }
+
+                /* O alerta (role="alert") também avisa o leitor de tela. */
+                showAlert(
+                    modalAlerts,
+                    'success',
+                    `Agendamento de ${result.data.client?.name ?? 'cliente'} às ${shortTime(result.data.start_time)} mudou para ${result.data.status_label}.`,
+                );
+
+                return;
+            }
+
+            const message = result.data?.errors?.status?.[0] ?? result.data?.message ?? 'Não foi possível mudar o status. Tente de novo.';
+            showAlert(modalAlerts, 'danger', message);
+
+            /* 422: o agendamento pode ter mudado em outro lugar. A agenda é lida de novo e o detalhe acompanha. */
+            if (result.status === HTTP_UNPROCESSABLE) {
+                await load();
+                const fresh = appointments.find((item) => item.id === appointment.id);
+
+                if (fresh && current?.id === fresh.id) {
+                    current = fresh;
+                    renderDetails();
+                    focusFirstAction();
+                }
+            }
+        } catch {
+            showAlert(modalAlerts, 'danger', API_UNREACHABLE_MESSAGE);
+        } finally {
+            setActionsDisabled(false);
+        }
+    }
+
+    root.querySelector('[data-day-previous]').addEventListener('click', () => setDay(addDays(day, -1)));
+    root.querySelector('[data-day-next]').addEventListener('click', () => setDay(addDays(day, 1)));
+    root.querySelector('[data-day-today]').addEventListener('click', () => setDay(today()));
+    dateInput.addEventListener('change', () => setDay(dateInput.value));
+
+    confirmBack.addEventListener('click', () => {
+        renderDetails();
+        focusFirstAction();
+    });
+    confirmYes.addEventListener('click', () => {
+        if (pendingStatus) {
+            changeStatus(pendingStatus);
+        }
+    });
+
+    /* Ao fechar o detalhe, o foco volta para o agendamento que estiver na tela (bloco ou item da lista). */
+    modalElement.addEventListener('hidden.bs.modal', () => {
+        const id = current?.id;
+        current = null;
+        pendingStatus = null;
+
+        const target = [...root.querySelectorAll(`[data-appointment-id="${id}"]`)].find((element) => element.offsetParent !== null);
+        (target ?? dateInput).focus();
+    });
+
+    /* Recado do Agendar (?notice=created ou rescheduled). O setDay tira o recado do endereço. */
+    const notices = { created: 'Agendamento criado.', rescheduled: 'Agendamento remarcado.' };
+
+    if (notices[initialParams.get('notice')]) {
+        showAlert(alerts, 'success', notices[initialParams.get('notice')]);
+    }
+
+    setDay(day);
 }
 
-/* Agendamento online: só visual. Os selects usam dados reais, mas nada é salvo. */
-function initBooking(root) {
-    const form = root.querySelector('[data-booking-form]');
+/* GET de um agendamento, com as recusas da API viradas em ApiError (mostradas como vieram). */
+async function fetchAppointment(id) {
+    if (!/^\d+$/.test(id)) {
+        throw new ApiError('Não encontramos este agendamento. Confira o link.');
+    }
+
+    const result = await apiRequest('GET', `/api/appointments/${id}`);
+
+    if (result.ok && result.data?.id) {
+        return result.data;
+    }
+
+    if (result.status === HTTP_NOT_FOUND) {
+        throw new ApiError('Não encontramos este agendamento. Confira o link.');
+    }
+
+    if ([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN, HTTP_SESSION_EXPIRED].includes(result.status)) {
+        throw new ApiError(result.data?.message ?? FORBIDDEN_MESSAGE);
+    }
+
+    throw new Error('Falha ao carregar o agendamento');
+}
+
+/*
+ * Agendar: a tela da barbearia (data-mode="staff", com cliente e observações, que também remarca com
+ * ?appointment={id}) e a do cliente (data-mode="client", que agenda para si). Com os campos
+ * preenchidos, busca os horários livres do barbeiro e mostra cada um como um botão.
+ */
+function initAppointmentForm(root) {
+    const isStaff = root.dataset.mode === 'staff';
+    const statuses = JSON.parse(root.dataset.statuses ?? '{}');
+    const businessDays = (root.dataset.businessDays ?? '').split(',').filter(Boolean).map(Number);
+    /* Até quantos dias depois de hoje dá para agendar (BOOKING_DAYS_AHEAD). */
+    const bookingDaysAhead = Math.max(0, Number(root.dataset.bookingDaysAhead) || 0);
+    const ownBarberId = root.dataset.ownBarberId ?? '';
+    const params = new URLSearchParams(window.location.search);
+    const rescheduleId = isStaff ? params.get('appointment') : null;
+
+    const form = root.querySelector('[data-form]');
     const alerts = root.querySelector('[data-alerts]');
-    const loadingStatus = root.querySelector('[data-loading-status]');
+    const formAlerts = root.querySelector('[data-form-alerts]');
+    const live = root.querySelector('[data-live]');
+    const heading = root.querySelector('[data-form-heading]');
+    const backLink = root.querySelector('[data-back-link]');
+    const submitButton = root.querySelector('[data-submit]');
+    const summary = root.querySelector('[data-summary]');
+    const slotGroup = root.querySelector('[data-error-group="start_time"]');
+    const slotsBox = root.querySelector('[data-slots]');
+    const slotsStatus = root.querySelector('[data-slots-status]');
+    const clientHint = root.querySelector('[data-client-hint]');
+
     const clientSelect = form.elements.namedItem('client_id');
     const barberSelect = form.elements.namedItem('barber_id');
     const serviceSelect = form.elements.namedItem('service_id');
     const dateInput = form.elements.namedItem('date');
-    const timeSelect = form.elements.namedItem('start_time');
-    const summary = root.querySelector('[data-summary]');
-    const lists = [clientSelect, barberSelect, serviceSelect];
+    const notesInput = form.elements.namedItem('notes');
+
+    /* Campos que precisam estar preenchidos para buscar os horários livres. */
+    const fieldsForSlots = [clientSelect, barberSelect, serviceSelect, dateInput].filter(Boolean);
+    const missingFieldsMessage = isStaff
+        ? 'Escolha cliente, barbeiro, serviço e data para ver os horários livres.'
+        : 'Escolha barbeiro, serviço e data para ver os horários livres.';
 
     let services = [];
+    /* O agendamento que está sendo remarcado, ou null num agendamento novo. */
+    let rescheduling = null;
+    /* Horário que fica marcado quando a lista chega (na remarcação, o atual). */
+    let preferredTime = null;
+    /* Conta as buscas de horários: só a resposta da última é desenhada. */
+    let slotsLoad = 0;
+    /* Remarcação de um agendamento que não pode mais mudar: o formulário fica travado. */
+    let locked = false;
+    let saving = false;
 
-    dateInput.min = today();
-    dateInput.value = today();
-    fillSelect(timeSelect, timeSlots().map((slot) => ({ id: slot, name: slot })), 'Escolha o horário');
+    function selectedTime() {
+        return slotsBox.querySelector('input[name="start_time"]:checked')?.value ?? null;
+    }
 
-    function summaryLine(label, value) {
-        const line = document.createElement('div');
-        line.className = 'd-flex justify-content-between py-1';
+    /* Última data aceita para agendar: hoje mais o limite de dias. */
+    function lastBookableDay() {
+        return addDays(today(), bookingDaysAhead);
+    }
 
-        const name = document.createElement('span');
-        name.className = 'text-body-secondary';
-        name.textContent = label;
+    /*
+     * Na remarcação: true quando barbeiro, serviço e data são os do agendamento e o horário é o mesmo ou
+     * nenhum foi marcado (o horário atual sai da lista de livres quando já passou).
+     */
+    function keepsTheSchedule(schedule) {
+        return schedule.barber_id === String(rescheduling.barber_id)
+            && schedule.service_id === String(rescheduling.service_id)
+            && schedule.date === rescheduling.date
+            && (schedule.start_time === null || schedule.start_time === shortTime(rescheduling.start_time));
+    }
 
-        const content = document.createElement('span');
-        content.className = 'fw-semibold';
-        content.textContent = value;
-
-        line.append(name, content);
-
-        return line;
+    function selectedText(select) {
+        return select.value ? (select.selectedOptions[0]?.textContent ?? '') : '';
     }
 
     function updateSummary() {
         const service = services.find((item) => String(item.id) === serviceSelect.value);
+        const time = selectedTime();
+        const lines = [];
 
-        if (!service) {
-            const hint = document.createElement('p');
-            hint.className = 'text-body-secondary mb-0';
-            hint.textContent = 'Escolha um serviço para ver duração e valor.';
-            summary.replaceChildren(hint);
+        if (clientSelect?.value) {
+            lines.push(summaryLine('Cliente', selectedText(clientSelect)));
+        }
+
+        if (barberSelect.value) {
+            lines.push(summaryLine('Barbeiro', selectedText(barberSelect)));
+        }
+
+        if (service) {
+            /* Na remarcação sem troca de serviço, o preço copiado no agendamento continua valendo. */
+            const keepsPrice = rescheduling && rescheduling.service_id === service.id;
+            lines.push(
+                summaryLine('Serviço', service.name),
+                summaryLine('Duração', `${service.duration} min`),
+                summaryLine('Valor', currency.format(Number(keepsPrice ? rescheduling.price : service.price))),
+            );
+        }
+
+        if (parseDay(dateInput.value)) {
+            lines.push(summaryLine('Data', shortDate(dateInput.value)));
+        }
+
+        if (time && service) {
+            lines.push(summaryLine('Horário', `${time} às ${formatMinutes(toMinutes(time) + Number(service.duration))}`));
+        }
+
+        if (lines.length === 0) {
+            summary.replaceChildren(emptyMessage('Escolha o serviço, a data e o horário para ver o resumo.'));
 
             return;
         }
 
-        const lines = [
-            summaryLine('Serviço', service.name),
-            summaryLine('Duração', `${service.duration} min`),
-            summaryLine('Valor', currency.format(Number(service.price))),
-        ];
-
-        if (timeSelect.value) {
-            const [hours, minutes] = timeSelect.value.split(':').map(Number);
-            const end = hours * MINUTES_PER_HOUR + minutes + Number(service.duration);
-            lines.push(summaryLine('Horário', `${timeSelect.value} às ${formatMinutes(end)}`));
-        }
-
-        summary.replaceChildren(...lines);
+        const list = document.createElement('dl');
+        list.className = 'mb-0';
+        list.append(...lines);
+        summary.replaceChildren(list);
     }
 
-    /* Carrega até 100 clientes, barbeiros e serviços ativos. Se falhar, mostra o erro com "Tentar de novo". */
-    async function loadLists({ retrying = false } = {}) {
-        alerts.replaceChildren();
-        lists.forEach((select) => fillSelect(select, [], 'Carregando...'));
-        loadingStatus.textContent = 'Carregando clientes, barbeiros e serviços...';
-        form.setAttribute('aria-busy', 'true');
+    function renderSlots(times, message, selected = null) {
+        slotsStatus.textContent = message;
+
+        const options = times.flatMap((time, index) => {
+            const input = document.createElement('input');
+            input.type = 'radio';
+            input.className = 'btn-check';
+            input.name = 'start_time';
+            input.id = `appointment-slot-${index}`;
+            input.value = time;
+            input.checked = time === selected;
+            input.addEventListener('change', () => {
+                clearFieldError(form, 'start_time');
+                updateSummary();
+            });
+
+            const label = document.createElement('label');
+            label.className = 'btn btn-outline-primary slot-button';
+            label.htmlFor = input.id;
+            label.textContent = time;
+
+            return [input, label];
+        });
+
+        slotsBox.replaceChildren(...options);
+        updateSummary();
+    }
+
+    /* Busca os horários livres quando os campos estão preenchidos. Mantém marcado o horário escolhido, se ele continuar livre. */
+    async function refreshSlots() {
+        const loadNumber = ++slotsLoad;
+        const selected = selectedTime() ?? preferredTime;
+
+        if (locked) {
+            renderSlots([], 'Este agendamento não pode mais ser remarcado.');
+
+            return;
+        }
+
+        if (fieldsForSlots.some((field) => !field.value)) {
+            renderSlots([], missingFieldsMessage);
+
+            return;
+        }
+
+        const day = dateInput.value;
+
+        if (!parseDay(day)) {
+            renderSlots([], 'Escolha uma data válida.');
+
+            return;
+        }
+
+        if (day < today()) {
+            renderSlots([], 'Essa data já passou. Escolha uma data a partir de hoje.');
+
+            return;
+        }
+
+        if (day > lastBookableDay()) {
+            renderSlots([], `Só dá para agendar até ${shortDate(lastBookableDay())}. Escolha uma data mais próxima.`);
+
+            return;
+        }
+
+        if (!businessDays.includes(isoWeekday(day))) {
+            renderSlots([], 'A barbearia não abre nesse dia. Escolha outra data.');
+
+            return;
+        }
+
+        renderSlots([], 'Buscando os horários livres...');
+        slotGroup.setAttribute('aria-busy', 'true');
+
+        const query = new URLSearchParams({ date: day, service_id: serviceSelect.value });
+
+        if (rescheduling) {
+            query.set('appointment_id', String(rescheduling.id));
+        }
 
         try {
-            const [clients, barbers, activeServices] = await Promise.all([
-                fetchItems(`/api/clients?per_page=${MAX_PER_PAGE}`),
-                fetchItems(`/api/barbers?per_page=${MAX_PER_PAGE}`),
+            const result = await apiRequest('GET', `/api/barbers/${barberSelect.value}/available-slots?${query}`);
+
+            if (loadNumber !== slotsLoad) {
+                return;
+            }
+
+            /* 422: ex.: o serviço ficou inativo depois que a tela carregou. O erro vai para o campo. */
+            if (result.status === HTTP_UNPROCESSABLE && result.data?.errors) {
+                showFormErrors(form, formAlerts, result.data.errors);
+                renderSlots([], 'Corrija os campos acima para ver os horários livres.');
+
+                return;
+            }
+
+            if (!result.ok || !Array.isArray(result.data?.data)) {
+                throw new ApiError(result.data?.message ?? 'Não foi possível buscar os horários livres.');
+            }
+
+            const times = result.data.data;
+            let message = 'Nenhum horário livre nesse dia para este serviço. Escolha outra data ou outro barbeiro.';
+
+            if (times.length > 0) {
+                message = times.length === 1 ? '1 horário livre. Escolha o horário.' : `${times.length} horários livres. Escolha um.`;
+            }
+
+            renderSlots(times, message, times.includes(selected) ? selected : null);
+            live.textContent = message;
+        } catch (error) {
+            if (loadNumber !== slotsLoad) {
+                return;
+            }
+
+            renderSlots([], error instanceof ApiError ? error.message : 'Não foi possível buscar os horários livres.');
+
+            const retry = document.createElement('button');
+            retry.type = 'button';
+            retry.className = 'btn btn-sm btn-outline-secondary';
+            retry.textContent = 'Tentar de novo';
+            retry.addEventListener('click', () => refreshSlots());
+            slotsBox.replaceChildren(retry);
+        } finally {
+            if (loadNumber === slotsLoad) {
+                slotGroup.removeAttribute('aria-busy');
+            }
+        }
+    }
+
+    /* Remarcar: o formulário abre com os dados do agendamento, e o cliente fica fixo (a API não muda o cliente). */
+    function startRescheduling(appointment) {
+        rescheduling = appointment;
+        preferredTime = shortTime(appointment.start_time);
+        heading.textContent = 'Remarcar agendamento';
+        document.title = 'Remarcar agendamento · BarberFlow';
+        submitButton.textContent = 'Salvar remarcação';
+        backLink.href = `${root.dataset.successUrl}?date=${appointment.date}`;
+
+        ensureOption(clientSelect, appointment.client);
+        clientSelect.value = String(appointment.client_id);
+        clientSelect.disabled = true;
+        clientHint.hidden = false;
+        addDescription(clientSelect, clientHint.id);
+
+        if (!ownBarberId) {
+            ensureOption(barberSelect, appointment.barber);
+            barberSelect.value = String(appointment.barber_id);
+        }
+
+        if (services.some((service) => service.id === appointment.service_id)) {
+            serviceSelect.value = String(appointment.service_id);
+        } else {
+            showAlert(formAlerts, 'warning', `O serviço deste agendamento (${appointment.service?.name ?? 'excluído'}) não está mais ativo. Escolha outro.`);
+        }
+
+        dateInput.value = appointment.date;
+
+        if (notesInput) {
+            notesInput.value = appointment.notes ?? '';
+        }
+
+        if (!statuses[appointment.status]?.reschedulable) {
+            const allowed = Object.values(statuses)
+                .filter((status) => status.reschedulable)
+                .map((status) => status.label);
+
+            locked = true;
+            Array.from(form.elements).forEach((element) => {
+                element.disabled = true;
+            });
+            showAlert(
+                alerts,
+                'warning',
+                `Este agendamento está com o status ${appointment.status_label} e não pode mais ser remarcado. Só dá para remarcar com o status ${allowed.join(' ou ')}.`,
+            );
+        }
+    }
+
+    async function loadLists({ retrying = false } = {}) {
+        alerts.replaceChildren();
+        const lists = [clientSelect, ownBarberId ? null : barberSelect, serviceSelect].filter(Boolean);
+        lists.forEach((select) => fillSelect(select, [], 'Carregando...'));
+        renderSlots([], 'Carregando...');
+        live.textContent = 'Carregando os dados para agendar...';
+        form.setAttribute('aria-busy', 'true');
+        submitButton.disabled = true;
+
+        try {
+            const [clients, barbers, activeServices, appointment] = await Promise.all([
+                clientSelect ? fetchItems(`/api/clients?per_page=${MAX_PER_PAGE}`) : null,
+                ownBarberId ? null : fetchItems(`/api/barbers?per_page=${MAX_PER_PAGE}`),
                 fetchItems(`/api/services?status=active&per_page=${MAX_PER_PAGE}`),
+                rescheduleId ? fetchAppointment(rescheduleId) : null,
             ]);
 
             services = activeServices;
-            fillSelect(clientSelect, clients, 'Escolha o cliente');
-            fillSelect(barberSelect, barbers, 'Escolha o barbeiro');
+
+            if (clientSelect) {
+                fillSelect(clientSelect, clients, 'Escolha o cliente');
+            }
+
+            if (!ownBarberId) {
+                fillSelect(barberSelect, barbers, 'Escolha o barbeiro');
+            }
+
             fillSelect(serviceSelect, services, 'Escolha o serviço');
-            loadingStatus.textContent = 'Clientes, barbeiros e serviços carregados.';
+
+            if (appointment) {
+                startRescheduling(appointment);
+            }
+
+            submitButton.disabled = locked;
+            live.textContent = 'Dados para agendar carregados.';
 
             if (retrying) {
-                clientSelect.focus();
+                (clientSelect ?? barberSelect).focus();
             }
+
+            refreshSlots();
         } catch (error) {
             services = [];
             lists.forEach((select) => fillSelect(select, [], 'Não foi possível carregar'));
-            loadingStatus.textContent = '';
+            renderSlots([], 'Não foi possível carregar os dados para agendar.');
+            live.textContent = '';
 
-            /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
+            /* Sem permissão, sem login ou agendamento que não existe: tentar de novo não adianta. */
             if (error instanceof ApiError) {
                 showAlert(alerts, 'danger', error.message);
 
                 return;
             }
 
-            const retry = showRetryAlert(alerts, 'Não foi possível carregar clientes, barbeiros e serviços.', () =>
-                loadLists({ retrying: true }),
-            );
+            const retry = showRetryAlert(alerts, 'Não foi possível carregar os dados para agendar.', () => loadLists({ retrying: true }));
 
             if (retrying) {
                 retry.focus();
@@ -836,25 +1884,338 @@ function initBooking(root) {
         }
     }
 
-    serviceSelect.addEventListener('change', updateSummary);
-    timeSelect.addEventListener('change', updateSummary);
+    /* Endereço depois de salvar: a agenda no dia do agendamento, ou Meus horários, com o recado de sucesso. */
+    function successUrl(saved) {
+        const url = new URL(root.dataset.successUrl, window.location.origin);
 
-    form.addEventListener('submit', (event) => {
+        if (isStaff) {
+            url.searchParams.set('date', saved.date);
+        }
+
+        url.searchParams.set('notice', isStaff ? (rescheduling ? 'rescheduled' : 'created') : 'booked');
+
+        return url.toString();
+    }
+
+    async function save(event) {
         event.preventDefault();
-        form.classList.add('was-validated');
 
-        if (!form.checkValidity()) {
+        if (saving || locked) {
             return;
         }
 
-        showAlert(
-            alerts,
-            'warning',
-            'O agendamento online ainda não está disponível: a API não tem a rota de agendamentos. Nada foi salvo.',
-        );
+        clearFormErrors(form, formAlerts);
+        saving = true;
+        submitButton.disabled = true;
+
+        const schedule = {
+            barber_id: barberSelect.value || null,
+            service_id: serviceSelect.value || null,
+            date: dateInput.value || null,
+            start_time: selectedTime(),
+        };
+
+        /*
+         * Remarcação que mantém barbeiro, serviço, data e horário: vai só a observação, e a API não confere o
+         * horário de novo. Assim o barbeiro anota algo (ex.: "avisou que vai atrasar") mesmo depois do início.
+         */
+        const body = rescheduling && keepsTheSchedule(schedule) ? {} : schedule;
+
+        if (clientSelect && !rescheduling) {
+            body.client_id = clientSelect.value || null;
+        }
+
+        if (notesInput) {
+            body.notes = notesInput.value.trim() || null;
+        }
+
+        let leaving = false;
+
+        try {
+            const result = rescheduling
+                ? await apiRequest('PUT', `/api/appointments/${rescheduling.id}`, body)
+                : await apiRequest('POST', '/api/appointments', body);
+
+            if (result.ok) {
+                leaving = true;
+                window.location.assign(successUrl(result.data));
+
+                return;
+            }
+
+            if (result.status === HTTP_UNPROCESSABLE && result.data?.errors) {
+                showFormErrors(form, formAlerts, result.data.errors);
+
+                /*
+                 * O horário marcado foi ocupado (ou passou) enquanto a pessoa escolhia: avisa e busca os horários
+                 * de novo. Sem horário marcado, o erro embaixo dos horários já diz o que falta.
+                 */
+                if (result.data.errors.start_time && body.start_time) {
+                    showAlert(formAlerts, 'warning', 'O horário escolhido não está mais livre. Os horários foram atualizados: escolha outro.', { append: true });
+                    preferredTime = null;
+                    await refreshSlots();
+                    focusFirstInvalid(form);
+                }
+
+                return;
+            }
+
+            showAlert(formAlerts, 'danger', result.data?.message ?? 'Não foi possível salvar o agendamento. Tente de novo.');
+        } catch {
+            showAlert(formAlerts, 'danger', API_UNREACHABLE_MESSAGE);
+        } finally {
+            if (!leaving) {
+                saving = false;
+                submitButton.disabled = locked;
+            }
+        }
+    }
+
+    /* Mudou um campo, a lista de horários é outra: o erro antigo do horário também sai. */
+    fieldsForSlots.forEach((field) => {
+        field.addEventListener('change', () => {
+            clearFieldError(form, field.name);
+            clearFieldError(form, 'start_time');
+            refreshSlots();
+        });
     });
+    notesInput?.addEventListener('input', () => clearFieldError(form, 'notes'));
+    form.addEventListener('submit', save);
+
+    /*
+     * A data começa em hoje, ou no dia que veio da agenda (?date=). Antes de hoje e depois do limite de dias
+     * não dá para agendar.
+     */
+    const presetDate = params.get('date');
+    dateInput.min = today();
+    dateInput.max = lastBookableDay();
+    dateInput.value = parseDay(presetDate) && presetDate >= today() && presetDate <= lastBookableDay() ? presetDate : today();
 
     loadLists();
+}
+
+/*
+ * Meus horários (cliente): os próximos, com "Cancelar" enquanto ainda dá tempo (até data-cancel-min-hours
+ * horas antes do início), e os passados ou cancelados. Quem decide a janela é a API: a tela só esconde o
+ * botão quando ela já passou.
+ */
+function initMyAppointments(root) {
+    const cancelMinHours = Number(root.dataset.cancelMinHours) || 0;
+    const statuses = JSON.parse(root.dataset.statuses);
+    const bookingUrl = root.dataset.bookingUrl;
+
+    const alerts = root.querySelector('[data-alerts]');
+    const live = root.querySelector('[data-live]');
+    const upcomingBox = root.querySelector('[data-upcoming]');
+    const pastBox = root.querySelector('[data-past]');
+    const upcomingTitle = root.querySelector('#my-upcoming-title');
+
+    const modalElement = root.querySelector('[data-cancel-modal]');
+    const modal = new Modal(modalElement);
+    const cancelAlerts = root.querySelector('[data-cancel-alerts]');
+    const cancelText = root.querySelector('[data-cancel-text]');
+    const backButton = root.querySelector('[data-cancel-back]');
+    const confirmButton = root.querySelector('[data-confirm-cancel]');
+
+    let cancelling = null;
+    let cancelTrigger = null;
+    let loadCount = 0;
+    let loadErrorAlert = null;
+
+    /* Próximo: ainda vai acontecer (ou está acontecendo) e o fim não passou. */
+    function isUpcoming(appointment) {
+        return Boolean(statuses[appointment.status]?.active) && secondsUntil(appointment.date, appointment.end_time) > 0;
+    }
+
+    function canCancel(appointment) {
+        return Boolean(statuses[appointment.status]?.transitions.includes('cancelled'))
+            && secondsUntil(appointment.date, appointment.start_time) >= cancelMinHours * SECONDS_PER_HOUR;
+    }
+
+    function card(appointment, upcoming) {
+        const item = document.createElement('li');
+        item.className = 'list-group-item d-flex flex-wrap gap-2 justify-content-between align-items-start';
+
+        const text = document.createElement('div');
+        const when = document.createElement('p');
+        when.className = 'fw-semibold mb-1';
+        when.textContent = `${shortDate(appointment.date)}, ${timeRange(appointment)}`;
+
+        const what = document.createElement('p');
+        what.className = 'mb-1 text-break';
+        what.textContent = `${appointment.service?.name ?? 'Serviço'} com ${appointment.barber?.name ?? 'o barbeiro'}`;
+
+        const price = document.createElement('p');
+        price.className = 'small text-body-secondary mb-0';
+        price.textContent = `Valor: ${currency.format(Number(appointment.price))}`;
+
+        text.append(when, what, price);
+
+        if (appointment.notes) {
+            const notes = document.createElement('p');
+            notes.className = 'small text-body-secondary mb-0 text-break';
+            notes.textContent = `Observações: ${appointment.notes}`;
+            text.append(notes);
+        }
+
+        const side = document.createElement('div');
+        side.className = 'd-flex flex-column align-items-end gap-2';
+        side.append(statusBadge(appointment));
+
+        if (upcoming && canCancel(appointment)) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn-sm btn-outline-danger';
+            button.textContent = 'Cancelar';
+            button.setAttribute('aria-label', `Cancelar o horário de ${shortDate(appointment.date)} às ${shortTime(appointment.start_time)}`);
+            button.addEventListener('click', () => openCancel(appointment, button));
+            side.append(button);
+        } else if (upcoming && statuses[appointment.status]?.transitions.includes('cancelled')) {
+            const late = document.createElement('p');
+            late.className = 'small text-body-secondary text-end mb-0';
+            late.textContent = 'Para cancelar agora, fale com a barbearia.';
+            side.append(late);
+        }
+
+        item.append(text, side);
+
+        return item;
+    }
+
+    function renderBox(box, items, upcoming, emptyText) {
+        if (items.length === 0) {
+            const paragraph = emptyMessage(emptyText);
+
+            if (upcoming) {
+                const link = document.createElement('a');
+                link.href = bookingUrl;
+                link.textContent = 'Agendar um horário';
+                paragraph.append(' ', link);
+            }
+
+            box.replaceChildren(paragraph);
+
+            return;
+        }
+
+        const list = document.createElement('ul');
+        list.className = 'list-group';
+        list.append(...items.map((appointment) => card(appointment, upcoming)));
+        box.replaceChildren(list);
+    }
+
+    async function load() {
+        const loadNumber = ++loadCount;
+        upcomingBox.setAttribute('aria-busy', 'true');
+        pastBox.setAttribute('aria-busy', 'true');
+        live.textContent = 'Carregando seus horários...';
+
+        try {
+            const { items, complete } = await fetchAllItems('/api/appointments');
+
+            if (loadNumber !== loadCount) {
+                return;
+            }
+
+            /* A API devolve em ordem de data e horário: os próximos ficam assim, e os passados do mais recente para trás. */
+            const upcoming = items.filter(isUpcoming);
+            const past = items.filter((appointment) => !isUpcoming(appointment)).reverse();
+
+            renderBox(upcomingBox, upcoming, true, 'Você não tem horários marcados.');
+            renderBox(pastBox, past, false, 'Nenhum horário passado ou cancelado.');
+            live.textContent = `${upcoming.length} ${upcoming.length === 1 ? 'próximo horário' : 'próximos horários'} e ${past.length} ${past.length === 1 ? 'passado ou cancelado' : 'passados ou cancelados'}.`;
+            loadErrorAlert?.remove();
+            loadErrorAlert = null;
+
+            if (!complete) {
+                loadErrorAlert = showAlert(alerts, 'warning', 'Você tem horários demais para a tela: só parte deles aparece.');
+            }
+        } catch (error) {
+            if (loadNumber !== loadCount) {
+                return;
+            }
+
+            [upcomingBox, pastBox].forEach((box) => box.replaceChildren(emptyMessage('Não foi possível carregar.')));
+            live.textContent = '';
+
+            if (error instanceof ApiError) {
+                loadErrorAlert = showAlert(alerts, 'danger', error.message);
+
+                return;
+            }
+
+            const retry = showRetryAlert(alerts, API_UNREACHABLE_MESSAGE, () => {
+                alerts.replaceChildren();
+                load();
+            });
+            loadErrorAlert = retry.closest('.alert');
+        } finally {
+            if (loadNumber === loadCount) {
+                upcomingBox.removeAttribute('aria-busy');
+                pastBox.removeAttribute('aria-busy');
+            }
+        }
+    }
+
+    function openCancel(appointment, trigger) {
+        cancelling = appointment;
+        cancelTrigger = trigger;
+        cancelAlerts.replaceChildren();
+        cancelText.textContent = `Cancelar ${appointment.service?.name ?? 'o horário'} com ${appointment.barber?.name ?? 'o barbeiro'} em ${shortDate(appointment.date)} às ${shortTime(appointment.start_time)}?`;
+        confirmButton.disabled = false;
+        modal.show();
+    }
+
+    async function confirmCancel() {
+        confirmButton.disabled = true;
+        cancelAlerts.replaceChildren();
+        let keepDisabled = false;
+
+        try {
+            const result = await apiRequest('PATCH', `/api/appointments/${cancelling.id}/status`, { status: 'cancelled' });
+
+            if (result.ok) {
+                /* A lista vai ser desenhada de novo: ao fechar, o foco vai para o título dos próximos. */
+                cancelTrigger = null;
+                modal.hide();
+                showAlert(alerts, 'success', `Horário de ${shortDate(result.data.date)} às ${shortTime(result.data.start_time)} cancelado.`);
+                await load();
+
+                return;
+            }
+
+            /* 422: ex.: a janela de cancelamento acabou de fechar. Tentar de novo não adianta. */
+            keepDisabled = result.status === HTTP_UNPROCESSABLE;
+            showAlert(cancelAlerts, 'danger', result.data?.errors?.status?.[0] ?? result.data?.message ?? 'Não foi possível cancelar. Tente de novo.');
+            load();
+        } catch {
+            showAlert(cancelAlerts, 'danger', API_UNREACHABLE_MESSAGE);
+        } finally {
+            confirmButton.disabled = keepDisabled;
+        }
+    }
+
+    confirmButton.addEventListener('click', confirmCancel);
+    /* O foco começa em Voltar: um Enter sem querer não cancela o horário. */
+    modalElement.addEventListener('shown.bs.modal', () => backButton.focus());
+
+    /* Ao fechar, o foco volta para o botão que abriu ou, se a lista mudou, para o título dos próximos. */
+    modalElement.addEventListener('hidden.bs.modal', () => {
+        (cancelTrigger?.isConnected ? cancelTrigger : upcomingTitle).focus();
+        cancelling = null;
+        cancelTrigger = null;
+    });
+
+    /* Recado do Agendar do cliente (?notice=booked), que sai do endereço para não voltar ao recarregar. */
+    const url = new URL(window.location.href);
+
+    if (url.searchParams.get('notice') === 'booked') {
+        showAlert(alerts, 'success', 'Horário agendado. Ele está na lista de próximos.');
+        url.searchParams.delete('notice');
+        window.history.replaceState(null, '', url);
+    }
+
+    load();
 }
 
 /*
@@ -898,5 +2259,6 @@ function initPasswordChange(root) {
 
 document.querySelectorAll('[data-crud]').forEach(initCrud);
 document.querySelectorAll('[data-schedule]').forEach(initSchedule);
-document.querySelectorAll('[data-booking]').forEach(initBooking);
+document.querySelectorAll('[data-appointment-form]').forEach(initAppointmentForm);
+document.querySelectorAll('[data-my-appointments]').forEach(initMyAppointments);
 document.querySelectorAll('[data-password-change]').forEach(initPasswordChange);

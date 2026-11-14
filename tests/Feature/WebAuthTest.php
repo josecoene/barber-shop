@@ -30,7 +30,7 @@ class WebAuthTest extends TestCase
 
     public function test_visitor_is_sent_to_the_login(): void
     {
-        foreach (['/', '/appointments', '/barbers', '/account'] as $uri) {
+        foreach (['/', '/appointments', '/barbers', '/account', '/booking', '/my-appointments'] as $uri) {
             $this->get($uri)->assertRedirect('/login');
         }
     }
@@ -40,7 +40,7 @@ class WebAuthTest extends TestCase
         return [
             'admin vai para a agenda' => ['makeAdmin', '/appointments'],
             'barbeiro vai para a agenda' => ['makeBarberUser', '/appointments'],
-            'cliente vai para a conta' => ['makeClientUser', '/account'],
+            'cliente vai para Meus horários' => ['makeClientUser', '/my-appointments'],
         ];
     }
 
@@ -142,11 +142,46 @@ class WebAuthTest extends TestCase
         }
     }
 
+    public static function staffProfiles(): array
+    {
+        return [
+            'admin' => ['makeAdmin'],
+            'barbeiro' => ['makeBarberUser'],
+        ];
+    }
+
+    /**
+     * Agendar do cliente e Meus horários são do cliente, que agenda para si. A
+     * barbearia agenda pela tela Agendar e acompanha pela Agenda.
+     */
+    #[DataProvider('staffProfiles')]
+    public function test_staff_gets_403_on_the_client_pages(string $makeUser): void
+    {
+        $this->actingAs($this->{$makeUser}());
+
+        $this->get('/booking')->assertForbidden();
+        $this->get('/my-appointments')->assertForbidden();
+    }
+
+    public function test_client_opens_the_own_pages(): void
+    {
+        $this->actingAs($this->makeClientUser());
+
+        foreach (['/booking', '/my-appointments', '/account'] as $uri) {
+            $this->get($uri)->assertOk();
+        }
+    }
+
     public function test_client_that_has_not_confirmed_the_email_is_sent_to_the_notice(): void
     {
-        $this->actingAs($this->makeClientUser(verified: false))
-            ->get('/account')
-            ->assertRedirect('/email/verify');
+        $this->actingAs($this->makeClientUser(verified: false));
+
+        foreach (['/account', '/booking', '/my-appointments'] as $uri) {
+            $this->get($uri)->assertRedirect('/email/verify');
+        }
+
+        // A tela inicial do cliente (Meus horários) também espera a confirmação.
+        $this->followingRedirects()->get('/')->assertOk()->assertSee('Reenviar o link');
     }
 
     public function test_logout_ends_the_session(): void

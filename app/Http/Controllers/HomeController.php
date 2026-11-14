@@ -7,7 +7,7 @@ use Illuminate\Http\Request;
 
 /**
  * GET /: leva cada perfil à tela inicial dele. Admin e barbeiro vão para a agenda;
- * o cliente, para a conta dele.
+ * o cliente, para Meus horários.
  */
 class HomeController extends Controller
 {
@@ -18,7 +18,7 @@ class HomeController extends Controller
         $request->session()->reflash();
 
         return $request->user()->isClient()
-            ? redirect()->route('account.show')
+            ? redirect()->route('my-appointments.index')
             : redirect()->route('appointments.index');
     }
 }

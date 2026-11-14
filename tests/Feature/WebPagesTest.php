@@ -17,6 +17,19 @@ class WebPagesTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * Regras de cada status escritas à mão, para conferir o que as telas da
+     * agenda recebem do AppointmentStatus::catalog().
+     */
+    private const STATUS_CATALOG = [
+        'scheduled' => ['label' => 'Agendado', 'transitions' => ['confirmed', 'in_progress', 'cancelled', 'no_show'], 'requires_start' => false, 'reschedulable' => true, 'occupies_time' => true, 'active' => true],
+        'confirmed' => ['label' => 'Confirmado', 'transitions' => ['in_progress', 'cancelled', 'no_show'], 'requires_start' => false, 'reschedulable' => true, 'occupies_time' => true, 'active' => true],
+        'in_progress' => ['label' => 'Em atendimento', 'transitions' => ['completed'], 'requires_start' => true, 'reschedulable' => false, 'occupies_time' => true, 'active' => true],
+        'completed' => ['label' => 'Concluído', 'transitions' => [], 'requires_start' => true, 'reschedulable' => false, 'occupies_time' => true, 'active' => false],
+        'cancelled' => ['label' => 'Cancelado', 'transitions' => [], 'requires_start' => false, 'reschedulable' => false, 'occupies_time' => false, 'active' => false],
+        'no_show' => ['label' => 'Faltou', 'transitions' => [], 'requires_start' => true, 'reschedulable' => false, 'occupies_time' => false, 'active' => false],
+    ];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -45,6 +58,29 @@ class WebPagesTest extends TestCase
         $this->actingAs($this->makeAdmin())
             ->get($uri)
             ->assertOk();
+    }
+
+    /**
+     * Telas da agenda abertas por quem usa cada uma: o barbeiro na Agenda e no
+     * Agendar; o cliente no Agendar dele e em Meus horários.
+     */
+    public static function pagesByProfile(): array
+    {
+        return [
+            'agenda do barbeiro' => ['makeBarberUser', '/appointments', 'Agenda'],
+            'agendar do barbeiro' => ['makeBarberUser', '/appointments/create', 'Agendar'],
+            'agendar do cliente' => ['makeClientUser', '/booking', 'Agendar'],
+            'meus horários do cliente' => ['makeClientUser', '/my-appointments', 'Meus horários'],
+        ];
+    }
+
+    #[DataProvider('pagesByProfile')]
+    public function test_page_responds_ok_for_the_profile_that_uses_it(string $makeUser, string $uri, string $title): void
+    {
+        $this->actingAs($this->{$makeUser}())
+            ->get($uri)
+            ->assertOk()
+            ->assertSee("<title>{$title} · BarberFlow</title>", false);
     }
 
     /**
@@ -155,11 +191,12 @@ class WebPagesTest extends TestCase
     {
         $staff = ['appointments.index', 'appointments.create', 'clients.index'];
         $admin = ['barbers.index', 'services.index'];
+        $client = ['booking.create', 'my-appointments.index'];
 
         return [
-            'admin' => ['makeAdmin', [...$staff, ...$admin], []],
-            'barbeiro' => ['makeBarberUser', $staff, $admin],
-            'cliente' => ['makeClientUser', ['account.show'], [...$staff, ...$admin]],
+            'admin' => ['makeAdmin', [...$staff, ...$admin], $client],
+            'barbeiro' => ['makeBarberUser', $staff, [...$admin, ...$client]],
+            'cliente' => ['makeClientUser', [...$client, 'account.show'], [...$staff, ...$admin]],
         ];
     }
 
@@ -187,11 +224,145 @@ class WebPagesTest extends TestCase
             ->assertSeeInOrder(['>Agenda</a>', '>Agendar</a>', '>Clientes</a>', '>Barbeiros</a>', '>Serviços</a>'], false);
     }
 
+    public function test_client_menu_follows_the_planned_order(): void
+    {
+        $this->actingAs($this->makeClientUser())
+            ->get('/account')
+            ->assertSeeInOrder([
+                'href="'.route('booking.create').'">Agendar</a>',
+                'href="'.route('my-appointments.index').'">Meus horários</a>',
+                'href="'.route('account.show').'">Minha conta</a>',
+            ], false);
+    }
+
     public function test_client_sees_my_account_only_once(): void
     {
         $response = $this->actingAs($this->makeClientUser())->get('/account')->assertOk();
 
         $this->assertSame(1, substr_count($response->getContent(), 'href="'.route('account.show').'"'));
+    }
+
+    public function test_layout_tells_the_screens_the_timezone_of_the_barbershop(): void
+    {
+        config(['app.timezone' => 'America/Sao_Paulo']);
+
+        $this->actingAs($this->makeAdmin())
+            ->get('/appointments')
+            ->assertSee('<meta name="app-timezone" content="America/Sao_Paulo">', false);
+    }
+
+    /**
+     * As telas da agenda funcionam com a API: some o aviso de "só visual" da
+     * versão anterior.
+     */
+    public function test_schedule_pages_no_longer_say_they_are_only_visual(): void
+    {
+        $this->actingAs($this->makeAdmin());
+
+        foreach (['/appointments', '/appointments/create'] as $uri) {
+            $this->get($uri)
+                ->assertOk()
+                ->assertDontSee('só visual')
+                ->assertDontSee('nada é salvo');
+        }
+    }
+
+    /**
+     * Valor de um data-attribute da tela, já sem o escape do HTML.
+     */
+    private function dataAttribute(string $html, string $name): ?string
+    {
+        if (preg_match('/\s'.preg_quote($name, '/').'="([^"]*)"/', $html, $match) !== 1) {
+            return null;
+        }
+
+        return html_entity_decode($match[1], ENT_QUOTES | ENT_HTML5);
+    }
+
+    public function test_agenda_gets_the_business_hours_and_the_status_rules_from_the_server(): void
+    {
+        config(['barberflow.business' => ['opening' => '08:00', 'closing' => '18:30', 'slot_minutes' => 20, 'days' => [1, 2, 3]]]);
+
+        $html = $this->actingAs($this->makeAdmin())->get('/appointments')->assertOk()->getContent();
+
+        $this->assertSame('08:00', $this->dataAttribute($html, 'data-opening'));
+        $this->assertSame('18:30', $this->dataAttribute($html, 'data-closing'));
+        $this->assertSame('20', $this->dataAttribute($html, 'data-slot-minutes'));
+        $this->assertSame(self::STATUS_CATALOG, json_decode($this->dataAttribute($html, 'data-statuses'), true));
+        $this->assertSame(route('appointments.create'), $this->dataAttribute($html, 'data-create-url'));
+
+        // O admin vê a coluna de todos os barbeiros.
+        $this->assertNull($this->dataAttribute($html, 'data-own-barber-id'));
+    }
+
+    public function test_barber_sees_the_own_agenda_and_books_only_in_it(): void
+    {
+        $barberUser = $this->makeBarberUser();
+        $barber = $barberUser->barber;
+        $this->actingAs($barberUser);
+
+        $agenda = $this->get('/appointments')->assertOk()->getContent();
+
+        $this->assertSame((string) $barber->id, $this->dataAttribute($agenda, 'data-own-barber-id'));
+        $this->assertSame($barber->name, $this->dataAttribute($agenda, 'data-own-barber-name'));
+
+        // No Agendar, o campo de barbeiro já vem com ele e desabilitado.
+        $this->get('/appointments/create')
+            ->assertOk()
+            ->assertSee('data-own-barber-id="'.$barber->id.'"', false)
+            ->assertSee('<option value="'.$barber->id.'" selected>'.$barber->name.'</option>', false)
+            ->assertSee('Você agenda na sua própria agenda.');
+    }
+
+    public function test_staff_booking_form_has_the_client_and_the_notes(): void
+    {
+        config(['barberflow.business.days' => [1, 2, 3, 4, 5], 'barberflow.booking_days_ahead' => 30]);
+
+        $html = $this->actingAs($this->makeAdmin())->get('/appointments/create')->assertOk()->getContent();
+
+        $this->assertSame('staff', $this->dataAttribute($html, 'data-mode'));
+        $this->assertSame('1,2,3,4,5', $this->dataAttribute($html, 'data-business-days'));
+        $this->assertSame('30', $this->dataAttribute($html, 'data-booking-days-ahead'));
+        $this->assertSame(route('appointments.index'), $this->dataAttribute($html, 'data-success-url'));
+        $this->assertStringContainsString('name="client_id"', $html);
+        $this->assertStringContainsString('name="notes"', $html);
+        $this->assertStringContainsString('data-error-group="start_time"', $html);
+        $this->assertNull($this->dataAttribute($html, 'data-own-barber-id'));
+    }
+
+    public function test_client_booking_form_has_no_client_field(): void
+    {
+        $html = $this->actingAs($this->makeClientUser())->get('/booking')->assertOk()->getContent();
+
+        $this->assertSame('client', $this->dataAttribute($html, 'data-mode'));
+        $this->assertSame('1,2,3,4,5,6', $this->dataAttribute($html, 'data-business-days'));
+        $this->assertSame('60', $this->dataAttribute($html, 'data-booking-days-ahead'));
+        $this->assertSame(route('my-appointments.index'), $this->dataAttribute($html, 'data-success-url'));
+        $this->assertStringNotContainsString('name="client_id"', $html);
+        $this->assertStringNotContainsString('name="notes"', $html);
+        $this->assertStringContainsString('name="barber_id"', $html);
+        $this->assertStringContainsString('name="service_id"', $html);
+        $this->assertStringContainsString('name="date"', $html);
+    }
+
+    public function test_my_appointments_gets_the_cancel_window_from_the_config(): void
+    {
+        config(['barberflow.client_cancel_min_hours' => 5]);
+        $this->actingAs($this->makeClientUser());
+
+        $html = $this->get('/my-appointments')
+            ->assertOk()
+            ->assertSee('até 5 horas antes do horário')
+            ->assertSee('data-cancel-modal', false)
+            ->getContent();
+
+        $this->assertSame('5', $this->dataAttribute($html, 'data-cancel-min-hours'));
+        $this->assertSame(self::STATUS_CATALOG, json_decode($this->dataAttribute($html, 'data-statuses'), true));
+        $this->assertSame(route('booking.create'), $this->dataAttribute($html, 'data-booking-url'));
+
+        config(['barberflow.client_cancel_min_hours' => 1]);
+
+        $this->get('/my-appointments')->assertSee('até 1 hora antes do horário');
     }
 
     public function test_menu_links_point_to_the_pages_and_not_to_the_api(): void
@@ -310,6 +481,14 @@ class WebPagesTest extends TestCase
         $this->actingAs($this->makeAdmin());
 
         foreach (array_column(self::pages(), 0) as $uri) {
+            $this->assertStringNotContainsString('style=', $this->get($uri)->assertOk()->getContent(), $uri);
+        }
+
+        // As telas do barbeiro e do cliente, cada uma com o seu login.
+        foreach (self::pagesByProfile() as [$makeUser, $uri]) {
+            $this->flushSession();
+            $this->actingAs($this->{$makeUser}());
+
             $this->assertStringNotContainsString('style=', $this->get($uri)->assertOk()->getContent(), $uri);
         }
     }

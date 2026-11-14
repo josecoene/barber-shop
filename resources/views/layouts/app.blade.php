@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {{-- O pages.js manda este token no X-CSRF-TOKEN das chamadas à API, que usam o cookie da sessão. --}}
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    {{-- Fuso da barbearia: as telas da agenda calculam "hoje" e "agora" nele, e não no fuso do navegador. --}}
+    <meta name="app-timezone" content="{{ config('app.timezone') }}">
     <title>@yield('title') · BarberFlow</title>
     @vite('resources/js/pages.js')
 </head>
@@ -16,13 +18,15 @@
         // Menu por perfil (Gates no AppServiceProvider):
         // - admin: Agenda, Agendar, Clientes, Barbeiros e Serviços;
         // - barbeiro: Agenda, Agendar e Clientes;
-        // - cliente: Minha conta, que é a tela inicial dele.
+        // - cliente: Agendar, Meus horários (a tela inicial dele) e Minha conta.
         $links = [
             ['route' => 'appointments.index', 'label' => 'Agenda', 'ability' => 'access-staff'],
             ['route' => 'appointments.create', 'label' => 'Agendar', 'ability' => 'access-staff'],
             ['route' => 'clients.index', 'label' => 'Clientes', 'ability' => 'access-staff'],
             ['route' => 'barbers.index', 'label' => 'Barbeiros', 'ability' => 'access-admin'],
             ['route' => 'services.index', 'label' => 'Serviços', 'ability' => 'access-admin'],
+            ['route' => 'booking.create', 'label' => 'Agendar', 'ability' => 'access-client'],
+            ['route' => 'my-appointments.index', 'label' => 'Meus horários', 'ability' => 'access-client'],
             ['route' => 'account.show', 'label' => 'Minha conta', 'ability' => 'access-client'],
         ];
     @endphp
