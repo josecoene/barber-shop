@@ -56,3 +56,21 @@ asg_cpu_target       = 60
 # do previsto. Preencha com o e-mail do grupo; vazio, o orçamento não é criado.
 budget_limit_usd   = 30
 budget_alert_email = ""
+
+# Deploy pelo GitHub Actions (cicd.tf e docs/nuvem/CI-CD.md). A prod cria a role de deploy e o
+# provedor OIDC do GitHub, que é um por conta. Antes do apply que cria a role, configure no
+# GitHub o environment production com revisores obrigatórios e só a branch main e as tags v*
+# (CI-CD.md, "Primeiro deploy"): sem essas proteções, um workflow de qualquer branch assumiria a
+# role. Se o GitHub não oferecer as proteções (repositório privado sem o plano que as libera),
+# use create_deploy_role = false e publique à mão (TERRAFORM.md, "Primeiro deploy").
+# Os IDs do dono e do repositório entram no formato imutável do sub, o dos repositórios criados
+# depois de 15/07/2026. O primeiro commit do repositório é de 24/09/2026, então preencha os dois
+# antes do primeiro deploy: sem eles, o deploy para no passo do OIDC com "Not authorized to
+# perform sts:AssumeRoleWithWebIdentity". Pegue os dois com:
+#   gh api repos/josecoene/barber-shop --jq '.owner.id, .id'
+create_deploy_role          = true
+create_github_oidc_provider = true
+github_repository           = "josecoene/barber-shop"
+github_environment          = "production"
+github_repository_owner_id  = ""
+github_repository_id        = ""
