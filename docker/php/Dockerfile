@@ -31,6 +31,13 @@ ARG RDS_CA_BUNDLE_SHA256=90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f
 
 # pdo_mysql: banco (MySQL local e RDS). redis: cache e sessão (Redis local e ElastiCache).
 # libfcgi-bin traz o cgi-fcgi, que o healthcheck usa para falar com o PHP-FPM.
+# A imagem oficial (Debian) deixa instaladas as ferramentas de compilação das extensões
+# (PHPIZE_DEPS: gcc, g++, make, autoconf e outras). Elas saem no fim deste RUN, depois de
+# compilar o pdo_mysql e o redis: a imagem final não leva compilador nem os pacotes que vêm com
+# ele (cabeçalhos do kernel, perl e outros, que só somavam alertas no Trivy). Para compilar outra
+# extensão, instale as ferramentas no mesmo RUN dela (apt-get install $PHPIZE_DEPS) e tire no fim.
+# O libc6-dev vai pelo nome: na lista ele aparece como libc-dev, um pacote virtual, e o apt não
+# remove o pacote de verdade por esse nome.
 # O OPcache já vem habilitado na imagem oficial; as últimas linhas só conferem que as três extensões carregaram.
 RUN set -eux; \
     apt-get update; \
@@ -42,6 +49,11 @@ RUN set -eux; \
     pecl install /tmp/redis.tgz; \
     docker-php-ext-enable redis; \
     rm -rf /tmp/redis.tgz /tmp/pear ~/.pearrc; \
+    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false $PHPIZE_DEPS libc6-dev; \
+    command -v cgi-fcgi; \
+    if command -v gcc || command -v make || [ -e /usr/include/stdio.h ] || [ -e /usr/include/linux/version.h ]; then \
+        echo 'as ferramentas de compilação ficaram na imagem' >&2; exit 1; \
+    fi; \
     php -m | grep -qx 'Zend OPcache'; \
     php -m | grep -qx 'pdo_mysql'; \
     php -m | grep -qx 'redis'
