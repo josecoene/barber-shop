@@ -96,7 +96,8 @@ class AppointmentScheduler
      * com o status agendado ou confirmado. Se a data, o horário, o barbeiro ou
      * o serviço mudam, as regras rodam de novo sem contar o próprio agendamento
      * e o término é recalculado. Trocar o serviço também troca o preço; sem
-     * troca de serviço, o preço copiado no agendamento continua.
+     * troca de serviço, o preço copiado no agendamento continua. Agendamento de
+     * cliente excluído não recebe observação nova (Client::NOTES_AFTER_DELETION).
      *
      * @param  array{barber_id?: int|string, service_id?: int|string, date?: string, start_time?: string, notes?: string|null}  $changes
      *
@@ -151,6 +152,12 @@ class AppointmentScheduler
             }
 
             if (array_key_exists('notes', $changes)) {
+                // A exclusão do cliente apagou as observações (LGPD) e não volta a apagar: nada de texto
+                // novo depois dela. O cliente foi travado acima, então a exclusão que este pedido esperou já aparece.
+                if (filled($changes['notes']) && $client->trashed()) {
+                    throw ValidationException::withMessages(['notes' => Client::NOTES_AFTER_DELETION]);
+                }
+
                 $current->notes = $changes['notes'];
             }
 
@@ -455,11 +462,12 @@ class AppointmentScheduler
     }
 
     /**
-     * Expediente da config em minutos desde a meia-noite.
+     * Expediente da config em minutos desde a meia-noite. Também é o que o
+     * dashboard usa para calcular a ocupação (App\Services\DashboardMetrics).
      *
      * @return array{opening: int, closing: int, slot: int, days: list<int>}
      */
-    private function businessHours(): array
+    public function businessHours(): array
     {
         return [
             'opening' => $this->minutes((string) config('barberflow.business.opening')),

@@ -39,13 +39,16 @@ class AppServiceProvider extends ServiceProvider
 
     /**
      * Quem abre cada tela (middleware can: em routes/web.php e @can nas views). As
-     * regras de cada recurso da API ficam nas Policies de app/Policies.
+     * regras de cada recurso da API ficam nas Policies de app/Policies. O
+     * dashboard não tem model, então a regra dele é um Gate (view-dashboard),
+     * que vale para a API e para a tela.
      */
     private function configureGates(): void
     {
         Gate::define('access-admin', fn (User $user): bool => $user->isAdmin());
         Gate::define('access-staff', fn (User $user): bool => $user->isAdmin() || $user->isBarber());
         Gate::define('access-client', fn (User $user): bool => $user->isClient());
+        Gate::define('view-dashboard', fn (User $user): bool => $user->isAdmin());
     }
 
     /**

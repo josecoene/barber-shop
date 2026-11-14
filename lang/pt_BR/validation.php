@@ -192,6 +192,11 @@ return [
         'price' => [
             'max' => 'O campo preço não pode ser maior que R$ 999.999,99.',
         ],
+        // Valor do pagamento (PaymentController), também decimal 8,2.
+        'amount' => [
+            'max' => 'O campo valor não pode ser maior que R$ 999.999,99.',
+            'decimal' => 'O campo valor pode ter no máximo 2 casas decimais.',
+        ],
     ],
 
     /*
@@ -225,6 +230,7 @@ return [
         'amount' => 'valor',
         'method' => 'forma de pagamento',
         'notes' => 'observações',
+        'without_payment' => 'sem pagamento',
         'page' => 'página',
         'per_page' => 'itens por página',
         'search' => 'busca',

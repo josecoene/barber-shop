@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 /**
  * Horário de um cliente com um barbeiro para um serviço. Não tem exclusão:
@@ -21,10 +22,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Appointment extends Model
 {
     /**
-     * Cliente, barbeiro e serviço que o JSON do agendamento traz, só com id e
-     * nome (ver summarizeRelations()).
+     * O que o JSON do agendamento traz junto (ver summarizeRelations()): o
+     * cliente, o barbeiro e o serviço só com id e nome, e o pagamento só com id
+     * e status (null quando ainda não há pagamento).
      */
-    public const SUMMARY_RELATIONS = ['client:id,name', 'barber:id,name', 'service:id,name'];
+    public const SUMMARY_RELATIONS = ['client:id,name', 'barber:id,name', 'service:id,name', 'payment:id,appointment_id,status'];
 
     protected $fillable = [
         'client_id',
@@ -100,6 +102,17 @@ class Appointment extends Model
     }
 
     /**
+     * Pagamento do atendimento: só o concluído tem, e no máximo um
+     * (App\Services\PaymentRecorder).
+     *
+     * @return HasOne<Payment, $this>
+     */
+    public function payment(): HasOne
+    {
+        return $this->hasOne(Payment::class);
+    }
+
+    /**
      * Nome do status em português, para a tela não precisar repetir a tabela.
      *
      * @return Attribute<string|null, never>
@@ -163,7 +176,9 @@ class Appointment extends Model
     /**
      * Deixa no JSON só o id e o nome do cliente, do barbeiro e do serviço já
      * carregados: pelo agendamento ninguém vê e-mail, telefone ou se o outro tem
-     * login. Não carrega nada; use junto com SUMMARY_RELATIONS.
+     * login. Do pagamento, só o id e o status (com o nome em português), para a
+     * tela mostrar se o atendimento está pago; valor e forma ficam no
+     * GET /api/payments. Não carrega nada; use junto com SUMMARY_RELATIONS.
      */
     public function summarizeRelations(): static
     {
@@ -171,6 +186,10 @@ class Appointment extends Model
             if ($this->relationLoaded($relation)) {
                 $this->getRelation($relation)?->setVisible(['id', 'name']);
             }
+        }
+
+        if ($this->relationLoaded('payment')) {
+            $this->getRelation('payment')?->setVisible(['id', 'status', 'status_label']);
         }
 
         return $this;
@@ -209,5 +228,18 @@ class Appointment extends Model
     {
         $query->where('date', '>=', today()->toDateString())
             ->whereIn('status', AppointmentStatus::active());
+    }
+
+    /**
+     * Atendimentos concluídos ainda sem pagamento registrado (filtro
+     * without_payment do GET /api/appointments). Pagamento pendente ou
+     * estornado também conta como registrado: cada atendimento tem no máximo um.
+     *
+     * @param  Builder<self>  $query
+     */
+    public function scopeAwaitingPayment(Builder $query): void
+    {
+        $query->where('status', AppointmentStatus::Completed)
+            ->whereDoesntHave('payment');
     }
 }

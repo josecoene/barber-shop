@@ -26,9 +26,11 @@ class AppointmentController extends Controller
 
     /**
      * Lista paginada em ordem de data e horário. Filtros opcionais: ?date=,
-     * ?from= e ?to= (Y-m-d), ?barber_id=, ?client_id=, ?status=, ?per_page= (1 a
-     * 100, padrão 15) e ?page= (1 a 100000). O barbeiro vê só os da agenda dele
-     * e o cliente só os próprios, seja qual for o filtro.
+     * ?from= e ?to= (Y-m-d), ?barber_id=, ?client_id=, ?status=,
+     * ?without_payment=1 (concluídos ainda sem pagamento, para o "Registrar
+     * pagamento"), ?per_page= (1 a 100, padrão 15) e ?page= (1 a 100000). O
+     * barbeiro vê só os da agenda dele e o cliente só os próprios, seja qual for
+     * o filtro. Cada agendamento traz o pagamento resumido (id e status) ou null.
      */
     public function index(Request $request)
     {
@@ -44,6 +46,7 @@ class AppointmentController extends Controller
             'barber_id' => 'nullable|integer',
             'client_id' => 'nullable|integer',
             'status' => ['nullable', Rule::enum(AppointmentStatus::class)],
+            'without_payment' => 'nullable|boolean',
         ]);
 
         $appointments = Appointment::query()
@@ -55,6 +58,7 @@ class AppointmentController extends Controller
             ->when(isset($filters['barber_id']), fn ($query) => $query->where('barber_id', $filters['barber_id']))
             ->when(isset($filters['client_id']), fn ($query) => $query->where('client_id', $filters['client_id']))
             ->when(isset($filters['status']), fn ($query) => $query->where('status', $filters['status']))
+            ->when($request->boolean('without_payment'), fn ($query) => $query->awaitingPayment())
             ->orderBy('date')
             ->orderBy('start_time')
             ->orderBy('id')

@@ -5,7 +5,9 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\AvailableSlotController;
 use App\Http\Controllers\BarberController;
 use App\Http\Controllers\ClientController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\HealthController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ServiceController;
 use Illuminate\Support\Facades\Route;
 
@@ -38,5 +40,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::apiResource('appointments', AppointmentController::class)->except('destroy');
         Route::patch('/appointments/{appointment}/status', [AppointmentController::class, 'updateStatus'])->name('appointments.status');
         Route::get('/barbers/{barber}/available-slots', AvailableSlotController::class)->name('barbers.available-slots');
+
+        // Pagamentos, sem destroy: estornar é mudar o status.
+        Route::apiResource('payments', PaymentController::class)->except('destroy');
+        Route::patch('/payments/{payment}/status', [PaymentController::class, 'updateStatus'])->name('payments.status');
+        Route::get('/dashboard', DashboardController::class)->name('dashboard');
     });
 });

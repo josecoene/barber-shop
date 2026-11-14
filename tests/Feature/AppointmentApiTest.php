@@ -1115,4 +1115,23 @@ class AppointmentApiTest extends TestCase
         // As observações dos outros clientes continuam.
         $this->assertSame('Prefere máquina 2', $other->fresh()->notes);
     }
+
+    public function test_appointment_of_a_deleted_client_takes_no_new_notes(): void
+    {
+        // Um passado que ficou como agendado continua remarcável depois da exclusão, mas as observações
+        // que ela apagou (LGPD) não voltam: um texto novo com dado pessoal ficaria ligado ao cadastro.
+        $appointment = $this->appointment(['date' => self::SATURDAY_BEFORE, 'notes' => 'Ana Souza, tel 67999990000']);
+        $this->deleteJson("/api/clients/{$this->client->id}")->assertNoContent();
+
+        $this->putJson("/api/appointments/{$appointment->id}", ['notes' => 'Ana Souza, tel 67999990000'])
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.notes.0', 'O cliente foi excluído: deixe as observações em branco.');
+
+        $this->assertNull($appointment->fresh()->notes);
+
+        // Sem observações, o pedido passa.
+        $this->putJson("/api/appointments/{$appointment->id}", ['notes' => null])
+            ->assertOk()
+            ->assertJsonPath('notes', null);
+    }
 }
