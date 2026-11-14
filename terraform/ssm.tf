@@ -1,7 +1,7 @@
 # Parâmetros do SSM Parameter Store que viram o .env da EC2, em /barberflow/<ambiente>/.
-# O user_data da feat/infra-computacao lê o caminho inteiro (get-parameters-by-path, com
-# --with-decryption) e grava uma linha NOME=valor por parâmetro, ao lado do
-# docker-compose.prod.yml.
+# O user_data (templates/user_data.sh.tftpl) lê o caminho inteiro (get-parameters-by-path, com
+# --with-decryption) e grava uma linha NOME='valor' por parâmetro, ao lado do
+# docker-compose.prod.yml. A image_tag não vira linha: vira APP_IMAGE e WEB_IMAGE.
 #
 # Três grupos, porque o Terraform trata cada um de um jeito:
 #   1. ssm_terraform_parameters (String): o Terraform mantém o valor. Mudou aqui ou mudou o
@@ -54,9 +54,17 @@ locals {
       CACHE_STORE    = "redis"
       SESSION_DRIVER = "redis"
 
-      # Cookie de sessão também em HTTP, enquanto o ALB não tem certificado. A
-      # feat/infra-computacao liga (true) quando houver certificate_arn.
-      SESSION_SECURE_COOKIE = "false"
+      # Endereço público: o DNS do ALB em HTTP sem domínio, ou o app_url (alb.tf). Os links dos
+      # e-mails e os redirecionamentos começam por ele.
+      APP_URL = local.app_url
+
+      # Cookie de sessão só por HTTPS quando o ALB tem certificado. Sem ele, true faria o
+      # navegador não mandar o cookie em HTTP, e o login não seguraria.
+      SESSION_SECURE_COOKIE = local.https_enabled ? "true" : "false"
+
+      # O ALB fica dentro da VPC: a aplicação confia no X-Forwarded-For e no X-Forwarded-Proto
+      # que chegam da faixa da VPC (IP real do visitante e HTTPS). Lido no config/barberflow.php.
+      TRUSTED_PROXIES = var.vpc_cidr
 
       # Modo de manutenção no Redis: o php artisan down de uma instância vale para todas
       # (docs/nuvem/DOCKER.md, "Produção na EC2").
@@ -72,15 +80,14 @@ locals {
       MAIL_FROM_ADDRESS = var.mail_from_address
       MAIL_PORT         = tostring(var.mail_port)
     },
-    # O SSM não aceita parâmetro vazio. APP_URL só existe com domínio: vazio, a
-    # feat/infra-computacao cria com o DNS do ALB. MAIL_HOST só existe com o provedor escolhido.
-    { for name, value in { APP_URL = var.app_url, MAIL_HOST = var.mail_host } : name => value if value != "" },
+    # O SSM não aceita parâmetro vazio: MAIL_HOST só existe com o provedor escolhido.
+    { for name, value in { MAIL_HOST = var.mail_host } : name => value if value != "" },
   )
 
   # Valores provisórios: não são chave nem tag de verdade, e ninguém publica uma imagem com a
   # tag PREENCHER_PELO_DEPLOY (nem com latest, que o projeto não usa). O entrypoint de produção
-  # recusa o APP_KEY provisório, e o user_data da feat/infra-computacao para enquanto a
-  # image_tag tiver o valor provisório.
+  # recusa o APP_KEY provisório, e o user_data para enquanto a image_tag tiver o valor
+  # provisório (compute.tf passa este valor ao template).
   ssm_operator_parameters = {
     APP_KEY = {
       type          = "SecureString"

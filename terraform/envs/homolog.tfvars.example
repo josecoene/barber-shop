@@ -21,8 +21,12 @@ cache_automatic_failover = false
 ecr_keep_tagged_images = 10
 log_retention_days     = 30
 
-# Sem domínio: deixe vazio, e a feat/infra-computacao usa o DNS do ALB no APP_URL.
-app_url = ""
+# Sem domínio: deixe os dois vazios, e o APP_URL fica com o DNS do ALB, em HTTP. Com domínio e
+# certificado do ACM (mesma região), os dois juntos, ex.:
+#   app_url         = "https://homolog.barberflow.com.br"
+#   certificate_arn = "arn:aws:acm:us-east-1:<conta>:certificate/<id>"
+app_url         = ""
+certificate_arn = ""
 
 # E-mail: smtp com o provedor do grupo. Preencha o servidor (mail_host) e a porta
 # (mail_port) do provedor; com mail_host vazio, o parâmetro MAIL_HOST não é criado e o
@@ -32,3 +36,22 @@ mail_mailer       = "smtp"
 mail_host         = ""
 mail_port         = 587
 mail_from_address = "nao-responda@example.com"
+
+# ALB sem proteção contra exclusão, para o terraform destroy apagar a homolog depois da apresentação.
+alb_deletion_protection = false
+
+# Instâncias do app (Auto Scaling): t3.micro com disco de 30 GB, de 1 a 2 instâncias, escalando
+# pela CPU média. No primeiro apply, antes de existir imagem no ECR, use mínimo e desejado 0
+# (docs/nuvem/TERRAFORM.md, "Primeiro deploy").
+instance_type        = "t3.micro"
+root_volume_size     = 30
+asg_min_size         = 1
+asg_desired_capacity = 1
+asg_max_size         = 2
+asg_cpu_target       = 60
+
+# Orçamento mensal da conta inteira, com aviso por e-mail. Vazio, não é criado. Com homolog e
+# prod na mesma conta, preencha o e-mail num ambiente só (o prod.tfvars), para não receber o
+# mesmo aviso duas vezes.
+budget_limit_usd   = 30
+budget_alert_email = ""

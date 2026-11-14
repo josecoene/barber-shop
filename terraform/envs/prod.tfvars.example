@@ -23,9 +23,12 @@ cache_automatic_failover = true
 ecr_keep_tagged_images = 10
 log_retention_days     = 30
 
-# Sem domínio: deixe vazio, e a feat/infra-computacao usa o DNS do ALB no APP_URL.
-# Com domínio, ex.: app_url = "https://barberflow.com.br"
-app_url = ""
+# Sem domínio: deixe os dois vazios, e o APP_URL fica com o DNS do ALB, em HTTP. Com domínio e
+# certificado do ACM (mesma região), os dois juntos, ex.:
+#   app_url         = "https://barberflow.com.br"
+#   certificate_arn = "arn:aws:acm:us-east-1:<conta>:certificate/<id>"
+app_url         = ""
+certificate_arn = ""
 
 # E-mail: smtp com o provedor do grupo. Preencha o servidor (mail_host) e a porta
 # (mail_port) do provedor; com mail_host vazio, o parâmetro MAIL_HOST não é criado e o
@@ -35,3 +38,21 @@ mail_mailer       = "smtp"
 mail_host         = ""
 mail_port         = 587
 mail_from_address = "nao-responda@example.com"
+
+# ALB com proteção contra exclusão. Para destruir a prod, mude para false e aplique antes do destroy.
+alb_deletion_protection = true
+
+# Instâncias do app (Auto Scaling): t3.micro com disco de 30 GB, mínimo 1, desejado 2 (uma em
+# cada zona) e máximo 4, escalando pela CPU média. No primeiro apply, antes de existir imagem
+# no ECR, use mínimo e desejado 0 (docs/nuvem/TERRAFORM.md, "Primeiro deploy").
+instance_type        = "t3.micro"
+root_volume_size     = 30
+asg_min_size         = 1
+asg_desired_capacity = 2
+asg_max_size         = 4
+asg_cpu_target       = 60
+
+# Orçamento mensal da conta inteira (US$ 30), com aviso por e-mail a 80% do gasto real e a 100%
+# do previsto. Preencha com o e-mail do grupo; vazio, o orçamento não é criado.
+budget_limit_usd   = 30
+budget_alert_email = ""

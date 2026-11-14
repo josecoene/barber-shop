@@ -1,5 +1,5 @@
-# Saídas da rede e, no fim, dos dados e da segurança. Dentro desta pasta, as próximas
-# branches usam os recursos direto (aws_vpc.main, aws_subnet.public, aws_subnet.private);
+# Saídas da rede, dos dados e da segurança e, no fim, da computação. Dentro desta pasta, as
+# próximas branches usam os recursos direto (aws_vpc.main, aws_subnet.public, aws_lb.main etc.);
 # as saídas servem para conferir o que foi criado e para scripts e pipelines lerem com
 # terraform output.
 
@@ -23,10 +23,9 @@ output "azs" {
   value       = local.azs
 }
 
-# Saídas dos dados e da segurança (feat/infra-dados-seguranca). A feat/infra-computacao usa
-# os recursos direto (aws_security_group.alb, aws_iam_instance_profile.ec2,
-# aws_ecr_repository.image etc.). Nenhuma saída é segredo: a senha do banco só vai para o
-# parâmetro DB_PASSWORD do SSM.
+# Saídas dos dados e da segurança (feat/infra-dados-seguranca). A computação usa os recursos
+# direto (aws_security_group.alb, aws_iam_instance_profile.ec2, aws_ecr_repository.image etc.).
+# Nenhuma saída é segredo: a senha do banco só vai para o parâmetro DB_PASSWORD do SSM.
 
 output "alb_security_group_id" {
   description = "Security group do ALB (80 e 443 da internet)."
@@ -101,4 +100,33 @@ output "cache_primary_endpoint" {
 output "ssm_prefix" {
   description = "Caminho dos parâmetros do ambiente no SSM (ex.: /barberflow/homolog). É o --path do aws ssm get-parameters-by-path."
   value       = local.ssm_path
+}
+
+# Saídas da computação (feat/infra-computacao). O deploy da feat/ci-cd usa o asg_name no
+# instance refresh e o app_url no teste do /api/health. O compose_file_sha256 é o valor da tag
+# que o deploy confere antes de trocar as instâncias.
+
+output "alb_dns_name" {
+  description = "Endereço do ALB na AWS (ex.: barberflow-homolog-alb-123456789.us-east-1.elb.amazonaws.com). Com domínio, o registro CNAME do domínio aponta para ele."
+  value       = aws_lb.main.dns_name
+}
+
+output "app_url" {
+  description = "Endereço público da aplicação, o mesmo do parâmetro APP_URL do SSM: o DNS do ALB em HTTP sem domínio, ou o app_url."
+  value       = local.app_url
+}
+
+output "asg_name" {
+  description = "Nome do Auto Scaling (--auto-scaling-group-name do aws autoscaling start-instance-refresh)."
+  value       = aws_autoscaling_group.app.name
+}
+
+output "launch_template_id" {
+  description = "ID do launch template das instâncias do app."
+  value       = aws_launch_template.app.id
+}
+
+output "compose_file_sha256" {
+  description = "SHA-256 do docker-compose.prod.yml que vai no user_data, o mesmo da tag ComposeFileSha256 do launch template. Mudança no compose só chega às instâncias pelo apply, nunca pelo deploy."
+  value       = local.compose_file_sha256
 }
