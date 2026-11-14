@@ -36,9 +36,9 @@ O JSON pode trazer os acentos escapados (`"n\u00e3o"` no lugar de `"não"`). É 
 | `403 Forbidden` | Sem permissão | O perfil não pode fazer essa ação, ou o cliente ainda não confirmou o e-mail |
 | `404 Not Found` | Não encontrado | ID inexistente ou já excluído, rota que não existe, ou serviço inativo pedido pelo cliente |
 | `405 Method Not Allowed` | Método errado | A rota existe, mas não com esse método (ex.: `DELETE /api/services` ou `DELETE /api/appointments/1`) |
-| `409 Conflict` | Conflito com a agenda | Excluir cliente, barbeiro ou serviço com agendamento futuro ativo, ou remarcar um agendamento que outra pessoa mudou no mesmo instante. A resposta diz o que fazer |
+| `409 Conflict` | Conflito com a agenda | Excluir cliente, barbeiro ou serviço com agendamento futuro ativo, ou remarcar (ou registrar o pagamento de) um agendamento que outra pessoa mudou no mesmo instante. A resposta diz o que fazer |
 | `419` | Sessão expirada | Só nas telas: o token CSRF da sessão do navegador não vale mais |
-| `422 Unprocessable Entity` | Falha de validação | Campo ausente, inválido, duplicado ou fora do limite, filtro de listagem inválido, e-mail ou senha errados no login, horário ocupado ou fora do expediente, mudança de status que não vale |
+| `422 Unprocessable Entity` | Falha de validação | Campo ausente, inválido, duplicado ou fora do limite, filtro de listagem inválido, e-mail ou senha errados no login, horário ocupado ou fora do expediente, mudança de status que não vale, pagamento de atendimento não concluído ou que já tem pagamento, período do dashboard maior que 366 dias |
 | `429 Too Many Requests` | Limite de requisições | Passou do limite por minuto (veja [Limites de requisição](#limites-de-requisição)) |
 | `503 Service Unavailable` | Fora do ar | `/health` quando o banco ou o cache não responde |
 
@@ -52,13 +52,13 @@ Sem o cabeçalho `Authorization`, ou com um token vencido, revogado (logout) ou 
 
 ### Sem permissão (403)
 
-O perfil de quem chamou não pode fazer a ação (ex.: barbeiro excluindo cliente, cliente listando clientes):
+O perfil de quem chamou não pode fazer a ação (ex.: barbeiro excluindo cliente ou abrindo o dashboard, cliente listando clientes):
 
 ```json
 { "message": "Você não tem permissão para esta ação." }
 ```
 
-Conta de cliente que ainda não confirmou o e-mail, em `/services`, `/clients`, `/barbers` ou `/appointments` (todas as rotas com login exigem a confirmação, menos as da própria conta: `/user`, `/user/password`, `/logout` e `/email/verification-notification`):
+Conta de cliente que ainda não confirmou o e-mail, em `/services`, `/clients`, `/barbers`, `/appointments` ou `/payments` (todas as rotas com login exigem a confirmação, menos as da própria conta: `/user`, `/user/password`, `/logout` e `/email/verification-notification`):
 
 ```json
 { "message": "Confirme seu e-mail para continuar." }
@@ -122,7 +122,7 @@ O cabeçalho `Allow` da resposta lista os métodos que a rota aceita (ex.: `Allo
 
 ### Listagens paginadas
 
-`GET /services`, `GET /clients` e `GET /barbers` devolvem uma página por vez, em ordem de nome (e de `id`, quando dois nomes são iguais). `GET /appointments` devolve no mesmo formato, mas em ordem de data e horário e com filtros próprios (veja [Appointments](#appointments-agendamentos)). Parâmetros de query, todos opcionais:
+`GET /services`, `GET /clients` e `GET /barbers` devolvem uma página por vez, em ordem de nome (e de `id`, quando dois nomes são iguais). `GET /appointments` e `GET /payments` devolvem no mesmo formato, mas com filtros próprios e em ordem de data e horário do atendimento: os agendamentos do mais antigo para o mais novo, e os pagamentos do mais novo para o mais antigo, com os totais do filtro em `totals` (veja [Appointments](#appointments-agendamentos) e [Payments](#payments-pagamentos)). Parâmetros de query, todos opcionais:
 
 | Parâmetro | Regras | Padrão |
 |---|---|---|
@@ -198,7 +198,7 @@ A resposta vem em três partes: os itens em `data`, os links de navegação em `
 
 `DELETE` não apaga a linha do banco: ele preenche a coluna `deleted_at`. O registro some das listagens e da consulta por ID (que passa a dar `404`), mas continua no banco para o histórico de atendimentos. Não há rota para desfazer a exclusão.
 
-- **Cliente:** os dados pessoais são apagados na exclusão (LGPD). O nome vira `Cliente removido`, o e-mail vira `removido+{id}@barberflow.invalid` e o telefone fica vazio. As observações (`notes`) dos agendamentos dele também ficam vazias, porque são texto livre e podem ter dado pessoal.
+- **Cliente:** os dados pessoais são apagados na exclusão (LGPD). O nome vira `Cliente removido`, o e-mail vira `removido+{id}@barberflow.invalid` e o telefone fica vazio. As observações (`notes`) dos agendamentos dele e dos pagamentos desses agendamentos também ficam vazias, porque são texto livre e podem ter dado pessoal, e não recebem texto novo depois (`422` em `notes`: `O cliente foi excluído: deixe as observações em branco.`).
 - **Barbeiro:** só o nome continua, para o histórico mostrar quem atendeu. O e-mail é trocado por `removido+{id}@barberflow.invalid` e o telefone fica vazio.
 - **Serviço:** só sai das listas; nada é alterado.
 
@@ -386,12 +386,14 @@ Cada usuário tem um perfil (`users.role`): `admin`, `barber` (barbeiro) ou `cli
 | Clientes | tudo | ver, cadastrar e editar (não exclui) | ver e editar só o próprio cadastro (nome e telefone). Não lista os outros |
 | Agendamentos | tudo | ver, agendar, remarcar e mudar o status só na própria agenda | agendar para si (até 3 agendamentos ativos), ver os próprios e cancelar até 2 horas antes. Não remarca |
 | Horários livres | sim | sim | sim |
+| Pagamentos | tudo: registrar, corrigir, marcar como pago e estornar | registrar e ver os da própria agenda e marcar como pago um pendente deles. Não corrige nem estorna | ver os próprios |
+| Dashboard | ver | não | não |
 | Conta (`/user`, `/user/password`, `/logout`) | sim | sim | sim |
 
-- Ação fora da tabela dá `403` (ex.: barbeiro em `POST /services`, cliente em `GET /clients`, barbeiro agendando na agenda de outro, cliente agendando para outra pessoa).
-- Serviços, barbeiros, clientes e agendamentos exigem o e-mail confirmado. A conta de cliente que ainda não confirmou recebe `403` com `Confirme seu e-mail para continuar.` (admin e barbeiro já nascem com o e-mail confirmado).
+- Ação fora da tabela dá `403` (ex.: barbeiro em `POST /services`, cliente em `GET /clients`, barbeiro agendando na agenda de outro, cliente agendando para outra pessoa, barbeiro estornando um pagamento ou abrindo o dashboard).
+- Serviços, barbeiros, clientes, agendamentos e pagamentos exigem o e-mail confirmado. A conta de cliente que ainda não confirmou recebe `403` com `Confirme seu e-mail para continuar.` (admin e barbeiro já nascem com o e-mail confirmado).
 - O cliente que manda `email` ao editar o próprio cadastro, mesmo vazio ou `null`, recebe `422` com `O campo e-mail não é permitido.`: o e-mail do cadastro fica com a barbearia, porque foi por ele que a conta foi ligada.
-- Os detalhes da agenda por perfil estão em [Appointments](#appointments-agendamentos). Pagamentos, dashboard e fidelidade entram nas próximas etapas, com as regras por perfil descritas em [`ARQUITETURA.md`](ARQUITETURA.md#perfis-e-permissões).
+- Os detalhes por perfil estão em [Appointments](#appointments-agendamentos), [Payments](#payments-pagamentos) e [Dashboard](#dashboard). A fidelidade entra na próxima etapa, com as regras por perfil descritas em [`ARQUITETURA.md`](ARQUITETURA.md#perfis-e-permissões).
 
 ---
 
@@ -723,7 +725,7 @@ O limite do cliente conta os agendamentos agendados, confirmados ou em atendimen
 | `service_id` | integer | sim | serviço ativo e não excluído. Para o cliente, inativo ou excluído dá a mesma mensagem de um id que não existe (`O valor escolhido no campo serviço é inválido.`) |
 | `date` | string | sim | `Y-m-d` (ex.: `2026-11-16`): dia de expediente, de hoje até `BOOKING_DAYS_AHEAD` dias à frente |
 | `start_time` | string | sim | `H:i` ou `H:i:s` (ex.: `10:00`): uma fatia do expediente que ainda não passou |
-| `notes` | string | não | até 1000 caracteres. Quem vê o agendamento vê as observações, inclusive o cliente. Excluir o cliente apaga as observações dos agendamentos dele |
+| `notes` | string | não | até 1000 caracteres. Quem vê o agendamento vê as observações, inclusive o cliente. Excluir o cliente apaga as observações dos agendamentos dele, e eles não recebem texto novo depois |
 
 O servidor preenche o resto, e ignora esses campos quando vêm no corpo:
 
@@ -733,6 +735,7 @@ O servidor preenche o resto, e ignora esses campos quando vêm no corpo:
 | `price` | cópia do preço do serviço no momento do agendamento, como texto com 2 casas (`"35.00"`). Mudar o preço do serviço depois não muda os agendamentos que já existem |
 | `status` e `status_label` | o status (começa em `scheduled`) e o nome dele em português |
 | `client`, `barber` e `service` | só `id` e `name` de cada um, sem e-mail e telefone. Continuam aparecendo depois que o cadastro é excluído (o cliente, anonimizado) |
+| `payment` | o pagamento do atendimento, só com `id`, `status` e `status_label` (ex.: `{"id": 9, "status": "paid", "status_label": "Pago"}`), ou `null` quando ainda não há pagamento. Valor e forma ficam em [Payments](#payments-pagamentos) |
 
 ### Regras de horário
 
@@ -796,6 +799,7 @@ Não existe `DELETE /appointments/{id}` (`405`): cancelar é mudar o status, e o
 - quando a data, o horário, o barbeiro ou o serviço mudam, as regras de horário rodam de novo, sem contar o próprio agendamento, e o término é recalculado. Mudar só as `notes` não confere o horário;
 - o preço só muda quando o serviço muda;
 - `client_id` e `status` mandados no corpo são ignorados, sem erro: o cliente não muda, e o status tem rota própria;
+- no agendamento de um cliente excluído (um passado que ficou como agendado), `notes` preenchido dá `422` em `notes`: `O cliente foi excluído: deixe as observações em branco.` A exclusão apagou as observações (LGPD), e `notes` vazio ou `null` continua aceito;
 - se outra pessoa trocou o barbeiro ou o serviço do mesmo agendamento no mesmo instante, a resposta é `409` com `O agendamento mudou enquanto você editava. Recarregue e tente de novo.`
 
 ### Filtros da listagem
@@ -806,9 +810,10 @@ Não existe `DELETE /appointments/{id}` (`405`): cancelar é mudar o status, e o
 | `from` e `to` | `Y-m-d`: um período, com os dois dias incluídos. `to` não pode ser antes de `from` |
 | `barber_id` e `client_id` | inteiro |
 | `status` | um dos 6 status da tabela acima |
+| `without_payment` | `1`: só os atendimentos concluídos que ainda não têm pagamento registrado, os que a tela de Pagamentos lista no "Registrar pagamento". Pagamento pendente ou estornado conta como registrado. `0`, ou sem o filtro, devolve a lista de sempre. Outro valor (ex.: `talvez`) dá `422`: `O campo sem pagamento deve ser verdadeiro ou falso.` |
 | `page` e `per_page` | como nas outras listagens (`per_page` de 1 a 100, padrão 15) |
 
-A listagem de agendamentos não tem `search`. A ordem é data, horário e `id`. Valor fora das regras dá `422` (ex.: `date=16/11/2026`, `status=foo`, `to` antes de `from`).
+A listagem de agendamentos não tem `search`. A ordem é data, horário e `id`. Valor fora das regras dá `422` (ex.: `date=16/11/2026`, `status=foo`, `to` antes de `from`). Os filtros se combinam: `without_payment=1&barber_id=2` lista os concluídos sem pagamento do barbeiro 2.
 
 ### Horários livres
 
@@ -862,7 +867,8 @@ Resposta `201`:
   "status_label": "Agendado",
   "client": { "id": 1, "name": "Carlos Silva" },
   "barber": { "id": 1, "name": "João Barbeiro" },
-  "service": { "id": 1, "name": "Corte de cabelo" }
+  "service": { "id": 1, "name": "Corte de cabelo" },
+  "payment": null
 }
 ```
 
@@ -934,6 +940,330 @@ Com só agendamentos passados, cancelados ou com falta, a exclusão segue normal
 
 ---
 
+## Payments (pagamentos)
+
+Pagamento de um atendimento concluído: no máximo um por agendamento. As regras ficam em `App\Services\PaymentRecorder`, os status em `App\Enums\PaymentStatus` e as formas em `App\Enums\PaymentMethod`.
+
+**Quem pode** (`App\Policies\PaymentPolicy`):
+
+| Ação | Admin | Barbeiro | Cliente |
+|---|---|---|---|
+| Listar e ver | todos | só os dos agendamentos da agenda dele | só os próprios (inclusive as observações) |
+| Registrar (`POST`) | de qualquer atendimento concluído | só dos atendimentos da agenda dele | não |
+| Corrigir valor, forma e observações (`PUT`/`PATCH`) | sim, em qualquer status | não | não |
+| Mudar o status | marcar como pago e estornar | só marcar como pago um pendente da agenda dele | não |
+
+Registrar o pagamento de um agendamento de outro barbeiro dá `403`. Conta de barbeiro ou de cliente sem cadastro ligado também recebe `403`. Na listagem, os filtros não abrem os pagamentos dos outros: `barber_id` de outro barbeiro devolve a lista vazia.
+
+### Campos
+
+| Campo | Tipo | Obrigatório (POST) | Regras |
+|---|---|---|---|
+| `appointment_id` | integer | sim | agendamento que existe e está com o status `completed` (concluído) e ainda sem pagamento |
+| `amount` | decimal | não | de 0 a 999999.99, com no máximo 2 casas. Sem ele (ou `null`), vale o `price` copiado no agendamento. Na resposta, texto com 2 casas: `"35.00"` |
+| `method` | string | sim | `cash` (Dinheiro), `pix` (Pix), `credit_card` (Cartão de crédito) ou `debit_card` (Cartão de débito) |
+| `status` | string | não | `pending` (Pendente) ou `paid` (Pago). Sem ele, o pagamento nasce `paid`. Ninguém registra um pagamento já estornado (`refunded` dá `422`) |
+| `notes` | string | não | até 1000 caracteres. O cliente também vê. Vazio no pagamento de cliente excluído (veja as regras) |
+
+O servidor preenche o resto, e ignora esses campos quando vêm no corpo:
+
+| Campo da resposta | O que é |
+|---|---|
+| `paid_at` | quando o pagamento virou pago, em UTC (ISO 8601). Vem do relógio do servidor; `null` enquanto está pendente. O estorno mantém a data em que foi pago |
+| `method_label` e `status_label` | a forma e o status em português |
+| `appointment` | o agendamento resumido: `id`, `date`, `start_time`, `end_time` e `client`, `barber` e `service` só com `id` e `name`. Sem as observações e sem o preço do agendamento |
+
+### Regras
+
+- Só atendimento concluído recebe pagamento. Agendado, confirmado, em atendimento, cancelado e faltou dão `422` em `appointment_id`: `Só é possível registrar o pagamento de um atendimento concluído.`
+- Um pagamento por atendimento, para sempre: pendente, pago ou estornado, ele é o único. Um segundo `POST` para o mesmo agendamento, mesmo depois do estorno, dá `422` em `appointment_id`: `Este atendimento já tem pagamento registrado.`
+- Dois registros para o mesmo atendimento ao mesmo tempo passam um de cada vez: o registro trava a linha do agendamento antes de conferir o status e se já existe pagamento, e o segundo já enxerga o primeiro. O índice `unique` de `appointment_id` no banco é a última barreira: se mesmo assim um segundo pagamento chegar a ser gravado, a resposta é o mesmo `422`, nunca um erro 500.
+- Se o barbeiro do agendamento mudou entre a conferência da permissão e a trava, a resposta é `409`: `O agendamento mudou enquanto você registrava o pagamento. Recarregue e tente de novo.`
+- Não existe `DELETE /payments/{id}` (`405`): estornar é mudar o status, e o pagamento fica no histórico.
+- A correção pelo admin (`PUT`/`PATCH /payments/{id}`) muda só `amount`, `method` e `notes`, com as mesmas regras do `POST` (o `amount` mandado não pode ser vazio). O agendamento, o status e o `paid_at` não mudam por ela.
+- Excluir o cliente apaga as observações (`notes`) dos pagamentos dos agendamentos dele, junto com as dos agendamentos (LGPD). O pagamento continua no histórico, e o atendimento concluído dele ainda pode ser pago, mas sem observações: no registro e na correção, `notes` preenchido dá `422` em `notes` (`O cliente foi excluído: deixe as observações em branco.`), porque um texto novo voltaria a ligar dado pessoal ao cadastro. A conferência vem depois da trava, então um registro ou uma correção que esperou a exclusão terminar também é recusado.
+
+### Status e transições
+
+| Status | Nome | Pode ir para | Quem |
+|---|---|---|---|
+| `pending` | Pendente | `paid` | admin, ou o barbeiro do agendamento. O `paid_at` recebe a hora da mudança |
+| `paid` | Pago | `refunded` | só o admin (estorno) |
+| `refunded` | Estornado | (final) | |
+
+Transição fora da tabela dá `422` em `status` (ex.: `Não é possível mudar de Estornado para Pago.`).
+
+### Endpoints
+
+| Método | Rota | Descrição | Resposta |
+|---|---|---|---|
+| GET | `/payments` | Lista do atendimento mais recente para o mais antigo (filtros abaixo), com `totals` | `200` + página |
+| POST | `/payments` | Registra o pagamento de um atendimento concluído | `201` + pagamento |
+| GET | `/payments/{id}` | Mostra um pagamento | `200` + pagamento |
+| PUT/PATCH | `/payments/{id}` | Corrige `amount`, `method` e `notes` (só o admin) | `200` + pagamento |
+| PATCH | `/payments/{id}/status` | Muda o status (`{"status": "refunded"}`) | `200` + pagamento |
+
+### Filtros da listagem
+
+| Parâmetro | Regras |
+|---|---|
+| `from` e `to` | `Y-m-d`: pela data do atendimento (não a do pagamento), com os dois dias incluídos. `to` não pode ser antes de `from` |
+| `method` | uma das 4 formas |
+| `status` | `pending`, `paid` ou `refunded` |
+| `barber_id` e `client_id` | inteiro: pelo barbeiro e pelo cliente do agendamento |
+| `page` e `per_page` | como nas outras listagens (`per_page` de 1 a 100, padrão 15) |
+
+A ordem é a data e o horário do atendimento, do mais recente para o mais antigo, e depois o `id` do pagamento (o maior primeiro). Não tem `search`. Valor fora das regras dá `422` (ex.: `method=cheque`, `to` antes de `from`).
+
+Além de `data`, `links` e `meta`, a resposta traz `totals`: para cada status, a quantidade de pagamentos (`payments`) e a soma dos valores (`total`, texto com 2 casas), com os mesmos filtros e somando todas as páginas. Assim a tela mostra o total do filtro sem ler a lista inteira. O filtro `status` vale também para os totais: com `status=paid`, os outros dois saem zerados.
+
+### Exemplos
+
+**Atendimentos concluídos sem pagamento** (o que a tela de Pagamentos lista no "Registrar pagamento"):
+
+```bash
+curl "http://localhost:8000/api/appointments?without_payment=1" \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Cada item de `data` é um agendamento concluído com `"payment": null`.
+
+**Registrar** o pagamento no Pix, com o valor do agendamento:
+
+```bash
+curl -X POST http://localhost:8000/api/payments \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"appointment_id":9,"method":"pix","notes":"Pagou na saída"}'
+```
+
+Resposta `201`:
+
+```json
+{
+  "appointment_id": 9,
+  "amount": "25.00",
+  "method": "pix",
+  "status": "paid",
+  "paid_at": "2026-11-16T11:00:00.000000Z",
+  "notes": "Pagou na saída",
+  "updated_at": "2026-11-16T11:00:00.000000Z",
+  "created_at": "2026-11-16T11:00:00.000000Z",
+  "id": 9,
+  "method_label": "Pix",
+  "status_label": "Pago",
+  "appointment": {
+    "id": 9,
+    "date": "2026-11-13",
+    "start_time": "09:00:00",
+    "end_time": "09:30:00",
+    "client": { "id": 1, "name": "Ana" },
+    "barber": { "id": 2, "name": "João" },
+    "service": { "id": 2, "name": "Barba" }
+  }
+}
+```
+
+Depois disso, o agendamento traz o pagamento resumido (`GET /appointments/9`):
+
+```json
+"payment": { "id": 9, "status": "paid", "status_label": "Pago" }
+```
+
+**Atendimento que já tem pagamento**, ou não concluído (`422`):
+
+```json
+{
+  "message": "Este atendimento já tem pagamento registrado.",
+  "errors": {
+    "appointment_id": ["Este atendimento já tem pagamento registrado."]
+  }
+}
+```
+
+```json
+{
+  "message": "Só é possível registrar o pagamento de um atendimento concluído.",
+  "errors": {
+    "appointment_id": ["Só é possível registrar o pagamento de um atendimento concluído."]
+  }
+}
+```
+
+**Listar com filtro** (os do Pix na semana de 09 a 14/11, 2 por página):
+
+```bash
+curl "http://localhost:8000/api/payments?from=2026-11-09&to=2026-11-14&method=pix&per_page=2" \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Resposta `200`: `data` com os 2 pagamentos desta página, no formato do exemplo acima (o de 13/11 primeiro, depois o de 10/11), `links` e `meta` como nas outras listagens (`"total": 3` e `"last_page": 2`) e, no fim, os totais do filtro, somando as 2 páginas:
+
+```json
+"totals": {
+  "pending": { "payments": 0, "total": "0.00" },
+  "paid": { "payments": 3, "total": "120.00" },
+  "refunded": { "payments": 0, "total": "0.00" }
+}
+```
+
+**Estornar** (só o admin):
+
+```bash
+curl -X PATCH http://localhost:8000/api/payments/9/status \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"status":"refunded"}'
+```
+
+Resposta `200` com o pagamento: `"status": "refunded"`, `"status_label": "Estornado"` e o mesmo `paid_at` de antes. Tentar voltar para pago dá `422`:
+
+```json
+{
+  "message": "Não é possível mudar de Estornado para Pago.",
+  "errors": {
+    "status": ["Não é possível mudar de Estornado para Pago."]
+  }
+}
+```
+
+**Corrigir** o valor e as observações (só o admin):
+
+```bash
+curl -X PUT http://localhost:8000/api/payments/9 \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"amount":20,"notes":"Desconto de R$ 5,00 combinado"}'
+```
+
+Resposta `200` com `"amount": "20.00"` e as observações novas; `status`, `paid_at` e o agendamento continuam os mesmos.
+
+---
+
+## Dashboard
+
+`GET /dashboard?from=Y-m-d&to=Y-m-d` devolve os números da barbearia num período, só para o admin (Gate `view-dashboard`; barbeiro e cliente recebem `403`). As definições ficam em `App\Services\DashboardMetrics`, e as consultas são agregadas no banco (contagens e somas com `group by`), iguais no SQLite e no MySQL.
+
+| Parâmetro | Regras |
+|---|---|
+| `from` e `to` | `Y-m-d`. Os dois juntos ou nenhum (um sem o outro dá `422`). `to` não pode ser antes de `from`, e o período tem no máximo 366 dias, contando os dois (`422` em `to`: `O período pode ter no máximo 366 dias.`) |
+
+Sem `from` e `to`, vale o mês atual, do primeiro ao último dia, no fuso da aplicação (`APP_TIMEZONE`).
+
+Tudo conta pela **data do atendimento** (`appointments.date`): um pagamento registrado dias depois entra no dia do atendimento. Dinheiro sai como texto com 2 casas (`"35.00"`). Taxas saem em %, com 1 casa decimal (`22.2`), e ficam `null` quando o divisor é zero.
+
+| Campo | Fórmula |
+|---|---|
+| `period` | `from`, `to` e `days` (quantos dias o período tem) |
+| `revenue.total` | soma dos pagamentos **pagos** dos atendimentos do período. Pendentes e estornados ficam de fora |
+| `revenue.payments` | quantos pagamentos pagos entram na soma |
+| `revenue.average_ticket` | ticket médio: `total ÷ payments` (`"0.00"` sem pagamento) |
+| `revenue.by_method` | o mesmo faturamento por forma de pagamento, sempre com as 4 formas, mesmo sem valor |
+| `revenue.by_day` | o mesmo faturamento por dia, com todos os dias do período, mesmo sem valor |
+| `appointments.total` | agendamentos do período, em qualquer status |
+| `appointments.by_status` | quantos agendamentos em cada um dos 6 status, mesmo sem nenhum |
+| `appointments.no_show_rate` | taxa de faltas: `faltou ÷ (concluído + faltou) × 100`. Cancelado não conta como falta, nem quando a barbearia cancela em cima da hora |
+| `occupancy.occupied_minutes` | soma da duração (do início ao término) dos agendamentos que ocupam o horário: agendado, confirmado, em atendimento e concluído (cancelado e faltou liberam o horário) |
+| `occupancy.minutes_per_day` | minutos de expediente por dia: fechamento menos abertura (`BUSINESS_OPENING` e `BUSINESS_CLOSING`) |
+| `occupancy.business_days` | dias do período com expediente (`BUSINESS_DAYS`), inclusive os que ainda não chegaram |
+| `occupancy.barbers` | barbeiros que contam: os cadastrados até o último dia do período e não excluídos antes do primeiro. Quem foi cadastrado depois do período não conta, então um cadastro novo não muda os números de um período que já passou |
+| `occupancy.available_minutes` | `minutes_per_day × business_days × barbers` |
+| `occupancy.rate` | ocupação: `occupied_minutes ÷ available_minutes × 100` |
+| `top_services` | os 5 serviços com mais atendimentos concluídos, com o faturamento deles (pagamentos pagos). Empate fica com o maior faturamento e depois com o menor `id`. Serviço excluído aparece pelo nome |
+| `barbers` | por barbeiro: concluídos, faltas (`no_show`) e faturamento. Entram os barbeiros que contam na ocupação, mesmo sem atendimento, e quem teve agendamento no período, em ordem de faturamento, concluídos, nome e `id` |
+
+### Exemplo
+
+A semana de segunda 09/11 a sábado 14/11/2026, com 2 barbeiros (Pedro e João), 13 agendamentos em todos os status e 6 pagamentos (4 pagos, 1 estornado e 1 pendente). São os mesmos números que o `DashboardApiTest` confere.
+
+```bash
+curl "http://localhost:8000/api/dashboard?from=2026-11-09&to=2026-11-14" \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Resposta `200`:
+
+```json
+{
+  "period": { "from": "2026-11-09", "to": "2026-11-14", "days": 6 },
+  "revenue": {
+    "total": "155.00",
+    "payments": 4,
+    "average_ticket": "38.75",
+    "by_method": [
+      { "method": "cash", "label": "Dinheiro", "payments": 1, "total": "35.00" },
+      { "method": "pix", "label": "Pix", "payments": 2, "total": "95.00" },
+      { "method": "credit_card", "label": "Cartão de crédito", "payments": 1, "total": "25.00" },
+      { "method": "debit_card", "label": "Cartão de débito", "payments": 0, "total": "0.00" }
+    ],
+    "by_day": [
+      { "date": "2026-11-09", "payments": 2, "total": "90.00" },
+      { "date": "2026-11-10", "payments": 1, "total": "40.00" },
+      { "date": "2026-11-11", "payments": 0, "total": "0.00" },
+      { "date": "2026-11-12", "payments": 1, "total": "25.00" },
+      { "date": "2026-11-13", "payments": 0, "total": "0.00" },
+      { "date": "2026-11-14", "payments": 0, "total": "0.00" }
+    ]
+  },
+  "appointments": {
+    "total": 13,
+    "by_status": [
+      { "status": "scheduled", "label": "Agendado", "count": 1 },
+      { "status": "confirmed", "label": "Confirmado", "count": 1 },
+      { "status": "in_progress", "label": "Em atendimento", "count": 1 },
+      { "status": "completed", "label": "Concluído", "count": 7 },
+      { "status": "cancelled", "label": "Cancelado", "count": 1 },
+      { "status": "no_show", "label": "Faltou", "count": 2 }
+    ],
+    "no_show_rate": 22.2
+  },
+  "occupancy": {
+    "rate": 5.4,
+    "occupied_minutes": 390,
+    "available_minutes": 7200,
+    "minutes_per_day": 600,
+    "business_days": 6,
+    "barbers": 2
+  },
+  "top_services": [
+    { "id": 2, "name": "Barba", "completed": 3, "revenue": "25.00" },
+    { "id": 1, "name": "Corte", "completed": 2, "revenue": "75.00" },
+    { "id": 3, "name": "Corte e barba", "completed": 2, "revenue": "55.00" }
+  ],
+  "barbers": [
+    { "id": 1, "name": "Pedro", "completed": 3, "no_show": 1, "revenue": "90.00" },
+    { "id": 2, "name": "João", "completed": 4, "no_show": 1, "revenue": "65.00" }
+  ]
+}
+```
+
+Como sair cada número:
+
+- **Faturamento:** 35 + 55 + 40 + 25 = 155,00 em 4 pagamentos pagos; o estornado (25) e o pendente (55) ficam de fora. Ticket médio: 155 ÷ 4 = 38,75.
+- **Faltas:** 2 ÷ (7 concluídos + 2 faltas) = 22,2%.
+- **Ocupação:** 390 minutos agendados (sem o cancelado e as faltas) ÷ (600 minutos × 6 dias × 2 barbeiros = 7200) = 5,4%.
+- **Top serviços:** Barba tem mais concluídos (3); Corte (35 + 40 = 75,00) e Corte e barba (55,00, sem o pendente de 55) empatam em 2, e o faturamento desempata.
+- **Por barbeiro:** Pedro soma 35 + 55 = 90,00 (o estorno de 25 fica de fora) e João, 40 + 25 = 65,00 (o pendente de 55 fica de fora). Pedro vem primeiro porque fatura mais, mesmo com menos concluídos, e 90 + 65 dá os 155,00 do faturamento.
+
+Período longo demais (`?from=2026-01-01&to=2027-01-02`, 367 dias), `422`:
+
+```json
+{
+  "message": "O período pode ter no máximo 366 dias.",
+  "errors": {
+    "to": ["O período pode ter no máximo 366 dias."]
+  }
+}
+```
+
+---
+
 ## Limitações
 
 - **Agenda por barbeiro:** os horários livres olham só a agenda do barbeiro escolhido. O conflito do cliente com outro barbeiro aparece só ao agendar (`422` em `client_id`).
@@ -941,6 +1271,9 @@ Com só agendamentos passados, cancelados ou com falta, a exclusão segue normal
 - **O cadastro de conta diz se o e-mail já tem conta:** `POST /register` responde `Este e-mail já está cadastrado.`. O login e o "esqueci a senha" não revelam isso.
 - **Sem desfazer exclusão:** a linha fica no banco, mas não há rota para restaurar um registro excluído. No cliente, os dados pessoais já foram apagados.
 - **Página de até 100 itens:** quem precisa de tudo (como a tela Agendar) pede `per_page=100`; com mais de 100 cadastros, os outros ficam nas páginas seguintes. A Agenda e Meus horários leem as páginas seguintes, até 1000 agendamentos.
+- **Um pagamento por atendimento, para sempre:** depois do estorno, o atendimento não recebe outro pagamento. Para cobrar de novo um valor estornado por engano, o admin corrige o pagamento estornado (valor e observações), mas ele continua fora do faturamento.
+- **Dashboard pela data do atendimento:** o faturamento de um dia é o dos atendimentos daquele dia, mesmo que o pagamento tenha sido registrado depois. Não existe um relatório pela data do pagamento.
+- **Ocupação sem data de contratação:** o barbeiro cadastrado no meio do período conta o período inteiro nos minutos disponíveis, e o excluído no meio do período também (os atendimentos dele entram nos minutos ocupados). Só fica de fora quem foi cadastrado depois do último dia do período ou excluído antes do primeiro.
 
 ## Coleção do Postman
 
@@ -951,6 +1284,8 @@ Importe o arquivo [`BarberFlow.postman_collection.json`](BarberFlow.postman_coll
 3. A coleção manda `Authorization: Bearer {{token}}` em todos os requests (autenticação no nível da coleção). Os requests abertos (login, cadastro de conta, esqueci a senha, redefinição e health) vão sem token.
 4. Os requests de criar guardam o `id` criado em `serviceId`, `clientId` e `barberId`, que os de mostrar, atualizar e excluir usam. Rode o "Criar" de cada pasta antes dos outros.
 5. A pasta **Agendamentos** cria o próprio cliente, barbeiro e serviço (`appointmentClientId`, `appointmentBarberId` e `appointmentServiceId`), para não depender dos que as outras pastas excluem. Rode na ordem: os três "Preparar", **Horários livres** (escolhe o próximo dia de expediente e guarda o primeiro e o último horário livre), **Criar** (guarda `appointmentId`), e depois listar, mostrar, remarcar, mudar o status e a exclusão que dá `409`.
+6. A pasta **Pagamentos** precisa de um atendimento **concluído** sem pagamento. Ela não consegue criar um: a API só aceita pagamento de atendimento concluído, um atendimento só é concluído depois do horário de início, e ninguém agenda no passado. Por isso o primeiro request (**Atendimento concluído sem pagamento**, com `without_payment=1`) acha um que já existe e guarda o id em `paymentAppointmentId`; se a lista vier vazia, o `pm.test` dele falha e diz para concluir um na Agenda antes. Depois, na ordem: **Registrar** (no Pix, guarda `paymentId`), as duas recusas (`422` do atendimento que já tem pagamento e do não concluído, este com o `appointmentId` da pasta Agendamentos), **Listar com filtro** (período do atendimento, Pix e pago, conferindo os `totals`), **Mostrar**, **Corrigir**, **Estornar** e o estorno repetido que dá `422`. Como cada atendimento tem um pagamento só, o atendimento usado fica com o pagamento estornado.
+7. A pasta **Dashboard** (só o admin) pede o mês atual, um período (`dashboardFrom` e `dashboardTo`, padrão novembro de 2026) e um período de 367 dias, que dá `422`.
 
 Cada request tem um `pm.test` que confere o status esperado. As listagens trazem `page` e `per_page` ligados e `search` e `status` de exemplo desligados: marque o parâmetro na aba **Params** para usar.
 
