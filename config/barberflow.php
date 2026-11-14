@@ -18,6 +18,14 @@ $isBlank = static fn (mixed $value): bool => $value === null || $value === '';
 
 $integer = static fn (string $key, int $default): int => $isBlank(env($key)) ? $default : (int) env($key);
 
+$text = static fn (string $key, string $default): string => $isBlank(env($key)) ? $default : trim((string) env($key));
+
+// Lista de números separados por vírgula (ex.: "1,2,3"). O que não é número fica de fora.
+$integers = static fn (string $key, string $default): array => array_values(array_unique(array_map(
+    'intval',
+    array_filter(array_map('trim', explode(',', $text($key, $default))), 'is_numeric'),
+)));
+
 $appUrl = $isBlank(env('APP_URL')) ? 'http://localhost' : env('APP_URL');
 
 return [
@@ -97,5 +105,38 @@ return [
     */
 
     'client_cancel_min_hours' => $integer('CLIENT_CANCEL_MIN_HOURS', 2),
+
+    /*
+    | Quantos agendamentos ativos (agendado, confirmado ou em atendimento) de
+    | hoje em diante o cliente pode ter ao agendar pela conta dele. No limite,
+    | ele cancela um para marcar outro. A barbearia (admin e barbeiro) agenda
+    | para o cliente sem esse limite. O mínimo é 1.
+    */
+
+    'client_max_active_appointments' => $integer('CLIENT_MAX_ACTIVE_APPOINTMENTS', 3),
+
+    /*
+    | Até quantos dias depois de hoje dá para agendar ou remarcar, em qualquer
+    | perfil. Com 60, hoje mais 60 dias é a última data aceita.
+    */
+
+    'booking_days_ahead' => $integer('BOOKING_DAYS_AHEAD', 60),
+
+    /*
+    | Expediente da agenda (App\Services\AppointmentScheduler):
+    | - opening e closing: abertura e fechamento, em HH:MM. O atendimento
+    |   começa e termina dentro desse intervalo;
+    | - slot_minutes: tamanho da fatia. Os horários começam de fatia em fatia,
+    |   a partir da abertura (09:00, 09:30, 10:00...);
+    | - days: dias de atendimento no padrão ISO, de 1 (segunda) a 7 (domingo),
+    |   separados por vírgula no .env.
+    */
+
+    'business' => [
+        'opening' => $text('BUSINESS_OPENING', '09:00'),
+        'closing' => $text('BUSINESS_CLOSING', '19:00'),
+        'slot_minutes' => $integer('BUSINESS_SLOT_MINUTES', 30),
+        'days' => $integers('BUSINESS_DAYS', '1,2,3,4,5,6'),
+    ],
 
 ];

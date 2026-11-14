@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    A suíte inteira no MySQL (composer test:mysql), para rodar o que o SQLite em memória do
+    phpunit.xml não roda: as travas da agenda (o AppointmentConcurrencyTest, pulado no SQLite,
+    confere com duas conexões) e as consultas no MySQL. Pedidos simultâneos de verdade ficam para o
+    teste de carga concorrencia.js.
+
+    O RefreshDatabase APAGA e recria o banco: rode só num MySQL descartável, nunca no banco da
+    homolog nem no de desenvolvimento. O tests/TestCase.php recusa banco sem "test" no nome.
+
+    Sem force: o ambiente decide. DB_HOST, DB_PORT, DB_USERNAME e DB_PASSWORD (e, se quiser,
+    DB_CONNECTION e DB_DATABASE) vêm das variáveis de ambiente, e os valores abaixo são só
+    padrões para um MySQL de teste. Não use aqui nenhuma senha de verdade.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_LOCALE" value="pt_BR"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="BROADCAST_CONNECTION" value="null"/>
+        <env name="CACHE_STORE" value="array"/>
+        <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_DATABASE" value="barberflow_testing"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_USERNAME" value="barberflow_test"/>
+        <env name="DB_PASSWORD" value="barberflow_test"/>
+        <!-- O DB_URL vale mais que os DB_* acima e levaria o RefreshDatabase para o banco dele: fica sempre vazio -->
+        <env name="DB_URL" value="" force="true"/>
+        <server name="DB_URL" value="" force="true"/>
+        <env name="MAIL_MAILER" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="PULSE_ENABLED" value="false"/>
+        <env name="TELESCOPE_ENABLED" value="false"/>
+        <env name="NIGHTWATCH_ENABLED" value="false"/>
+    </php>
+</phpunit>

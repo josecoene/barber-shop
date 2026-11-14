@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\UserRole;
+use App\Models\Concerns\HasAppointments;
 use App\Models\Concerns\ReleasesEmailOnDelete;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -13,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 class Barber extends Model
 {
-    use HasFactory, ReleasesEmailOnDelete, SoftDeletes;
+    use HasAppointments, HasFactory, ReleasesEmailOnDelete, SoftDeletes;
 
     protected $fillable = [
         'name',

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Client;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -92,13 +93,17 @@ class ClientController extends Controller
     /**
      * Exclusão lógica com anonimização (LGPD): a linha fica para o histórico,
      * mas sem nome, e-mail e telefone do cliente. A conta do cliente, se existir,
-     * é apagada com os tokens e as sessões.
+     * é apagada com os tokens e as sessões. Com agendamento de hoje em diante
+     * ainda ativo, 409 (cancele ou remarque antes).
      */
     public function destroy(Client $client)
     {
         Gate::authorize('delete', $client);
 
-        $client->anonymizeAndDelete();
+        DB::transaction(function () use ($client) {
+            $client->ensureNoUpcomingAppointments();
+            $client->anonymizeAndDelete();
+        });
 
         return response()->noContent();
     }

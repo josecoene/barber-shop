@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Service;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -86,13 +87,17 @@ class ServiceController extends Controller
     }
 
     /**
-     * Exclusão lógica: a linha fica no banco com deleted_at preenchido.
+     * Exclusão lógica: a linha fica no banco com deleted_at preenchido. Com
+     * agendamento de hoje em diante ainda ativo, 409 (cancele ou remarque antes).
      */
     public function destroy(Service $service)
     {
         Gate::authorize('delete', $service);
 
-        $service->delete();
+        DB::transaction(function () use ($service) {
+            $service->ensureNoUpcomingAppointments();
+            $service->delete();
+        });
 
         return response()->noContent();
     }

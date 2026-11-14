@@ -1,6 +1,8 @@
 <?php
 
+use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\AvailableSlotController;
 use App\Http\Controllers\BarberController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\HealthController;
@@ -31,5 +33,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::apiResource('services', ServiceController::class);
         Route::apiResource('barbers', BarberController::class);
         Route::apiResource('clients', ClientController::class);
+
+        // Agenda, sem destroy: cancelar é mudar o status.
+        Route::apiResource('appointments', AppointmentController::class)->except('destroy');
+        Route::patch('/appointments/{appointment}/status', [AppointmentController::class, 'updateStatus'])->name('appointments.status');
+        Route::get('/barbers/{barber}/available-slots', AvailableSlotController::class)->name('barbers.available-slots');
     });
 });

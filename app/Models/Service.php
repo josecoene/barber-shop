@@ -2,12 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasAppointments;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Service extends Model
 {
-    use SoftDeletes;
+    use HasAppointments, SoftDeletes;
 
     protected $fillable = ['name', 'duration', 'price', 'status'];
 

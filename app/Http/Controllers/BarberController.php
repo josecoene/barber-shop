@@ -133,13 +133,17 @@ class BarberController extends Controller
     /**
      * Exclusão lógica: mantém o nome para o histórico, troca o e-mail (liberando
      * o original para um cadastro novo) e apaga o telefone. O login do barbeiro,
-     * se existir, é apagado com os tokens e as sessões.
+     * se existir, é apagado com os tokens e as sessões. Com agendamento de hoje
+     * em diante ainda ativo, 409 (cancele ou remarque antes).
      */
     public function destroy(Barber $barber)
     {
         Gate::authorize('delete', $barber);
 
-        $barber->releaseEmailAndDelete();
+        DB::transaction(function () use ($barber) {
+            $barber->ensureNoUpcomingAppointments();
+            $barber->releaseEmailAndDelete();
+        });
 
         return response()->noContent();
     }

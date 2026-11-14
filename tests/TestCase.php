@@ -7,8 +7,10 @@ use App\Models\Barber;
 use App\Models\Client;
 use App\Models\User;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Support\ConfigurationUrlParser;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
+use RuntimeException;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -16,6 +18,56 @@ abstract class TestCase extends BaseTestCase
      * Senha de todos os usuários criados pelos helpers abaixo.
      */
     protected const PASSWORD = 'senha-de-teste-123';
+
+    /**
+     * Regras da agenda que os testes supõem: os padrões do config/barberflow.php.
+     * Ficam fixas aqui para nem o .env local nem uma variável de ambiente (do
+     * container ou do CI) mudarem o resultado da suíte. O teste que precisa de
+     * outro valor muda com config([...]).
+     */
+    private const AGENDA_CONFIG = [
+        'barberflow.business' => [
+            'opening' => '09:00',
+            'closing' => '19:00',
+            'slot_minutes' => 30,
+            'days' => [1, 2, 3, 4, 5, 6],
+        ],
+        'barberflow.booking_days_ahead' => 60,
+        'barberflow.client_cancel_min_hours' => 2,
+        'barberflow.client_max_active_appointments' => 3,
+    ];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(self::AGENDA_CONFIG);
+    }
+
+    /**
+     * O RefreshDatabase apaga e recria o banco a cada execução. Antes dele, confere
+     * que o banco é de teste: SQLite em memória (phpunit.xml) ou um banco com "test"
+     * no nome (phpunit.mysql.xml). Assim a configuração em cache (php artisan
+     * optimize), que faz os testes ignorarem o phpunit.xml, ou um DB_DATABASE de
+     * outro ambiente no ambiente do processo não apagam um banco de verdade.
+     */
+    protected function setUpTraits()
+    {
+        // Lê da configuração, sem abrir conexão. O DB_URL, quando existe, vale mais que o
+        // database da conexão, e o ConfigurationUrlParser faz a mesma conta que o Laravel.
+        $connection = (string) config('database.default');
+        $config = (new ConfigurationUrlParser)->parseConfiguration((array) config("database.connections.{$connection}"));
+        $database = (string) ($config['database'] ?? '');
+
+        if ($database !== ':memory:' && ! str_contains(Str::lower(basename($database)), 'test')) {
+            throw new RuntimeException(
+                "Os testes apagam o banco [{$database}], que não parece ser de teste. Use o SQLite em memória do "
+                .'phpunit.xml ou um banco com "test" no nome, e rode php artisan config:clear se a configuração estiver em cache.'
+            );
+        }
+
+        return parent::setUpTraits();
+    }
 
     /**
      * Admin com o e-mail confirmado.

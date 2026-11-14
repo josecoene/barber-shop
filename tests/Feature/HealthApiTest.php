@@ -29,9 +29,15 @@ class HealthApiTest extends TestCase
     {
         Exceptions::fake();
 
-        // Troca o banco por um arquivo que não existe e descarta a conexão já aberta.
-        config(['database.connections.sqlite.database' => storage_path('framework/testing/nao-existe/banco.sqlite')]);
-        DB::purge('sqlite');
+        // Troca o banco da conexão em uso por um que não existe (no SQLite, um arquivo; no MySQL do
+        // phpunit.mysql.xml, um banco) e descarta a conexão já aberta.
+        $connection = config('database.default');
+        $missing = config("database.connections.{$connection}.driver") === 'sqlite'
+            ? storage_path('framework/testing/nao-existe/banco.sqlite')
+            : 'banco_que_nao_existe_test';
+
+        config(["database.connections.{$connection}.database" => $missing]);
+        DB::purge($connection);
 
         $response = $this->getJson('/api/health')
             ->assertStatus(503)
@@ -40,7 +46,7 @@ class HealthApiTest extends TestCase
                 'checks' => ['database' => 'falhou', 'cache' => 'ok'],
             ]);
 
-        $this->assertStringNotContainsString('banco.sqlite', $response->getContent());
+        $this->assertStringNotContainsString(basename($missing), $response->getContent());
         Exceptions::assertReported(QueryException::class);
     }
 

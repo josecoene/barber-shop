@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasAppointments;
 use App\Models\Concerns\ReleasesEmailOnDelete;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -12,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 
 class Client extends Model
 {
-    use HasFactory, ReleasesEmailOnDelete, SoftDeletes;
+    use HasAppointments, HasFactory, ReleasesEmailOnDelete, SoftDeletes;
 
     protected $fillable = [
         'name',
@@ -59,7 +60,9 @@ class Client extends Model
      * Exclui o cliente sem apagar a linha (soft delete), para o histórico de
      * atendimentos continuar apontando para ela, e apaga os dados pessoais (LGPD).
      * O e-mail vira um endereço que nunca recebe mensagem (.invalid) e libera o
-     * e-mail original para um cadastro novo.
+     * e-mail original para um cadastro novo. As observações dos agendamentos
+     * dele também são apagadas: são texto livre e podem ter dados da pessoa
+     * (telefone, endereço, saúde).
      *
      * Se o cliente tinha conta, o usuário é apagado junto, com os tokens e as
      * sessões dele.
@@ -76,6 +79,8 @@ class Client extends Model
                 'email' => $this->releasedEmail(),
                 'phone' => null,
             ]);
+
+            $this->appointments()->whereNotNull('notes')->update(['notes' => null]);
 
             $user?->deleteWithLogins();
 

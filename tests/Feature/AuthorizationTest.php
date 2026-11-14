@@ -54,6 +54,12 @@ class AuthorizationTest extends TestCase
             'ver cliente' => ['GET', '/api/clients/1'],
             'alterar cliente' => ['PUT', '/api/clients/1'],
             'excluir cliente' => ['DELETE', '/api/clients/1'],
+            'listar agendamentos' => ['GET', '/api/appointments'],
+            'criar agendamento' => ['POST', '/api/appointments'],
+            'ver agendamento' => ['GET', '/api/appointments/1'],
+            'remarcar agendamento' => ['PUT', '/api/appointments/1'],
+            'mudar o status do agendamento' => ['PATCH', '/api/appointments/1/status'],
+            'horários livres do barbeiro' => ['GET', '/api/barbers/1/available-slots?date=2026-11-16&service_id=1'],
             'usuário logado' => ['GET', '/api/user'],
             'trocar a senha' => ['PUT', '/api/user/password'],
             'sair' => ['POST', '/api/logout'],
@@ -142,7 +148,7 @@ class AuthorizationTest extends TestCase
         $user->forceFill(['email_verified_at' => now()])->save();
         Sanctum::actingAs($user);
 
-        foreach (['/api/services', '/api/barbers', '/api/clients'] as $uri) {
+        foreach (['/api/services', '/api/barbers', '/api/clients', '/api/appointments'] as $uri) {
             $this->getJson($uri)->assertForbidden()->assertExactJson(self::FORBIDDEN);
         }
     }

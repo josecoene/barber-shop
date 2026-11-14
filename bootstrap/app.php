@@ -124,6 +124,8 @@ return Application::configure(basePath: dirname(__DIR__))
         // são HttpException.
         // - 403: policy ou Gate negou (a Policy vira AccessDeniedHttpException);
         // - 404: policy escondeu o registro (Response::denyAsNotFound(), como o serviço inativo para o cliente);
+        // - 409: conflito com a agenda, com a mensagem de quem recusou (ex.: excluir um cadastro com
+        //   agendamento futuro, em App\Models\Concerns\HasAppointments);
         // - 419: token CSRF da sessão vencido.
         $exceptions->render(function (HttpException $e, Request $request) use ($wantsJson) {
             if (! $wantsJson($request)) {
@@ -133,6 +135,7 @@ return Application::configure(basePath: dirname(__DIR__))
             $message = match ($e->getStatusCode()) {
                 403 => 'Você não tem permissão para esta ação.',
                 404 => 'Registro não encontrado.',
+                409 => $e->getMessage() !== '' ? $e->getMessage() : 'Conflito com o estado atual do registro.',
                 419 => 'Sua sessão expirou. Recarregue a página.',
                 default => null,
             };
