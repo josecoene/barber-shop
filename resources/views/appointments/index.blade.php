@@ -84,5 +84,8 @@
                 </div>
             </div>
         </div>
+
+        {{-- Atendimento concluído sem pagamento: o "Registrar pagamento" do detalhe abre o mesmo modal da tela de Pagamentos. --}}
+        @include('partials.payment-modal')
     </div>
 @endsection

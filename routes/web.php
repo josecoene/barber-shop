@@ -45,6 +45,8 @@ Route::middleware('auth')->group(function () {
     });
 
     Route::middleware('can:access-admin')->group(function () {
+        // Tela inicial do admin (HomeController). Os números vêm do GET /api/dashboard.
+        Route::view('/dashboard', 'dashboard.index')->name('dashboard');
         Route::view('/barbers', 'barbers.index')->name('barbers.index');
         Route::view('/services', 'services.index')->name('services.index');
     });
@@ -53,5 +55,6 @@ Route::middleware('auth')->group(function () {
         Route::view('/clients', 'clients.index')->name('clients.index');
         Route::view('/appointments', 'appointments.index')->name('appointments.index');
         Route::view('/appointments/create', 'appointments.create')->name('appointments.create');
+        Route::view('/payments', 'payments.index')->name('payments.index');
     });
 });

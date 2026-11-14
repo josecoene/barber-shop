@@ -6,8 +6,8 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
 /**
- * GET /: leva cada perfil à tela inicial dele. Admin e barbeiro vão para a agenda;
- * o cliente, para Meus horários.
+ * GET /: leva cada perfil à tela inicial dele. O admin vai para o dashboard; o
+ * barbeiro, para a agenda; o cliente, para Meus horários.
  */
 class HomeController extends Controller
 {
@@ -17,8 +17,12 @@ class HomeController extends Controller
         // requisição só; o reflash a guarda por mais uma, para ela aparecer na tela do perfil.
         $request->session()->reflash();
 
-        return $request->user()->isClient()
-            ? redirect()->route('my-appointments.index')
-            : redirect()->route('appointments.index');
+        $user = $request->user();
+
+        return redirect()->route(match (true) {
+            $user->isAdmin() => 'dashboard',
+            $user->isClient() => 'my-appointments.index',
+            default => 'appointments.index',
+        });
     }
 }

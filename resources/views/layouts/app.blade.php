@@ -16,12 +16,14 @@
         $currentUser = auth()->user();
 
         // Menu por perfil (Gates no AppServiceProvider):
-        // - admin: Agenda, Agendar, Clientes, Barbeiros e Serviços;
-        // - barbeiro: Agenda, Agendar e Clientes;
+        // - admin: Dashboard (a tela inicial dele), Agenda, Agendar, Pagamentos, Clientes, Barbeiros e Serviços;
+        // - barbeiro: Agenda (a tela inicial dele), Agendar, Pagamentos e Clientes;
         // - cliente: Agendar, Meus horários (a tela inicial dele) e Minha conta.
         $links = [
+            ['route' => 'dashboard', 'label' => 'Dashboard', 'ability' => 'access-admin'],
             ['route' => 'appointments.index', 'label' => 'Agenda', 'ability' => 'access-staff'],
             ['route' => 'appointments.create', 'label' => 'Agendar', 'ability' => 'access-staff'],
+            ['route' => 'payments.index', 'label' => 'Pagamentos', 'ability' => 'access-staff'],
             ['route' => 'clients.index', 'label' => 'Clientes', 'ability' => 'access-staff'],
             ['route' => 'barbers.index', 'label' => 'Barbeiros', 'ability' => 'access-admin'],
             ['route' => 'services.index', 'label' => 'Serviços', 'ability' => 'access-admin'],

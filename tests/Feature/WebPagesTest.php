@@ -30,6 +30,27 @@ class WebPagesTest extends TestCase
         'no_show' => ['label' => 'Faltou', 'transitions' => [], 'requires_start' => true, 'reschedulable' => false, 'occupies_time' => false, 'active' => false],
     ];
 
+    /**
+     * Regras de cada status do pagamento escritas à mão, para conferir o que a
+     * tela de Pagamentos recebe do PaymentStatus::catalog().
+     */
+    private const PAYMENT_STATUS_CATALOG = [
+        'pending' => ['label' => 'Pendente', 'transitions' => ['paid'], 'initial' => true],
+        'paid' => ['label' => 'Pago', 'transitions' => ['refunded'], 'initial' => true],
+        'refunded' => ['label' => 'Estornado', 'transitions' => [], 'initial' => false],
+    ];
+
+    /**
+     * As formas de pagamento, como o PaymentMethod::catalog() as entrega aos
+     * filtros e ao modal de pagamento.
+     */
+    private const PAYMENT_METHOD_OPTIONS = [
+        '<option value="cash">Dinheiro</option>',
+        '<option value="pix">Pix</option>',
+        '<option value="credit_card">Cartão de crédito</option>',
+        '<option value="debit_card">Cartão de débito</option>',
+    ];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -43,8 +64,10 @@ class WebPagesTest extends TestCase
     public static function pages(): array
     {
         return [
+            'dashboard' => ['/dashboard'],
             'agenda' => ['/appointments'],
             'agendar' => ['/appointments/create'],
+            'pagamentos' => ['/payments'],
             'clientes' => ['/clients'],
             'barbeiros' => ['/barbers'],
             'serviços' => ['/services'],
@@ -61,14 +84,15 @@ class WebPagesTest extends TestCase
     }
 
     /**
-     * Telas da agenda abertas por quem usa cada uma: o barbeiro na Agenda e no
-     * Agendar; o cliente no Agendar dele e em Meus horários.
+     * Telas abertas por quem usa cada uma: o barbeiro na Agenda, no Agendar e
+     * em Pagamentos; o cliente no Agendar dele e em Meus horários.
      */
     public static function pagesByProfile(): array
     {
         return [
             'agenda do barbeiro' => ['makeBarberUser', '/appointments', 'Agenda'],
             'agendar do barbeiro' => ['makeBarberUser', '/appointments/create', 'Agendar'],
+            'pagamentos do barbeiro' => ['makeBarberUser', '/payments', 'Pagamentos'],
             'agendar do cliente' => ['makeClientUser', '/booking', 'Agendar'],
             'meus horários do cliente' => ['makeClientUser', '/my-appointments', 'Meus horários'],
         ];
@@ -189,8 +213,8 @@ class WebPagesTest extends TestCase
      */
     public static function menus(): array
     {
-        $staff = ['appointments.index', 'appointments.create', 'clients.index'];
-        $admin = ['barbers.index', 'services.index'];
+        $staff = ['appointments.index', 'appointments.create', 'payments.index', 'clients.index'];
+        $admin = ['dashboard', 'barbers.index', 'services.index'];
         $client = ['booking.create', 'my-appointments.index'];
 
         return [
@@ -221,7 +245,37 @@ class WebPagesTest extends TestCase
     {
         $this->actingAs($this->makeAdmin())
             ->get('/account')
-            ->assertSeeInOrder(['>Agenda</a>', '>Agendar</a>', '>Clientes</a>', '>Barbeiros</a>', '>Serviços</a>'], false);
+            ->assertSeeInOrder([
+                'href="'.route('dashboard').'">Dashboard</a>',
+                '>Agenda</a>',
+                '>Agendar</a>',
+                'href="'.route('payments.index').'">Pagamentos</a>',
+                '>Clientes</a>',
+                '>Barbeiros</a>',
+                '>Serviços</a>',
+            ], false);
+    }
+
+    public function test_barber_menu_follows_the_planned_order(): void
+    {
+        $this->actingAs($this->makeBarberUser())
+            ->get('/account')
+            ->assertSeeInOrder(['>Agenda</a>', '>Agendar</a>', '>Pagamentos</a>', '>Clientes</a>'], false)
+            ->assertDontSee('>Dashboard</a>', false);
+    }
+
+    public function test_home_of_the_admin_is_the_dashboard(): void
+    {
+        $this->actingAs($this->makeAdmin())
+            ->get('/')
+            ->assertRedirect(route('dashboard'));
+
+        // O barbeiro continua indo para a agenda (outro login: a sessão começa limpa).
+        $this->flushSession();
+
+        $this->actingAs($this->makeBarberUser())
+            ->get('/')
+            ->assertRedirect(route('appointments.index'));
     }
 
     public function test_client_menu_follows_the_planned_order(): void
@@ -363,6 +417,76 @@ class WebPagesTest extends TestCase
         config(['barberflow.client_cancel_min_hours' => 1]);
 
         $this->get('/my-appointments')->assertSee('até 1 hora antes do horário');
+    }
+
+    public function test_payments_page_gets_the_status_rules_and_the_admin_actions(): void
+    {
+        $html = $this->actingAs($this->makeAdmin())->get('/payments')->assertOk()->getContent();
+
+        $this->assertSame(self::PAYMENT_STATUS_CATALOG, json_decode($this->dataAttribute($html, 'data-payment-statuses'), true));
+
+        // Corrigir e estornar são só do admin, que também filtra por barbeiro.
+        $this->assertSame('true', $this->dataAttribute($html, 'data-can-manage'));
+        $this->assertNull($this->dataAttribute($html, 'data-own-barber-id'));
+
+        foreach (['from', 'to', 'method', 'status', 'barber_id'] as $filter) {
+            $this->assertStringContainsString('name="'.$filter.'"', $html);
+        }
+
+        // As formas vêm do PaymentMethod::catalog(): uma vez no filtro e outra no modal de pagamento.
+        foreach (self::PAYMENT_METHOD_OPTIONS as $option) {
+            $this->assertSame(2, substr_count($html, $option), $option);
+        }
+
+        $this->assertStringContainsString('<option value="refunded">Estornado</option>', $html);
+        $this->assertStringContainsString('data-payment-modal', $html);
+        $this->assertStringContainsString('name="amount"', $html);
+        // Estornar e marcar como pago pedem confirmação no modal da própria tela.
+        $this->assertStringContainsString('data-payment-confirm-modal', $html);
+    }
+
+    public function test_barber_payments_page_has_no_barber_filter_and_no_admin_actions(): void
+    {
+        $barberUser = $this->makeBarberUser();
+
+        $html = $this->actingAs($barberUser)->get('/payments')->assertOk()->getContent();
+
+        $this->assertSame('false', $this->dataAttribute($html, 'data-can-manage'));
+        $this->assertSame((string) $barberUser->barber->id, $this->dataAttribute($html, 'data-own-barber-id'));
+        $this->assertStringNotContainsString('name="barber_id"', $html);
+        // O barbeiro também registra pagamento (dos atendimentos da agenda dele).
+        $this->assertStringContainsString('data-payment-modal', $html);
+    }
+
+    public function test_agenda_detail_registers_payments_with_the_same_modal(): void
+    {
+        $html = $this->actingAs($this->makeBarberUser())->get('/appointments')->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-payment-modal', $html);
+        $this->assertStringContainsString('name="amount"', $html);
+        $this->assertStringContainsString('name="notes"', $html);
+
+        foreach (self::PAYMENT_METHOD_OPTIONS as $option) {
+            $this->assertSame(1, substr_count($html, $option), $option);
+        }
+    }
+
+    public function test_dashboard_page_has_the_period_choices_the_cards_and_the_tables(): void
+    {
+        $this->actingAs($this->makeAdmin())
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('<title>Dashboard · BarberFlow</title>', false)
+            ->assertSee('data-dashboard', false)
+            ->assertSeeInOrder(['Mês atual', 'Mês passado', 'Personalizado'])
+            ->assertSee('name="from"', false)
+            ->assertSee('name="to"', false)
+            ->assertSeeInOrder(['Faturamento', 'Atendimentos', 'Ticket médio', 'Taxa de faltas', 'Ocupação'])
+            ->assertSee('Faturamento por dia')
+            ->assertSee('Faturamento por forma de pagamento')
+            ->assertSee('Atendimentos por status')
+            ->assertSee('Top 5 serviços')
+            ->assertSee('Por barbeiro');
     }
 
     public function test_menu_links_point_to_the_pages_and_not_to_the_api(): void

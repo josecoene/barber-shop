@@ -29,6 +29,11 @@ const SEARCH_DEBOUNCE_MS = 300;
 const MAX_PER_PAGE = 100;
 /* A agenda do dia e Meus horários leem até esse número de páginas (de 100 itens cada). */
 const MAX_PAGES = 10;
+/* Itens por página nas duas listas da tela de Pagamentos. */
+const PAYMENTS_PER_PAGE = 15;
+const AWAITING_PER_PAGE = 10;
+/* Com um período maior que isso (ex.: um ano), o Dashboard soma o faturamento por mês em vez de por dia. */
+const DAY_CHART_MAX_DAYS = 62;
 
 const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
@@ -55,6 +60,14 @@ const SHORT_DATE = new Intl.DateTimeFormat('pt-BR', {
     year: 'numeric',
     timeZone: 'UTC',
 });
+/* Rótulos do Dashboard: "seg., 09/11", "9 de novembro de 2026", "9 de novembro" e "nov. de 2026". */
+const DAY_AND_MONTH = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+const FULL_DAY = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const DAY_OF_MONTH = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'long', timeZone: 'UTC' });
+const MONTH_AND_YEAR = new Intl.DateTimeFormat('pt-BR', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+/* Taxas com 1 casa ("22,2") e contagens com separador de milhar ("7.200"). */
+const PERCENT = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const INTEGER = new Intl.NumberFormat('pt-BR');
 
 const STATUS_LABELS = {
     active: { text: 'Ativo', badge: 'text-bg-success' },
@@ -93,6 +106,44 @@ const STATUS_ACTIONS = {
         className: 'btn-outline-danger',
         confirm: (who, time) => `Cancelar o agendamento de ${who} às ${time}? Essa mudança não pode ser desfeita.`,
         confirmLabel: 'Sim, cancelar',
+    },
+};
+
+/*
+ * Cor da etiqueta de cada status do pagamento. O nome em português vem da API (status_label) e as
+ * transições, do PaymentStatus::catalog() (data-payment-statuses da tela de Pagamentos).
+ */
+const PAYMENT_BADGES = {
+    pending: 'text-bg-warning',
+    paid: 'text-bg-success',
+    refunded: 'text-bg-secondary',
+};
+
+/*
+ * Mudanças de status do pagamento na tela de Pagamentos, na ordem dos botões. Cada uma muda para o
+ * status da chave, só aparece quando a transição vale e pede confirmação no modal da própria tela. O
+ * estorno é só do admin (adminOnly); marcar como pago vale também para o barbeiro, nos da agenda dele.
+ */
+const PAYMENT_ACTIONS = {
+    paid: {
+        label: 'Marcar como pago',
+        className: 'btn-outline-success',
+        title: 'Marcar como pago',
+        confirm: (what) => `Marcar como pago ${what}? A data do pagamento fica sendo agora.`,
+        confirmLabel: 'Sim, marcar como pago',
+        confirmClass: 'btn-success',
+        done: 'marcado como pago',
+        adminOnly: false,
+    },
+    refunded: {
+        label: 'Estornar',
+        className: 'btn-outline-danger',
+        title: 'Estornar pagamento',
+        confirm: (what) => `Estornar ${what}? O valor sai do faturamento, e o atendimento não pode receber outro pagamento. Essa mudança não pode ser desfeita.`,
+        confirmLabel: 'Sim, estornar',
+        confirmClass: 'btn-danger',
+        done: 'estornado',
+        adminOnly: true,
     },
 };
 
@@ -603,6 +654,291 @@ function summaryLine(label, value) {
     return line;
 }
 
+/* Elemento com texto (sempre por textContent: nomes e observações vêm da API). */
+function textElement(tag, className, text) {
+    const element = document.createElement(tag);
+
+    if (className) {
+        element.className = className;
+    }
+
+    element.textContent = text;
+
+    return element;
+}
+
+/* "1 pagamento", "2 pagamentos" (o plural vai à parte quando não é só acrescentar o "s"). */
+function countLabel(count, singular, plural = `${singular}s`) {
+    return `${INTEGER.format(count)} ${count === 1 ? singular : plural}`;
+}
+
+/* Minutos em horas: "6 h 30 min", "120 h", "45 min". */
+function formatDuration(totalMinutes) {
+    const hours = Math.floor(totalMinutes / MINUTES_PER_HOUR);
+    const minutes = totalMinutes % MINUTES_PER_HOUR;
+
+    if (hours === 0) {
+        return `${minutes} min`;
+    }
+
+    return minutes === 0 ? `${INTEGER.format(hours)} h` : `${INTEGER.format(hours)} h ${minutes} min`;
+}
+
+/* Período em português: "1 a 30 de novembro de 2026", "28 de outubro a 3 de novembro de 2026". */
+function periodLabel(from, to) {
+    if (from === to) {
+        return FULL_DAY.format(parseDay(from));
+    }
+
+    const end = FULL_DAY.format(parseDay(to));
+
+    if (from.slice(0, 7) === to.slice(0, 7)) {
+        return `${Number(from.slice(8))} a ${end}`;
+    }
+
+    const start = from.slice(0, 4) === to.slice(0, 4) ? DAY_OF_MONTH.format(parseDay(from)) : FULL_DAY.format(parseDay(from));
+
+    return `${start} a ${end}`;
+}
+
+/*
+ * Data e hora que a API manda em UTC (ex.: paid_at) no fuso da barbearia: "12/11/2026 às 18:40". Fuso
+ * que o navegador não conhece: fica o do próprio navegador.
+ */
+function dateTimeInAppTimezone(iso) {
+    const date = new Date(iso);
+    const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+    let parts;
+
+    try {
+        parts = new Intl.DateTimeFormat('pt-BR', { ...options, timeZone: APP_TIMEZONE }).formatToParts(date);
+    } catch {
+        parts = new Intl.DateTimeFormat('pt-BR', options).formatToParts(date);
+    }
+
+    const part = (type) => parts.find((item) => item.type === type)?.value ?? '';
+
+    return `${part('day')}/${part('month')}/${part('year')} às ${part('hour')}:${part('minute')}`;
+}
+
+/* Etiqueta com o status do pagamento em português (ex.: "Pago"). */
+function paymentBadge(payment) {
+    return textElement('span', `badge ${PAYMENT_BADGES[payment.status] ?? 'text-bg-light border'}`, payment.status_label ?? payment.status);
+}
+
+/* "Ana Pereira, Corte de cabelo, qui., 12/11/2026 às 10:00": o atendimento de um pagamento, para frases e leitores de tela. */
+function describePaymentAppointment(appointment) {
+    return `${appointment?.client?.name ?? 'cliente'}, ${appointment?.service?.name ?? 'serviço'}, ${shortDate(appointment?.date)} às ${shortTime(appointment?.start_time)}`;
+}
+
+/*
+ * "Página X de Y (N itens)" e os botões Anterior e Próxima de uma lista paginada. Botão desabilitado
+ * perde o foco: se o foco estava num deles, passa para o outro.
+ */
+function updatePager({ meta, status, previous, next, singular, plural }) {
+    status.textContent = `Página ${meta.current_page} de ${meta.last_page} (${countLabel(meta.total, singular, plural)})`;
+
+    const focused = document.activeElement;
+    previous.disabled = meta.current_page <= 1;
+    next.disabled = meta.current_page >= meta.last_page;
+
+    if (focused === next && next.disabled && !previous.disabled) {
+        previous.focus();
+    } else if (focused === previous && previous.disabled && !next.disabled) {
+        next.focus();
+    }
+}
+
+/*
+ * Barras horizontais do Dashboard. Cada linha tem o rótulo, a barra e o valor escrito, então nenhum
+ * número depende só da barra. A largura vai por el.style (a CSP barra só o style="" escrito no HTML),
+ * em proporção ao maior valor da lista. items: [{ label, value, text, detail? }]. Com hideZeros, o
+ * valor zero fica só para o leitor de tela: num mês, os dias sem faturamento não enchem a lista de "R$ 0,00".
+ */
+function renderBarList(container, items, emptyText, { hideZeros = false } = {}) {
+    const max = Math.max(0, ...items.map((item) => item.value));
+
+    if (max === 0) {
+        container.replaceChildren(emptyMessage(emptyText));
+
+        return;
+    }
+
+    const list = document.createElement('ul');
+    list.className = 'bar-list';
+
+    items.forEach((item) => {
+        const row = document.createElement('li');
+        row.className = 'bar-row';
+
+        const track = document.createElement('span');
+        track.className = 'bar-track';
+        track.setAttribute('aria-hidden', 'true');
+
+        const fill = document.createElement('span');
+        fill.className = 'bar-fill';
+        /* Um valor bem menor que o maior ainda aparece, com pelo menos 1% da largura. */
+        fill.style.width = item.value > 0 ? `${Math.max(1, (item.value / max) * 100)}%` : '0';
+        track.append(fill);
+
+        let valueClass = 'bar-value';
+
+        if (item.value === 0) {
+            valueClass += hideZeros ? ' visually-hidden' : ' text-body-secondary';
+        }
+
+        const value = textElement('span', valueClass, item.text);
+
+        if (item.detail) {
+            value.append(textElement('span', 'd-block small text-body-secondary', item.detail));
+        }
+
+        row.append(textElement('span', 'bar-label', item.label), track, value);
+        list.append(row);
+    });
+
+    container.replaceChildren(list);
+}
+
+/*
+ * Modal de registrar e de corrigir pagamento (partials/payment-modal), da tela de Pagamentos e do
+ * detalhe da Agenda:
+ * - openRecord(agendamento, returnFocus): registra o pagamento de um atendimento concluído, com o valor
+ *   já preenchido pelo preço copiado no agendamento;
+ * - openCorrect(pagamento, returnFocus): só o admin; corrige valor, forma e observações (o status tem
+ *   ação própria).
+ * Depois de salvar, chama onSaved(pagamento, 'recorded' ou 'corrected'). Quando a API diz que o
+ * atendimento mudou (já tem pagamento, não está mais concluído, sumiu), chama onStale, para a tela ler
+ * de novo. Ao fechar, o foco vai para o elemento que returnFocus(salvou) devolver.
+ */
+function createPaymentDialog(root, { onSaved, onStale }) {
+    const modalElement = root.querySelector('[data-payment-modal]');
+    const modal = new Modal(modalElement);
+    const form = modalElement.querySelector('[data-payment-form]');
+    const title = modalElement.querySelector('[data-payment-form-title]');
+    const formAlerts = modalElement.querySelector('[data-payment-form-alerts]');
+    const summary = modalElement.querySelector('[data-payment-summary]');
+    const amountHint = modalElement.querySelector('[data-payment-amount-hint]');
+    const submitButton = modalElement.querySelector('[data-payment-submit]');
+    const amountInput = form.elements.namedItem('amount');
+    const methodSelect = form.elements.namedItem('method');
+    const notesInput = form.elements.namedItem('notes');
+
+    /* O agendamento que vai receber o pagamento, ou o pagamento que está sendo corrigido. */
+    let appointment = null;
+    let payment = null;
+    let returnFocus = null;
+    let saved = false;
+    let saving = false;
+
+    function prepare(item, focusBack) {
+        form.reset();
+        clearFormErrors(form, formAlerts);
+        returnFocus = focusBack;
+        saved = false;
+
+        summary.replaceChildren(
+            summaryLine('Cliente', item.client?.name ?? ''),
+            summaryLine('Barbeiro', item.barber?.name ?? ''),
+            summaryLine('Serviço', item.service?.name ?? ''),
+            summaryLine('Atendimento', item.date ? `${shortDate(item.date)}, ${timeRange(item)}` : ''),
+        );
+    }
+
+    function openRecord(item, focusBack) {
+        appointment = item;
+        payment = null;
+        prepare(item, focusBack);
+        title.textContent = 'Registrar pagamento';
+        submitButton.textContent = 'Registrar pagamento';
+        amountInput.value = Number(item.price).toFixed(2);
+        amountHint.textContent = `Já vem com o preço do agendamento (${currency.format(Number(item.price))}). Mude se o cliente pagou outro valor.`;
+        modal.show();
+    }
+
+    function openCorrect(item, focusBack) {
+        appointment = null;
+        payment = item;
+        prepare(item.appointment ?? {}, focusBack);
+        title.textContent = 'Corrigir pagamento';
+        submitButton.textContent = 'Salvar correção';
+        amountInput.value = item.amount;
+        methodSelect.value = item.method;
+        notesInput.value = item.notes ?? '';
+        amountHint.textContent = `Valor registrado: ${currency.format(Number(item.amount))}. A correção não muda o status nem a data do pagamento.`;
+        modal.show();
+    }
+
+    async function save(event) {
+        event.preventDefault();
+
+        if (saving || (!appointment && !payment)) {
+            return;
+        }
+
+        clearFormErrors(form, formAlerts);
+        saving = true;
+        submitButton.disabled = true;
+
+        const values = formValues(form);
+        const correcting = payment !== null;
+
+        try {
+            const result = correcting
+                ? await apiRequest('PUT', `/api/payments/${payment.id}`, values)
+                : await apiRequest('POST', '/api/payments', { appointment_id: appointment.id, ...values });
+
+            if (result.ok) {
+                saved = true;
+                modal.hide();
+                onSaved(result.data, correcting ? 'corrected' : 'recorded');
+
+                return;
+            }
+
+            if (result.status === HTTP_UNPROCESSABLE && result.data?.errors) {
+                /* O erro do agendamento (já tem pagamento, não está mais concluído) não tem campo: vai para o alerta do modal. */
+                showFormErrors(form, formAlerts, result.data.errors);
+
+                if (result.data.errors.appointment_id) {
+                    onStale?.();
+                }
+
+                return;
+            }
+
+            showAlert(formAlerts, 'danger', result.data?.message ?? 'Não foi possível salvar o pagamento. Tente de novo.');
+
+            /* 404 (o pagamento ou o agendamento sumiu) e 409 (o agendamento mudou no meio do caminho): a tela lê de novo. */
+            if ([HTTP_NOT_FOUND, HTTP_CONFLICT].includes(result.status)) {
+                onStale?.();
+            }
+        } catch {
+            showAlert(formAlerts, 'danger', API_UNREACHABLE_MESSAGE);
+        } finally {
+            saving = false;
+            submitButton.disabled = false;
+        }
+    }
+
+    form.addEventListener('submit', save);
+    ['amount', 'method', 'notes'].forEach((name) => {
+        form.elements.namedItem(name).addEventListener('input', () => clearFieldError(form, name));
+    });
+
+    /* Registrar começa pela forma (o valor já vem preenchido); corrigir, pelo valor. */
+    modalElement.addEventListener('shown.bs.modal', () => (payment ? amountInput : methodSelect).focus());
+    modalElement.addEventListener('hidden.bs.modal', () => {
+        const target = returnFocus?.(saved);
+        appointment = null;
+        payment = null;
+        returnFocus = null;
+        target?.focus();
+    });
+
+    return { openRecord, openCorrect };
+}
+
 /* Cadastros: barbeiros, clientes e serviços. */
 function initCrud(root) {
     const resource = root.dataset.resource;
@@ -967,6 +1303,11 @@ function initSchedule(root) {
     const confirmBack = root.querySelector('[data-modal-confirm-back]');
     const confirmYes = root.querySelector('[data-modal-confirm-yes]');
 
+    /* "Registrar pagamento" do detalhe: o mesmo modal da tela de Pagamentos (partials/payment-modal). */
+    const paymentDialog = root.querySelector('[data-payment-modal]')
+        ? createPaymentDialog(root, { onSaved: paymentRecorded, onStale: () => load() })
+        : null;
+
     const initialParams = new URLSearchParams(window.location.search);
     let day = parseDay(initialParams.get('date')) ? initialParams.get('date') : today();
     let barbers = null;
@@ -974,6 +1315,8 @@ function initSchedule(root) {
     /* Agendamento aberto no detalhe e o status que espera confirmação (cancelar ou faltou). */
     let current = null;
     let pendingStatus = null;
+    /* Agendamento que recebe o pagamento: o modal do pagamento abre quando o detalhe termina de fechar. */
+    let paying = null;
     /* Conta as cargas: se a pessoa troca de dia rápido, só a resposta da última é desenhada. */
     let loadCount = 0;
     let loadErrorAlert = null;
@@ -1331,6 +1674,13 @@ function initSchedule(root) {
             ...detail('Valor', currency.format(Number(appointment.price))),
         ];
 
+        /* Atendimento concluído: o status do pagamento, ou que ele ainda não foi registrado. */
+        if (appointment.payment) {
+            details.push(...detail('Pagamento', paymentBadge(appointment.payment)));
+        } else if (appointment.status === 'completed') {
+            details.push(...detail('Pagamento', 'Não registrado'));
+        }
+
         if (appointment.notes) {
             details.push(...detail('Observações', appointment.notes));
         }
@@ -1359,6 +1709,20 @@ function initSchedule(root) {
 
             return button;
         });
+
+        /* Concluído sem pagamento: o detalhe fecha e abre o modal do pagamento (o Bootstrap mostra um modal por vez). */
+        if (paymentDialog && appointment.status === 'completed' && !appointment.payment) {
+            const record = document.createElement('button');
+            record.type = 'button';
+            record.className = 'btn btn-success';
+            record.textContent = 'Registrar pagamento';
+            record.dataset.recordPayment = 'true';
+            record.addEventListener('click', () => {
+                paying = appointment;
+                modal.hide();
+            });
+            buttons.push(record);
+        }
 
         if (statuses[appointment.status]?.reschedulable) {
             const reschedule = document.createElement('a');
@@ -1410,10 +1774,11 @@ function initSchedule(root) {
 
     /*
      * Depois de mudar o status, o foco vai para a próxima ação que leva o atendimento adiante (ex.: Concluir
-     * depois de Iniciar) ou, sem ela, para Fechar. Nunca para Cancelar ou Faltou.
+     * depois de Iniciar, Registrar pagamento depois de Concluir) ou, sem ela, para Fechar. Nunca para
+     * Cancelar ou Faltou.
      */
     function focusFirstAction() {
-        const forward = modalActions.querySelector('button[data-status]:not([data-confirm])');
+        const forward = modalActions.querySelector('button[data-status]:not([data-confirm]), button[data-record-payment]');
         (forward ?? modalActions.querySelector('[data-bs-dismiss="modal"]'))?.focus();
     }
 
@@ -1481,14 +1846,41 @@ function initSchedule(root) {
         }
     });
 
-    /* Ao fechar o detalhe, o foco volta para o agendamento que estiver na tela (bloco ou item da lista). */
+    /* O bloco ou o item da lista do agendamento que está na tela (o outro fica escondido, conforme a largura). */
+    function visibleAppointment(id) {
+        return [...root.querySelectorAll(`[data-appointment-id="${id}"]`)].find((element) => element.offsetParent !== null) ?? null;
+    }
+
+    /* Pagamento registrado pelo detalhe: o agendamento passa a mostrar o status dele, sem ler a agenda de novo. */
+    function paymentRecorded(payment) {
+        const summary = { id: payment.id, status: payment.status, status_label: payment.status_label };
+        appointments = appointments.map((item) => (item.id === payment.appointment_id ? { ...item, payment: summary } : item));
+        render();
+        showAlert(
+            alerts,
+            'success',
+            `Pagamento de ${payment.appointment?.client?.name ?? 'cliente'} registrado: ${currency.format(Number(payment.amount))} (${payment.method_label}).`,
+        );
+    }
+
+    /*
+     * Ao fechar o detalhe, o foco volta para o agendamento que estiver na tela (bloco ou item da lista). Com o
+     * "Registrar pagamento", abre o modal do pagamento, e o foco volta para o agendamento quando ele fechar.
+     */
     modalElement.addEventListener('hidden.bs.modal', () => {
         const id = current?.id;
+        const appointment = paying;
         current = null;
         pendingStatus = null;
+        paying = null;
 
-        const target = [...root.querySelectorAll(`[data-appointment-id="${id}"]`)].find((element) => element.offsetParent !== null);
-        (target ?? dateInput).focus();
+        if (appointment) {
+            paymentDialog.openRecord(appointment, () => visibleAppointment(appointment.id) ?? dateInput);
+
+            return;
+        }
+
+        (visibleAppointment(id) ?? dateInput).focus();
     });
 
     /* Recado do Agendar (?notice=created ou rescheduled). O setDay tira o recado do endereço. */
@@ -2058,9 +2450,21 @@ function initMyAppointments(root) {
             text.append(notes);
         }
 
+        /* No celular, o lado direito costuma descer para baixo do texto: lá ele fica alinhado à esquerda. */
         const side = document.createElement('div');
-        side.className = 'd-flex flex-column align-items-end gap-2';
+        side.className = 'd-flex flex-column align-items-start align-items-sm-end gap-2';
         side.append(statusBadge(appointment));
+
+        /* Atendimento concluído: se já está pago (o status do pagamento) ou se o pagamento não foi registrado. */
+        if (appointment.payment || appointment.status === 'completed') {
+            const payment = document.createElement('p');
+            payment.className = 'small text-sm-end mb-0';
+            payment.append(
+                'Pagamento: ',
+                appointment.payment ? paymentBadge(appointment.payment) : textElement('span', 'text-body-secondary', 'não registrado'),
+            );
+            side.append(payment);
+        }
 
         if (upcoming && canCancel(appointment)) {
             const button = document.createElement('button');
@@ -2072,7 +2476,7 @@ function initMyAppointments(root) {
             side.append(button);
         } else if (upcoming && statuses[appointment.status]?.transitions.includes('cancelled')) {
             const late = document.createElement('p');
-            late.className = 'small text-body-secondary text-end mb-0';
+            late.className = 'small text-body-secondary text-sm-end mb-0';
             late.textContent = 'Para cancelar agora, fale com a barbearia.';
             side.append(late);
         }
@@ -2219,6 +2623,882 @@ function initMyAppointments(root) {
 }
 
 /*
+ * Pagamentos (admin e barbeiro): os atendimentos concluídos sem pagamento, cada um com "Registrar
+ * pagamento", e a tabela dos pagamentos com filtros, os totais do filtro e paginação. O barbeiro vê só
+ * os da agenda dele (a API filtra). Corrigir e estornar são só do admin (data-can-manage); marcar como
+ * pago um pendente vale para os dois. As transições vêm do PaymentStatus::catalog().
+ */
+function initPayments(root) {
+    const statuses = JSON.parse(root.dataset.paymentStatuses);
+    const canManage = root.dataset.canManage === 'true';
+    /* Para o barbeiro, o nome dele em cada linha só repetiria o óbvio. */
+    const showBarber = !root.dataset.ownBarberId;
+
+    const alerts = root.querySelector('[data-alerts]');
+
+    const awaitingBox = root.querySelector('[data-awaiting]');
+    const awaitingTitle = root.querySelector('#payments-awaiting-title');
+    const awaitingPager = {
+        status: root.querySelector('[data-awaiting-status]'),
+        previous: root.querySelector('[data-awaiting-previous]'),
+        next: root.querySelector('[data-awaiting-next]'),
+    };
+
+    const filters = root.querySelector('[data-filters]');
+    const filterAlerts = root.querySelector('[data-filter-alerts]');
+    const barberSelect = filters.elements.namedItem('barber_id');
+
+    const listTitle = root.querySelector('#payments-list-title');
+    const totalsBox = root.querySelector('[data-totals]');
+    /* Os pagamentos saem na tabela (tablet para cima) e na lista do celular; o CSS mostra uma das duas. */
+    const rows = root.querySelector('[data-rows]');
+    const mobileRows = root.querySelector('[data-mobile-rows]');
+    const table = rows.closest('table');
+    const colspan = table.querySelectorAll('thead th').length;
+    const pager = {
+        status: root.querySelector('[data-page-status]'),
+        previous: root.querySelector('[data-page-previous]'),
+        next: root.querySelector('[data-page-next]'),
+    };
+
+    const confirmElement = root.querySelector('[data-payment-confirm-modal]');
+    const confirmModal = new Modal(confirmElement);
+    const confirmTitle = root.querySelector('[data-payment-confirm-title]');
+    const confirmAlerts = root.querySelector('[data-payment-confirm-alerts]');
+    const confirmText = root.querySelector('[data-payment-confirm-text]');
+    const confirmBack = root.querySelector('[data-payment-confirm-back]');
+    const confirmYes = root.querySelector('[data-payment-confirm-yes]');
+
+    const dialog = createPaymentDialog(root, { onSaved: paymentSaved, onStale: reloadLists });
+
+    let awaitingPage = 1;
+    let awaitingLastPage = 1;
+    let paymentsPage = 1;
+    let paymentsLastPage = 1;
+    /* Contam as cargas de cada lista: se a pessoa troca de filtro ou de página rápido, só a última é desenhada. */
+    let awaitingLoad = 0;
+    let paymentsLoad = 0;
+    /* Alerta de "não foi possível carregar" dos pagamentos: sai assim que uma carga seguinte der certo. */
+    let paymentsError = null;
+    /* Mudança de status esperando a confirmação: { payment, status, trigger, done }. */
+    let changing = null;
+
+    /* Botão "Tentar de novo" dentro da caixa de uma lista. */
+    function retryButton(onRetry) {
+        const button = textElement('button', 'btn btn-sm btn-outline-secondary ms-2', 'Tentar de novo');
+        button.type = 'button';
+        button.addEventListener('click', onRetry);
+
+        return button;
+    }
+
+    /* Item da lista de atendimentos sem pagamento, com o botão que abre o modal. */
+    function awaitingItem(appointment) {
+        const item = document.createElement('li');
+        item.className = 'list-group-item d-flex flex-wrap gap-2 justify-content-between align-items-center';
+
+        const details = [`${shortDate(appointment.date)}, ${timeRange(appointment)}`, appointment.service?.name ?? 'Serviço'];
+
+        if (showBarber) {
+            details.push(`com ${appointment.barber?.name ?? 'o barbeiro'}`);
+        }
+
+        const text = document.createElement('div');
+        text.className = 'text-break';
+        text.append(
+            textElement('p', 'fw-semibold mb-1', appointment.client?.name ?? 'Cliente'),
+            textElement('p', 'small text-body-secondary mb-0', details.join(' · ')),
+        );
+
+        const side = document.createElement('div');
+        side.className = 'd-flex flex-wrap align-items-center gap-3 ms-auto';
+
+        const button = textElement('button', 'btn btn-sm btn-success', 'Registrar pagamento');
+        button.type = 'button';
+        button.setAttribute(
+            'aria-label',
+            `Registrar pagamento de ${appointment.client?.name ?? 'cliente'}, ${shortDate(appointment.date)} às ${shortTime(appointment.start_time)}`,
+        );
+        /* Depois de registrar, a lista é lida de novo e o botão some: o foco vai para o título da lista. */
+        button.addEventListener('click', () => dialog.openRecord(appointment, (saved) => (saved || !button.isConnected ? awaitingTitle : button)));
+
+        side.append(textElement('span', 'fw-semibold text-nowrap', currency.format(Number(appointment.price))), button);
+        item.append(text, side);
+
+        return item;
+    }
+
+    async function loadAwaiting() {
+        const loadNumber = ++awaitingLoad;
+        const params = new URLSearchParams({ without_payment: '1', page: String(awaitingPage), per_page: String(AWAITING_PER_PAGE) });
+
+        awaitingBox.setAttribute('aria-busy', 'true');
+        awaitingPager.status.textContent = 'Carregando...';
+
+        try {
+            const page = await fetchPage(`/api/appointments?${params}`);
+
+            if (loadNumber !== awaitingLoad) {
+                return;
+            }
+
+            /* A página pedida não existe mais (ex.: registrou o último item dela): volta para a última que existe. */
+            if (page.data.length === 0 && page.meta.current_page > page.meta.last_page) {
+                awaitingPage = page.meta.last_page;
+                await loadAwaiting();
+
+                return;
+            }
+
+            awaitingPage = page.meta.current_page;
+            awaitingLastPage = page.meta.last_page;
+            updatePager({ meta: page.meta, ...awaitingPager, singular: 'atendimento', plural: 'atendimentos' });
+
+            if (page.data.length === 0) {
+                awaitingBox.replaceChildren(textElement('p', 'text-body-secondary px-3 py-4 mb-0', 'Nenhum atendimento concluído sem pagamento.'));
+
+                return;
+            }
+
+            const list = document.createElement('ul');
+            list.className = 'list-group list-group-flush';
+            list.append(...page.data.map(awaitingItem));
+            awaitingBox.replaceChildren(list);
+        } catch (error) {
+            if (loadNumber !== awaitingLoad) {
+                return;
+            }
+
+            /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
+            const message = textElement(
+                'p',
+                'text-body-secondary px-3 py-4 mb-0',
+                error instanceof ApiError ? error.message : 'Não foi possível carregar os atendimentos sem pagamento.',
+            );
+
+            if (!(error instanceof ApiError)) {
+                message.append(retryButton(() => loadAwaiting()));
+            }
+
+            awaitingBox.replaceChildren(message);
+            awaitingPager.status.textContent = 'Não foi possível carregar a lista.';
+            awaitingPager.previous.disabled = true;
+            awaitingPager.next.disabled = true;
+        } finally {
+            if (loadNumber === awaitingLoad) {
+                awaitingBox.removeAttribute('aria-busy');
+            }
+        }
+    }
+
+    /* Filtros preenchidos, prontos para a query (os vazios ficam de fora). */
+    function filterParams() {
+        const params = new URLSearchParams();
+
+        ['from', 'to', 'method', 'status', 'barber_id'].forEach((name) => {
+            const value = filters.elements.namedItem(name)?.value;
+
+            if (value) {
+                params.set(name, value);
+            }
+        });
+
+        return params;
+    }
+
+    function renderTotals(totals) {
+        const items = Object.entries(statuses).map(([status, rules]) => {
+            const total = totals?.[status] ?? { payments: 0, total: '0.00' };
+            const box = document.createElement('div');
+            box.className = 'col';
+            box.append(
+                textElement('dt', 'small fw-normal text-body-secondary', rules.label),
+                textElement('dd', 'fs-5 fw-semibold mb-0', currency.format(Number(total.total))),
+                textElement('dd', 'small text-body-secondary mb-0', countLabel(total.payments, 'pagamento')),
+            );
+
+            return box;
+        });
+
+        totalsBox.replaceChildren(...items);
+    }
+
+    function actionButton(label, className, payment, onClick) {
+        const button = textElement('button', `btn btn-sm ${className}`, label);
+        button.type = 'button';
+        button.setAttribute('aria-label', `${label}: pagamento de ${describePaymentAppointment(payment.appointment)}`);
+        button.addEventListener('click', () => onClick(button));
+
+        return button;
+    }
+
+    /*
+     * Botões do pagamento: Corrigir (só o admin) e as mudanças de status que valem. Ficam num flex-wrap,
+     * então um desce para baixo do outro em vez de alargar a linha. null quando não há nenhum.
+     */
+    function paymentActions(payment) {
+        const group = document.createElement('div');
+        group.className = 'd-flex flex-wrap gap-2 justify-content-end';
+        const transitions = statuses[payment.status]?.transitions ?? [];
+
+        if (canManage) {
+            group.append(actionButton('Corrigir', 'btn-outline-primary', payment, (button) => {
+                dialog.openCorrect(payment, (saved) => (saved || !button.isConnected ? listTitle : button));
+            }));
+        }
+
+        Object.entries(PAYMENT_ACTIONS).forEach(([status, action]) => {
+            if (transitions.includes(status) && (canManage || !action.adminOnly)) {
+                group.append(actionButton(action.label, action.className, payment, (button) => askStatusChange(payment, status, button)));
+            }
+        });
+
+        return group.children.length > 0 ? group : null;
+    }
+
+    /* Linha da tabela: atendimento, cliente (com o barbeiro, para o admin), valor e forma, status e ações. */
+    function paymentRow(payment) {
+        const appointment = payment.appointment ?? {};
+        const row = document.createElement('tr');
+        const cell = (children, className = '') => {
+            const td = document.createElement('td');
+            td.className = className;
+            td.append(...children);
+
+            return td;
+        };
+
+        const who = [textElement('span', 'd-block', appointment.client?.name ?? '')];
+
+        if (showBarber) {
+            who.push(textElement('span', 'd-block small text-body-secondary', `com ${appointment.barber?.name ?? 'o barbeiro'}`));
+        }
+
+        if (payment.notes) {
+            who.push(textElement('span', 'd-block small text-body-secondary', `Observações: ${payment.notes}`));
+        }
+
+        const status = [paymentBadge(payment)];
+
+        /* O estorno mantém a data em que foi pago. */
+        if (payment.paid_at) {
+            status.push(textElement('span', 'd-block small text-body-secondary mt-1', `Pago em ${dateTimeInAppTimezone(payment.paid_at)}`));
+        }
+
+        const actions = paymentActions(payment);
+
+        row.append(
+            cell([
+                textElement('span', 'd-block fw-semibold text-nowrap', shortDate(appointment.date)),
+                textElement('span', 'd-block small text-body-secondary', `${timeRange(appointment)} · ${appointment.service?.name ?? ''}`),
+            ]),
+            cell(who, 'text-break'),
+            cell([
+                textElement('span', 'd-block fw-semibold text-nowrap', currency.format(Number(payment.amount))),
+                textElement('span', 'd-block small text-body-secondary', payment.method_label ?? payment.method),
+            ]),
+            cell(status),
+            cell([actions ?? textElement('span', 'visually-hidden', 'Nenhuma ação')], 'text-end'),
+        );
+
+        return row;
+    }
+
+    /* No celular: cliente e valor na primeira linha, o atendimento e o status embaixo, e por último os botões. */
+    function paymentItem(payment) {
+        const appointment = payment.appointment ?? {};
+        const item = document.createElement('li');
+        item.className = 'list-group-item';
+
+        const top = document.createElement('div');
+        top.className = 'd-flex justify-content-between gap-2';
+        top.append(
+            textElement('span', 'fw-semibold text-break', appointment.client?.name ?? ''),
+            textElement('span', 'fw-semibold text-nowrap', currency.format(Number(payment.amount))),
+        );
+        item.append(top, textElement('p', 'small text-body-secondary mb-1', `${shortDate(appointment.date)}, ${timeRange(appointment)} · ${appointment.service?.name ?? ''}`));
+
+        if (showBarber) {
+            item.append(textElement('p', 'small text-body-secondary mb-1', `com ${appointment.barber?.name ?? 'o barbeiro'}`));
+        }
+
+        if (payment.notes) {
+            item.append(textElement('p', 'small text-body-secondary text-break mb-1', `Observações: ${payment.notes}`));
+        }
+
+        const details = [payment.method_label ?? payment.method];
+
+        if (payment.paid_at) {
+            details.push(`pago em ${dateTimeInAppTimezone(payment.paid_at)}`);
+        }
+
+        const status = document.createElement('p');
+        status.className = 'd-flex flex-wrap align-items-center gap-2 small mb-0';
+        status.append(paymentBadge(payment), textElement('span', 'text-body-secondary', details.join(' · ')));
+        item.append(status);
+
+        const actions = paymentActions(payment);
+
+        if (actions) {
+            actions.classList.add('mt-2');
+            item.append(actions);
+        }
+
+        return item;
+    }
+
+    /* Recado no lugar da lista (carregando, vazio, erro), na tabela e na lista do celular. */
+    function showPaymentsMessage(text) {
+        rows.replaceChildren(messageRow(colspan, text));
+        mobileRows.replaceChildren(textElement('li', 'list-group-item text-center text-body-secondary py-4', text));
+    }
+
+    function renderPayments(page) {
+        paymentsPage = page.meta.current_page;
+        paymentsLastPage = page.meta.last_page;
+        updatePager({ meta: page.meta, ...pager, singular: 'pagamento', plural: 'pagamentos' });
+        renderTotals(page.totals);
+
+        if (page.data.length === 0) {
+            showPaymentsMessage([...filterParams().keys()].length > 0 ? 'Nenhum pagamento com esses filtros.' : 'Nenhum pagamento registrado ainda.');
+
+            return;
+        }
+
+        rows.replaceChildren(...page.data.map(paymentRow));
+        mobileRows.replaceChildren(...page.data.map(paymentItem));
+    }
+
+    async function loadPayments() {
+        const loadNumber = ++paymentsLoad;
+        const params = filterParams();
+        params.set('page', String(paymentsPage));
+        params.set('per_page', String(PAYMENTS_PER_PAGE));
+
+        showPaymentsMessage('Carregando...');
+        pager.status.textContent = 'Carregando...';
+        table.setAttribute('aria-busy', 'true');
+        mobileRows.setAttribute('aria-busy', 'true');
+
+        try {
+            const result = await apiRequest('GET', `/api/payments?${params}`);
+
+            if (loadNumber !== paymentsLoad) {
+                return;
+            }
+
+            /* 422: filtro inválido (ex.: "Até" antes de "De"). O erro aparece embaixo do campo. */
+            if (result.status === HTTP_UNPROCESSABLE && result.data?.errors) {
+                showFormErrors(filters, filterAlerts, result.data.errors);
+                showPaymentsMessage('Corrija os filtros para ver os pagamentos.');
+                pager.status.textContent = 'Corrija os filtros para ver os pagamentos.';
+                pager.previous.disabled = true;
+                pager.next.disabled = true;
+                totalsBox.replaceChildren();
+
+                return;
+            }
+
+            if ([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN, HTTP_SESSION_EXPIRED].includes(result.status)) {
+                throw new ApiError(result.data?.message ?? FORBIDDEN_MESSAGE);
+            }
+
+            if (!result.ok || !Array.isArray(result.data?.data) || !result.data.meta) {
+                throw new Error('Falha ao carregar os pagamentos');
+            }
+
+            /* A página pedida não existe mais (ex.: mudou o filtro em outra aba): volta para a última que existe. */
+            if (result.data.data.length === 0 && result.data.meta.current_page > result.data.meta.last_page) {
+                paymentsPage = result.data.meta.last_page;
+                await loadPayments();
+
+                return;
+            }
+
+            renderPayments(result.data);
+            paymentsError?.remove();
+            paymentsError = null;
+        } catch (error) {
+            if (loadNumber !== paymentsLoad) {
+                return;
+            }
+
+            showPaymentsMessage('Não foi possível carregar os pagamentos.');
+            pager.status.textContent = 'Não foi possível carregar os pagamentos.';
+            pager.previous.disabled = true;
+            pager.next.disabled = true;
+            totalsBox.replaceChildren();
+
+            /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
+            if (error instanceof ApiError) {
+                paymentsError = showAlert(alerts, 'danger', error.message);
+
+                return;
+            }
+
+            const retry = showRetryAlert(alerts, API_UNREACHABLE_MESSAGE, () => {
+                alerts.replaceChildren();
+                loadPayments();
+            });
+            paymentsError = retry.closest('.alert');
+        } finally {
+            if (loadNumber === paymentsLoad) {
+                table.removeAttribute('aria-busy');
+                mobileRows.removeAttribute('aria-busy');
+            }
+        }
+    }
+
+    function reloadLists() {
+        loadAwaiting();
+        loadPayments();
+    }
+
+    /* Depois de registrar, o atendimento sai da lista de sem pagamento e o pagamento entra na tabela. */
+    function paymentSaved(payment, mode) {
+        const who = payment.appointment?.client?.name ?? 'cliente';
+        const what = `${currency.format(Number(payment.amount))} (${payment.method_label})`;
+        showAlert(alerts, 'success', mode === 'recorded' ? `Pagamento de ${who} registrado: ${what}.` : `Pagamento de ${who} corrigido: ${what}.`);
+        paymentsError = null;
+
+        if (mode === 'recorded') {
+            loadAwaiting();
+        }
+
+        loadPayments();
+    }
+
+    function askStatusChange(payment, status, trigger) {
+        const action = PAYMENT_ACTIONS[status];
+        changing = { payment, status, trigger, done: false };
+        confirmAlerts.replaceChildren();
+        confirmTitle.textContent = action.title;
+        confirmText.textContent = action.confirm(
+            `o pagamento de ${currency.format(Number(payment.amount))} de ${describePaymentAppointment(payment.appointment)}`,
+        );
+        confirmYes.textContent = action.confirmLabel;
+        confirmYes.className = `btn ${action.confirmClass}`;
+        confirmYes.disabled = false;
+        confirmModal.show();
+    }
+
+    async function confirmStatusChange() {
+        if (!changing || changing.done) {
+            return;
+        }
+
+        const { payment, status } = changing;
+        confirmYes.disabled = true;
+        confirmAlerts.replaceChildren();
+        let keepDisabled = false;
+
+        try {
+            const result = await apiRequest('PATCH', `/api/payments/${payment.id}/status`, { status });
+
+            if (result.ok) {
+                changing.done = true;
+                confirmModal.hide();
+                showAlert(
+                    alerts,
+                    'success',
+                    `Pagamento de ${result.data.appointment?.client?.name ?? 'cliente'} (${currency.format(Number(result.data.amount))}) ${PAYMENT_ACTIONS[status].done}.`,
+                );
+                paymentsError = null;
+                await loadPayments();
+
+                return;
+            }
+
+            /* 422: o pagamento mudou em outro lugar (ex.: já foi estornado). Tentar de novo não adianta: a tabela é lida de novo. */
+            keepDisabled = result.status === HTTP_UNPROCESSABLE;
+            showAlert(confirmAlerts, 'danger', result.data?.errors?.status?.[0] ?? result.data?.message ?? 'Não foi possível mudar o status. Tente de novo.');
+
+            if (keepDisabled || result.status === HTTP_NOT_FOUND) {
+                loadPayments();
+            }
+        } catch {
+            showAlert(confirmAlerts, 'danger', API_UNREACHABLE_MESSAGE);
+        } finally {
+            confirmYes.disabled = keepDisabled;
+        }
+    }
+
+    /* O filtro de barbeiro (só o admin) lista os barbeiros cadastrados. */
+    async function loadBarbers() {
+        if (!barberSelect) {
+            return;
+        }
+
+        try {
+            fillSelect(barberSelect, await fetchItems(`/api/barbers?per_page=${MAX_PER_PAGE}`), 'Todos');
+        } catch {
+            showAlert(filterAlerts, 'warning', 'Não foi possível carregar os barbeiros do filtro. As listas continuam funcionando.');
+        }
+    }
+
+    /* Mudou um filtro: a tabela volta para a página 1. Os dois campos do período perdem o erro juntos. */
+    filters.addEventListener('change', (event) => {
+        const names = ['from', 'to'].includes(event.target.name) ? ['from', 'to'] : [event.target.name];
+        names.forEach((name) => clearFieldError(filters, name));
+        filterAlerts.replaceChildren();
+        paymentsPage = 1;
+        loadPayments();
+    });
+    filters.addEventListener('submit', (event) => event.preventDefault());
+    root.querySelector('[data-clear-filters]').addEventListener('click', () => {
+        filters.reset();
+        clearFormErrors(filters, filterAlerts);
+        paymentsPage = 1;
+        loadPayments();
+    });
+
+    awaitingPager.previous.addEventListener('click', () => {
+        if (awaitingPage > 1) {
+            awaitingPage -= 1;
+            loadAwaiting();
+        }
+    });
+    awaitingPager.next.addEventListener('click', () => {
+        if (awaitingPage < awaitingLastPage) {
+            awaitingPage += 1;
+            loadAwaiting();
+        }
+    });
+    pager.previous.addEventListener('click', () => {
+        if (paymentsPage > 1) {
+            paymentsPage -= 1;
+            loadPayments();
+        }
+    });
+    pager.next.addEventListener('click', () => {
+        if (paymentsPage < paymentsLastPage) {
+            paymentsPage += 1;
+            loadPayments();
+        }
+    });
+
+    confirmYes.addEventListener('click', confirmStatusChange);
+    /* O foco começa em Voltar: um Enter sem querer não estorna nada. */
+    confirmElement.addEventListener('shown.bs.modal', () => confirmBack.focus());
+    /* Ao fechar, o foco volta para o botão que abriu ou, se a tabela mudou, para o título dela. */
+    confirmElement.addEventListener('hidden.bs.modal', () => {
+        const target = changing && !changing.done && changing.trigger.isConnected ? changing.trigger : listTitle;
+        changing = null;
+        target.focus();
+    });
+
+    loadBarbers();
+    loadAwaiting();
+    loadPayments();
+}
+
+/*
+ * Dashboard (só o admin): os números de GET /api/dashboard num período (mês atual, mês passado ou
+ * personalizado, até 366 dias). O período fica no endereço (?from=&to=), menos o mês atual, que é o
+ * padrão. Enquanto um período novo carrega, os números do anterior continuam na tela, mais claros.
+ */
+function initDashboard(root) {
+    const options = [...root.querySelectorAll('[data-period-option]')];
+    const customForm = root.querySelector('[data-custom-period]');
+    const fromInput = customForm.elements.namedItem('from');
+    const toInput = customForm.elements.namedItem('to');
+    const periodTitle = root.querySelector('[data-period-title]');
+    const alerts = root.querySelector('[data-alerts]');
+    const live = root.querySelector('[data-live]');
+    const content = root.querySelector('[data-dashboard-content]');
+    const daysTitle = root.querySelector('[data-days-title]');
+    const daysBox = root.querySelector('[data-days]');
+    const methodsBox = root.querySelector('[data-methods]');
+    const statusesBox = root.querySelector('[data-statuses]');
+    const servicesRows = root.querySelector('[data-services]');
+    const barbersRows = root.querySelector('[data-barbers]');
+
+    let loadCount = 0;
+    let loadErrorAlert = null;
+    /* Último período que carregou: o "Personalizado" abre com ele preenchido. */
+    let shown = null;
+
+    /* Primeiro e último dia do mês de hoje (offset 0) ou do mês passado (-1), no fuso da barbearia. */
+    function monthPeriod(offset) {
+        const [year, month] = today().split('-').map(Number);
+
+        return {
+            from: formatDay(new Date(Date.UTC(year, month - 1 + offset, 1))),
+            to: formatDay(new Date(Date.UTC(year, month + offset, 0))),
+        };
+    }
+
+    function presetOf(period) {
+        const presets = { current: monthPeriod(0), previous: monthPeriod(-1) };
+        const match = Object.entries(presets).find(([, range]) => range.from === period.from && range.to === period.to);
+
+        return match ? match[0] : 'custom';
+    }
+
+    function selectOption(value) {
+        options.forEach((option) => {
+            option.checked = option.value === value;
+        });
+        customForm.hidden = value !== 'custom';
+    }
+
+    /*
+     * Depois que o período carrega, ele vai para o endereço (recarregar a página mantém); o mês atual, que é
+     * o padrão, sai dele. Um período que a API recusou não entra.
+     */
+    function rememberPeriod(period, keepInAddress) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('from');
+        url.searchParams.delete('to');
+
+        if (keepInAddress) {
+            url.searchParams.set('from', period.from);
+            url.searchParams.set('to', period.to);
+        }
+
+        window.history.replaceState(null, '', url);
+    }
+
+    function setTile(key, value, detailText) {
+        root.querySelector(`[data-tile-value="${key}"]`).textContent = value;
+        root.querySelector(`[data-tile-detail="${key}"]`).textContent = detailText;
+    }
+
+    /* Primeira coluna como cabeçalho da linha (o nome), e os números alinhados à direita. */
+    function tableRow(name, values) {
+        const row = document.createElement('tr');
+        const header = textElement('th', 'fw-normal', name);
+        header.scope = 'row';
+        row.append(header, ...values.map((text) => textElement('td', 'text-end text-nowrap tabular', text)));
+
+        return row;
+    }
+
+    /* Com mais de DAY_CHART_MAX_DAYS dias, as barras somam o faturamento de cada mês. */
+    function dayItems(byDay, byMonth) {
+        if (!byMonth) {
+            return byDay.map((day) => ({
+                label: DAY_AND_MONTH.format(parseDay(day.date)),
+                value: Number(day.total),
+                text: currency.format(Number(day.total)),
+            }));
+        }
+
+        const months = new Map();
+
+        byDay.forEach((day) => {
+            const key = day.date.slice(0, 7);
+            months.set(key, (months.get(key) ?? 0) + Number(day.total));
+        });
+
+        return [...months].map(([key, total]) => ({
+            label: MONTH_AND_YEAR.format(parseDay(`${key}-01`)),
+            value: total,
+            text: currency.format(total),
+        }));
+    }
+
+    function render(data) {
+        const { period, revenue, appointments, occupancy } = data;
+        const counts = Object.fromEntries(appointments.by_status.map((item) => [item.status, item.count]));
+        const completed = counts.completed ?? 0;
+        const noShow = counts.no_show ?? 0;
+
+        shown = { from: period.from, to: period.to };
+        periodTitle.textContent = `${capitalize(periodLabel(period.from, period.to))} (${countLabel(period.days, 'dia')})`;
+
+        setTile(
+            'revenue',
+            currency.format(Number(revenue.total)),
+            revenue.payments === 0 ? 'Nenhum pagamento pago no período.' : `${countLabel(revenue.payments, 'pagamento pago', 'pagamentos pagos')}.`,
+        );
+        setTile('appointments', INTEGER.format(appointments.total), `Em todos os status; ${countLabel(completed, 'concluído', 'concluídos')}.`);
+        setTile('ticket', currency.format(Number(revenue.average_ticket)), 'Faturamento dividido pelos pagamentos pagos.');
+        setTile(
+            'no-show',
+            appointments.no_show_rate === null ? 'Sem dados' : `${PERCENT.format(appointments.no_show_rate)}%`,
+            appointments.no_show_rate === null
+                ? 'Nenhum atendimento concluído nem falta no período.'
+                : `${countLabel(noShow, 'falta', 'faltas')} em ${countLabel(completed + noShow, 'atendimento concluído ou com falta', 'atendimentos concluídos ou com falta')}.`,
+        );
+        setTile(
+            'occupancy',
+            occupancy.rate === null ? 'Sem dados' : `${PERCENT.format(occupancy.rate)}%`,
+            occupancy.rate === null
+                ? 'Nenhum barbeiro ou dia de expediente no período.'
+                : `${formatDuration(occupancy.occupied_minutes)} agendados de ${formatDuration(occupancy.available_minutes)} de expediente (${countLabel(occupancy.barbers, 'barbeiro')}).`,
+        );
+
+        const byMonth = period.days > DAY_CHART_MAX_DAYS;
+        daysTitle.textContent = byMonth ? 'Faturamento por mês' : 'Faturamento por dia';
+        renderBarList(daysBox, dayItems(revenue.by_day, byMonth), 'Nenhum pagamento pago no período.', { hideZeros: true });
+
+        renderBarList(
+            methodsBox,
+            revenue.by_method.map((method) => ({
+                label: method.label,
+                value: Number(method.total),
+                text: currency.format(Number(method.total)),
+                detail: countLabel(method.payments, 'pagamento'),
+            })),
+            'Nenhum pagamento pago no período.',
+        );
+
+        const statusList = document.createElement('ul');
+        statusList.className = 'list-unstyled mb-0';
+        statusList.append(...appointments.by_status.map((item) => {
+            const line = document.createElement('li');
+            line.className = 'd-flex justify-content-between align-items-center gap-3 py-1';
+            line.append(
+                textElement('span', `badge ${APPOINTMENT_BADGES[item.status] ?? 'text-bg-light border'}`, item.label),
+                textElement('span', 'fw-semibold tabular', INTEGER.format(item.count)),
+            );
+
+            return line;
+        }));
+        statusesBox.replaceChildren(statusList);
+
+        servicesRows.replaceChildren(...(data.top_services.length === 0
+            ? [messageRow(3, 'Nenhum atendimento concluído no período.')]
+            : data.top_services.map((service) => tableRow(service.name, [INTEGER.format(service.completed), currency.format(Number(service.revenue))]))));
+
+        barbersRows.replaceChildren(...(data.barbers.length === 0
+            ? [messageRow(4, 'Nenhum barbeiro no período.')]
+            : data.barbers.map((barber) => tableRow(barber.name, [
+                INTEGER.format(barber.completed),
+                INTEGER.format(barber.no_show),
+                currency.format(Number(barber.revenue)),
+            ]))));
+    }
+
+    async function load(period, { keepInAddress = false } = {}) {
+        const loadNumber = ++loadCount;
+        content.setAttribute('aria-busy', 'true');
+        live.textContent = 'Carregando os números do período...';
+
+        try {
+            const result = await apiRequest('GET', `/api/dashboard?${new URLSearchParams(period)}`);
+
+            if (loadNumber !== loadCount) {
+                return;
+            }
+
+            /* 422: período inválido (ex.: mais de 366 dias). O erro aparece embaixo do campo do período personalizado. */
+            if (result.status === HTTP_UNPROCESSABLE && result.data?.errors) {
+                selectOption('custom');
+                fromInput.value = period.from;
+                toInput.value = period.to;
+                showFormErrors(customForm, alerts, result.data.errors);
+                live.textContent = '';
+
+                return;
+            }
+
+            if ([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN, HTTP_SESSION_EXPIRED].includes(result.status)) {
+                throw new ApiError(result.data?.message ?? FORBIDDEN_MESSAGE);
+            }
+
+            if (!result.ok || !result.data?.period) {
+                throw new Error('Falha ao carregar o dashboard');
+            }
+
+            render(result.data);
+            rememberPeriod(period, keepInAddress);
+            loadErrorAlert?.remove();
+            loadErrorAlert = null;
+            live.textContent = `Números de ${periodLabel(result.data.period.from, result.data.period.to)} carregados.`;
+        } catch (error) {
+            if (loadNumber !== loadCount) {
+                return;
+            }
+
+            live.textContent = '';
+
+            /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
+            if (error instanceof ApiError) {
+                loadErrorAlert = showAlert(alerts, 'danger', error.message);
+
+                return;
+            }
+
+            const retry = showRetryAlert(alerts, API_UNREACHABLE_MESSAGE, () => {
+                alerts.replaceChildren();
+                load(period, { keepInAddress });
+            });
+            loadErrorAlert = retry.closest('.alert');
+        } finally {
+            if (loadNumber === loadCount) {
+                content.removeAttribute('aria-busy');
+            }
+        }
+    }
+
+    options.forEach((option) => {
+        option.addEventListener('change', () => {
+            if (!option.checked) {
+                return;
+            }
+
+            clearFormErrors(customForm, alerts);
+
+            /* Personalizado: abre os campos com o período da tela e espera o "Ver o período". */
+            if (option.value === 'custom') {
+                customForm.hidden = false;
+                fromInput.value = shown?.from ?? '';
+                toInput.value = shown?.to ?? '';
+                fromInput.focus();
+
+                return;
+            }
+
+            customForm.hidden = true;
+            load(monthPeriod(option.value === 'current' ? 0 : -1), { keepInAddress: option.value !== 'current' });
+        });
+    });
+
+    customForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        clearFormErrors(customForm, alerts);
+
+        /* Sem as duas datas, a API devolveria o mês atual: aqui as duas são obrigatórias. */
+        const missing = {};
+
+        if (!parseDay(fromInput.value)) {
+            missing.from = ['Escolha a data inicial.'];
+        }
+
+        if (!parseDay(toInput.value)) {
+            missing.to = ['Escolha a data final.'];
+        }
+
+        if (Object.keys(missing).length > 0) {
+            showFormErrors(customForm, alerts, missing);
+
+            return;
+        }
+
+        load({ from: fromInput.value, to: toInput.value }, { keepInAddress: true });
+    });
+
+    [fromInput, toInput].forEach((input) => input.addEventListener('input', () => clearFieldError(customForm, input.name)));
+
+    /* Começa no período do endereço, se ele for válido, ou no mês atual. */
+    const params = new URLSearchParams(window.location.search);
+    const fromAddress = parseDay(params.get('from')) && parseDay(params.get('to')) ? { from: params.get('from'), to: params.get('to') } : null;
+    const initial = fromAddress ?? monthPeriod(0);
+    const preset = fromAddress ? presetOf(fromAddress) : 'current';
+
+    selectOption(preset);
+
+    if (preset === 'custom') {
+        fromInput.value = initial.from;
+        toInput.value = initial.to;
+    }
+
+    load(initial, { keepInAddress: preset !== 'current' });
+}
+
+/*
  * Minha conta: troca da senha pela API (PUT /api/user/password, que confere a senha atual). Os outros
  * aparelhos conectados à conta saem; esta sessão continua.
  */
@@ -2261,4 +3541,6 @@ document.querySelectorAll('[data-crud]').forEach(initCrud);
 document.querySelectorAll('[data-schedule]').forEach(initSchedule);
 document.querySelectorAll('[data-appointment-form]').forEach(initAppointmentForm);
 document.querySelectorAll('[data-my-appointments]').forEach(initMyAppointments);
+document.querySelectorAll('[data-payments]').forEach(initPayments);
+document.querySelectorAll('[data-dashboard]').forEach(initDashboard);
 document.querySelectorAll('[data-password-change]').forEach(initPasswordChange);

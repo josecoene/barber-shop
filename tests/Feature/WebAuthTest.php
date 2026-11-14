@@ -30,7 +30,7 @@ class WebAuthTest extends TestCase
 
     public function test_visitor_is_sent_to_the_login(): void
     {
-        foreach (['/', '/appointments', '/barbers', '/account', '/booking', '/my-appointments'] as $uri) {
+        foreach (['/', '/dashboard', '/appointments', '/payments', '/barbers', '/account', '/booking', '/my-appointments'] as $uri) {
             $this->get($uri)->assertRedirect('/login');
         }
     }
@@ -38,7 +38,7 @@ class WebAuthTest extends TestCase
     public static function homes(): array
     {
         return [
-            'admin vai para a agenda' => ['makeAdmin', '/appointments'],
+            'admin vai para o dashboard' => ['makeAdmin', '/dashboard'],
             'barbeiro vai para a agenda' => ['makeBarberUser', '/appointments'],
             'cliente vai para Meus horários' => ['makeClientUser', '/my-appointments'],
         ];
@@ -127,17 +127,19 @@ class WebAuthTest extends TestCase
     {
         $this->actingAs($this->makeBarberUser());
 
+        $this->get('/dashboard')->assertForbidden();
         $this->get('/barbers')->assertForbidden();
         $this->get('/services')->assertForbidden();
         $this->get('/clients')->assertOk();
         $this->get('/appointments')->assertOk();
+        $this->get('/payments')->assertOk();
     }
 
     public function test_client_gets_403_on_the_staff_pages(): void
     {
         $this->actingAs($this->makeClientUser());
 
-        foreach (['/appointments', '/appointments/create', '/clients', '/barbers', '/services'] as $uri) {
+        foreach (['/dashboard', '/appointments', '/appointments/create', '/payments', '/clients', '/barbers', '/services'] as $uri) {
             $this->get($uri)->assertForbidden();
         }
     }
@@ -232,18 +234,19 @@ class WebAuthTest extends TestCase
     }
 
     /**
-     * Faz o login pela tela e segue para a tela inicial, como o navegador. O login
-     * guarda na sessão um resumo da senha, que as telas (auth.session) e o Sanctum
-     * conferem a cada requisição. Devolve o id da sessão.
+     * Faz o login do admin pela tela e segue para a tela inicial dele (o
+     * dashboard), como o navegador. O login guarda na sessão um resumo da senha,
+     * que as telas (auth.session) e o Sanctum conferem a cada requisição. Devolve
+     * o id da sessão.
      */
-    private function logInThroughTheScreen(User $user): string
+    private function logInThroughTheScreen(User $admin): string
     {
-        $this->post('/login', ['email' => $user->email, 'password' => self::PASSWORD])->assertRedirect('/');
+        $this->post('/login', ['email' => $admin->email, 'password' => self::PASSWORD])->assertRedirect('/');
 
         $sessionId = session()->getId();
 
         $this->startFreshRequest();
-        $this->withCookie(config('session.cookie'), $sessionId)->get('/')->assertRedirect('/appointments');
+        $this->withCookie(config('session.cookie'), $sessionId)->get('/')->assertRedirect('/dashboard');
 
         return $sessionId;
     }
