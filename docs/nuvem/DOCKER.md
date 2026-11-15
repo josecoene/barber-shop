@@ -281,7 +281,7 @@ O Dependabot propõe toda segunda as versões novas do Dockerfile e dos compose,
 
 - `expose_php = Off`: some o header `X-Powered-By`.
 - OPcache ligado com os ajustes da rodada otimizada da Sprint 4 (`otimizado.ini`): 128 MB, até 20 mil arquivos e cache de caminhos. Na produção ele não confere a data dos arquivos (`validate_timestamps=0`), porque o código só muda com imagem nova. No dev confere em toda requisição.
-- Pool `www` em `pm = dynamic`, com até 10 processos (cada um usa por volta de 30 a 50 MB) e reciclagem a cada 500 requisições. O `docker.conf` oficial continua valendo: logs no stderr e `clear_env = no`, para o Laravel enxergar as variáveis do container.
+- Pool `www` em `pm = dynamic`, com até 10 processos (cada um usa por volta de 30 a 50 MB) e reciclagem a cada 500 requisições. O `docker.conf` oficial continua valendo: logs no stderr e `clear_env = no`, para o Laravel enxergar as variáveis do container. Com o banco congelado, cada processo fica ocupado até o limite de leitura do MySQL desistir (cerca de 20 s, o `DB_READ_TIMEOUT` aplicado pelo `AppServiceProvider`), e 10 pedidos assim enchem o pool (`load-tests/resiliencia/README.md`, "Com o limite de leitura do MySQL").
 - Na imagem `app` o PHP-FPM roda como `www-data`, então ele avisa no log que ignora as linhas `user` e `group` do pool. É esperado.
 
 ### Extensões do PHP

@@ -40,7 +40,7 @@ O JSON pode trazer os acentos escapados (`"n\u00e3o"` no lugar de `"não"`). É 
 | `419` | Sessão expirada | Só nas telas: o token CSRF da sessão do navegador não vale mais |
 | `422 Unprocessable Entity` | Falha de validação | Campo ausente, inválido, duplicado ou fora do limite, filtro de listagem inválido, e-mail ou senha errados no login, horário ocupado ou fora do expediente, mudança de status que não vale, pagamento de atendimento não concluído ou que já tem pagamento, prêmio de fidelidade sem direito ou com o valor junto, lembrete de agendamento que não recebe lembrete, período do dashboard maior que 366 dias |
 | `429 Too Many Requests` | Limite de requisições | Passou do limite por minuto (veja [Limites de requisição](#limites-de-requisição)), ou pediu o "Enviar lembrete agora" do mesmo agendamento antes de 10 minutos, mesmo depois de remarcar |
-| `503 Service Unavailable` | Fora do ar | `/health` quando o banco ou o cache não responde, ou o e-mail do "Enviar lembrete agora" que não saiu |
+| `503 Service Unavailable` | Fora do ar | `/health` quando o banco ou o cache não responde, ou o e-mail que não saiu no "Enviar lembrete agora" ou no reenvio do link de confirmação |
 
 ### Sem login (401)
 
@@ -344,6 +344,14 @@ Resposta `201`:
 
 A conta nasce com o perfil `client` (um `role` mandado no corpo é ignorado) e com o e-mail ainda não confirmado. O BarberFlow manda um e-mail com o link de confirmação, que vale 60 minutos.
 
+Com o servidor de e-mail fora do ar, a conta é criada do mesmo jeito e a resposta continua `201`, com outro aviso. Para pedir o link de novo, entre (`POST /login`) e use o reenvio, abaixo. A falha vai para o log da aplicação sem o endereço:
+
+```json
+{ "message": "Conta criada, mas não foi possível enviar o e-mail de confirmação agora. Peça um novo link em alguns minutos." }
+```
+
+Dois cadastros com o mesmo e-mail no mesmo instante: os dois passam pela regra `unique`, e o índice `unique` do banco recusa o segundo. Ele recebe o mesmo `422` da regra, `Este e-mail já está cadastrado.` no campo `email`, e a conta dele não é criada.
+
 Até confirmar, a conta entra (login e token funcionam), mas só usa as rotas da própria conta: `/user`, `/user/password`, `/logout` e o reenvio do link. As outras, como `/services` e `/barbers`, respondem `403` (`Confirme seu e-mail para continuar.`), e assim quem cria uma conta com o e-mail de outra pessoa não vê nada antes de provar que o e-mail é dele.
 
 **Confirmação do e-mail.** O link do e-mail abre nas telas (`/email/verify/{id}/{hash}`, assinado). Quem não está logado entra primeiro e depois o link é confirmado. Ao confirmar:
@@ -355,7 +363,7 @@ A ligação só acontece depois da confirmação, porque é ela que prova que a 
 
 Fora do ambiente local, os links que vão por e-mail (confirmação e "esqueci minha senha") sempre começam pelo `APP_URL`, seja qual for o `Host` da requisição que pediu o e-mail.
 
-**Reenviar o link (`POST /email/verification-notification`)**, com login, até 6 vezes por minuto: `202` com `{"message": "Enviamos um novo link de confirmação para o seu e-mail."}`, ou `200` com `{"message": "Seu e-mail já está confirmado."}`.
+**Reenviar o link (`POST /email/verification-notification`)**, com login, até 6 vezes por minuto: `202` com `{"message": "Enviamos um novo link de confirmação para o seu e-mail."}`, ou `200` com `{"message": "Seu e-mail já está confirmado."}`. Com o servidor de e-mail fora do ar, `503` com `{"message": "Não foi possível enviar o link de confirmação agora. Tente de novo em alguns minutos."}`; a falha vai para o log sem o endereço.
 
 ### Esqueci minha senha
 
@@ -447,7 +455,7 @@ Resposta `503` quando algo falha (aqui, o banco):
 }
 ```
 
-A resposta só diz `ok` ou `falhou`. O motivo da falha vai para o log da aplicação, nunca para a resposta.
+A resposta só diz `ok` ou `falhou`. O motivo da falha vai para o log da aplicação, nunca para a resposta. Com o cache fora do ar, o `503` sai em 3 a 4 segundos; com o banco de pé e sem responder (congelado), em até cerca de 20, pelo limite de leitura do MySQL (veja [Limitações](#limitações)).
 
 A rota é aberta (sem login) e fica fora do limite de requisições por minuto da API (`withoutMiddleware('throttle:api')` em `routes/api.php`): o monitoramento e o deploy consultam o `/health` sem token e sem receber `429`.
 
@@ -625,6 +633,8 @@ curl "http://localhost:8000/api/clients?search=silva&per_page=10" \
 ```
 
 Na atualização, o e-mail do próprio registro é ignorado na checagem de unicidade, então enviar o mesmo e-mail em um `PUT` não gera erro.
+
+Dois pedidos com o mesmo e-mail no mesmo instante (`POST` ou `PUT`) passam os dois pela regra `unique`, e o índice `unique` do banco recusa o segundo. Ele recebe este mesmo `422`, e nada fica gravado em dobro. Vale também para os barbeiros, inclusive para o login do barbeiro, que usa o mesmo e-mail.
 
 **Excluir** (`DELETE /clients/1`, resposta `204`): o cliente sai das listas e, no banco, a linha fica assim:
 
@@ -1586,8 +1596,8 @@ Período longo demais (`?from=2026-01-01&to=2027-01-02`, 367 dias), `422`:
 - **Agenda por barbeiro:** os horários livres olham só a agenda do barbeiro escolhido. O conflito do cliente com outro barbeiro aparece só ao agendar (`422` em `client_id`).
 - **Concorrência conferida no MySQL:** as travas que impedem dois agendamentos no mesmo horário, dois pagamentos do mesmo atendimento e o mesmo prêmio de fidelidade usado duas vezes só funcionam de verdade no MySQL; no SQLite dos testes, elas não fazem nada. O `composer test:mysql` (veja o README) roda o `AppointmentConcurrencyTest`, o `PaymentConcurrencyTest` e o `LoyaltyConcurrencyTest`, que conferem as travas com duas conexões, em passos de ordem fixa. A reserva do lembrete é um `UPDATE` condicional: o `ReminderCommandTest` e o `ReminderApiTest` mudam a linha logo antes dele (outra rodada, o envio manual, o cancelamento ou a remarcação) e logo antes do `UPDATE` que desfaz a reserva depois de uma falha, nos dois bancos, sem um teste de duas conexões no MySQL. A prova com pedidos simultâneos de verdade fica para o teste de carga `concorrencia.js`.
 - **O cadastro de conta diz se o e-mail já tem conta:** `POST /register` responde `Este e-mail já está cadastrado.`. O login e o "esqueci a senha" não revelam isso.
-- **E-mail repetido em dois pedidos ao mesmo tempo:** dois cadastros com o mesmo e-mail no mesmo instante (`POST /clients`, `POST /barbers`, o `PUT` deles ou o `POST /register`) passam os dois pela validação, e o índice `unique` do banco recusa o segundo com `500`, e não com o `422` de e-mail em uso. Nada fica gravado em dobro.
-- **Servidor de e-mail fora do ar:** o `POST /register` responde `500` com a conta já criada, e o `POST /email/verification-notification` também responde `500`; o cliente entra e pede outro link depois. O `POST /forgot-password` responde o mesmo de sempre. A falha vai para o log sem o endereço.
+- **Banco congelado:** com o MySQL de pé e sem responder, cada leitura desiste em `DB_READ_TIMEOUT` segundos (padrão 5), e o Laravel tenta de novo: o pedido responde em até cerca de 4 vezes esse tempo (20 segundos com o padrão), com `503` no `/health` e `500` nas outras rotas. Na homolog, em 15/11/2026: `503` em 20,05 s no `/health` e `500` em 20,03 s com o token; antes do limite, era o `504` do Nginx, em 60 s.
+- **Servidor de e-mail congelado:** o envio de e-mail não tem limite de tempo. Com o servidor de e-mail de pé e sem responder, as rotas que mandam e-mail (`POST /register`, `POST /email/verification-notification`, `POST /forgot-password` e `POST /appointments/{id}/reminder`) esperam até 60 segundos, o mesmo limite do Nginx, que pode responder `504` no lugar do `503`. Na homolog, o reenvio do link levou 60,03 s. Com o servidor de e-mail fora do ar, a resposta sai em poucos segundos.
 - **Sem desfazer exclusão:** a linha fica no banco, mas não há rota para restaurar um registro excluído. No cliente, os dados pessoais já foram apagados.
 - **Página de até 100 itens:** quem precisa de tudo (como a tela Agendar) pede `per_page=100`; com mais de 100 cadastros, os outros ficam nas páginas seguintes. A Agenda e Meus horários leem as páginas seguintes, até 1000 agendamentos.
 - **Um pagamento por atendimento, para sempre:** depois do estorno, o atendimento não recebe outro pagamento. Para cobrar de novo um valor estornado por engano, o admin corrige o pagamento estornado (valor e observações), mas ele continua fora do faturamento.

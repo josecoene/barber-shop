@@ -189,7 +189,7 @@
             "auth": {
               "type": "noauth"
             },
-            "description": "200 com {\"status\":\"ok\"} quando banco e cache respondem; 503 com o que falhou (\"falhou\") quando não. É aberta e fica fora do limite de requisições da API."
+            "description": "200 com {\"status\":\"ok\"} quando banco e cache respondem; 503 com o que falhou (\"falhou\") quando não. Com o banco de pé e sem responder (congelado), o 503 sai em até cerca de 20 s, pelo limite de leitura do MySQL (DB_READ_TIMEOUT). É aberta e fica fora do limite de requisições da API."
           }
         }
       ]
@@ -2759,7 +2759,7 @@
                 }
               }
             },
-            "description": "Cria a conta com perfil client e manda o link de confirmação por e-mail (no local, ele aparece no storage/logs/laravel.log). Preencha clientPassword antes. O e-mail não pode ter conta. Até confirmar o e-mail, a conta só usa as rotas da própria conta (usuário logado, troca de senha, reenvio do link e logout): services, clients e barbers respondem 403."
+            "description": "Cria a conta com perfil client e manda o link de confirmação por e-mail (no local, ele aparece no storage/logs/laravel.log). Preencha clientPassword antes. O e-mail não pode ter conta (422, também quando outro cadastro com o mesmo e-mail chega no mesmo instante). Com o servidor de e-mail fora do ar, a conta é criada do mesmo jeito: 201 com o aviso de que o link não saiu, e o link se pede de novo pelo reenvio. Até confirmar o e-mail, a conta só usa as rotas da própria conta (usuário logado, troca de senha, reenvio do link e logout): services, clients e barbers respondem 403."
           }
         },
         {
@@ -2799,7 +2799,7 @@
                 "verification-notification"
               ]
             },
-            "description": "Com o token da conta: 202 quando reenvia o link, 200 quando o e-mail já está confirmado."
+            "description": "Com o token da conta: 202 quando reenvia o link, 200 quando o e-mail já está confirmado e 503 quando o servidor de e-mail está fora do ar (tente de novo em alguns minutos)."
           }
         },
         {

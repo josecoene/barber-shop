@@ -4,7 +4,7 @@ Relatório final do projeto, para as duas disciplinas: **Arquitetura de Microsse
 
 - **Equipe:** Eduardo Romano, Jose Coene, Leonam e Manoel.
 - **Situação em 15/11/2026:** tudo no código, na branch `feat/entrega-final`, com a aplicação e a nuvem juntas. Nada foi aplicado na AWS (precisa da conta do grupo e custa dinheiro): a nuvem está validada no código e ensaiada numa homolog local com as mesmas imagens de produção.
-- **De onde vêm os números:** da verificação feita entre 23h30 de 14/11 e 0h30 de 15/11/2026 (horário de Brasília) e dos prints de 15/11. Os registros brutos dela (logs e scripts) e a lista da auditoria ficaram no computador do Leonam, fora do repositório. No repositório ficam os resumos do k6 (`load-tests/results/f1-*.json`), os prints (`docs/prints-telas/`) e este relatório.
+- **De onde vêm os números:** da verificação feita entre 23h30 de 14/11 e 0h30 de 15/11/2026 (horário de Brasília), dos prints de 15/11 e, no mesmo dia, da revisão final e da rodada de acabamento (seção 4.10). Os registros brutos dela (logs e scripts) e a lista da auditoria ficaram no computador do Leonam, fora do repositório. No repositório ficam os resumos do k6 (`load-tests/results/f1-*.json`), os prints (`docs/prints-telas/`) e este relatório.
 
 ## Sumário
 
@@ -87,9 +87,9 @@ O checklist OWASP API Security Top 10, com o arquivo:linha de cada controle, o t
 
 ### Testes
 
-- **491 métodos de teste em 35 arquivos** (`tests/Feature` e `tests/Unit`). Com os conjuntos de dados (data providers), são 722 casos.
-- **No SQLite** (`composer test`), 715 passam e 7 aparecem como pulados: os de trava, que só valem no MySQL.
-- **No MySQL 8.4** (`composer test:mysql`), os 722 passam, com as travas da agenda, do pagamento e da fidelidade conferidas com duas conexões abertas ao mesmo tempo.
+- **508 métodos de teste em 36 arquivos** (`tests/Feature` e `tests/Unit`). Com os conjuntos de dados (data providers), são 742 casos.
+- **No SQLite** (`composer test`), 735 passam e 7 aparecem como pulados: os de trava, que só valem no MySQL.
+- **No MySQL 8.4** (`composer test:mysql`), os 742 passam, com as travas da agenda, do pagamento e da fidelidade conferidas com duas conexões abertas ao mesmo tempo.
 - **Com pedidos simultâneos de verdade**, o `load-tests/concorrencia.js` (k6) confere a trava da agenda.
 
 O que cada arquivo confere está no [`README.md`](../README.md), "O que os testes cobrem".
@@ -171,24 +171,24 @@ Em cada sprint: o que o PDF pede, onde está no repositório e como foi provado.
 - Windows 11 Pro, AMD Ryzen 7 5700X3D (8 núcleos e 16 threads), 31,9 GB de RAM.
 - Docker Desktop com Docker Engine 29.5.3 e Compose v5.1.4, no WSL2; a máquina virtual do Docker com 16 CPUs e 15,6 GB.
 - Node 24.21.0 e npm 11.19.0 no computador. O PHP roda só em container: `composer:2` (PHP 8.5.12) e `php:8.4.27-cli` no teste do MySQL.
-- Código: a `feat/entrega-final` no commit `e4f78b1`, com as mudanças da etapa de pendências da aplicação (o `DemoSeeder`, o erro de banco no log sem o SQL e os timeouts curtos). As correções da revisão final vieram depois, no mesmo dia (seção 4.10): com elas rodaram de novo os testes (seção 4.1), o Pint e o build, os prints da Minha conta do barbeiro, o "subir de novo sem perder nada" e a queda do banco com volume. O resto (k6, ZAP, headers e CSRF) é da rodada anterior; as correções não mexeram em rota, tela, limite de requisição nem cabeçalho.
+- Código: a `feat/entrega-final` no commit `e4f78b1`, com as mudanças da etapa de pendências da aplicação (o `DemoSeeder`, o erro de banco no log sem o SQL e os timeouts curtos). As correções da revisão final vieram depois, no mesmo dia (seção 4.10): com elas rodaram de novo os testes, o Pint e o build, os prints da Minha conta do barbeiro, o "subir de novo sem perder nada" e a queda do banco com volume. Por último, a rodada de acabamento (seção 4.10) corrigiu os achados da seção 8 que pediam código e rodou de novo os testes (seção 4.1), o Pint e o build, a homolog com as imagens refeitas, as quedas do banco e do cache, o servidor de e-mail fora do ar e os prints que as correções mudaram. O resto (k6, ZAP, headers e CSRF) é da verificação: as correções não mexeram em rota, limite de requisição nem cabeçalho, e as telas mudaram só no menu, nos cadastros no celular, nos blocos curtos da Agenda e no aviso do e-mail de confirmação que não saiu. A revisão da rodada de acabamento (fim da seção 4.10) mudou ainda três gravações, que passaram para dentro de uma transação, e o texto fixo da tela "Confirme seu e-mail"; com ela, os testes rodaram de novo no SQLite, no MySQL e na cópia igual à do CI (seção 4.1), o Pint e o build também, e a homolog não foi repetida.
 
 ### 4.1 Testes
 
 | Rodada | Resultado | Tempo |
 |---|---|---|
-| `composer test` no SQLite (PHP 8.5.12) | **715 passaram e 7 pulados**, 8357 asserções | 89,8 s |
-| MySQL 8.4.13 descartável (PHP 8.4.27), o mesmo digest do job `MySQL` do CI, com `phpunit.mysql.xml` | **722 passaram, nenhum pulado**, 8379 asserções | 1 min 39 s de testes |
-| Igual ao CI: uma cópia sem `vendor`, `node_modules`, `public/build` e `.env`, num `composer:2` descartável, com `composer install`, o `.env` do `.env.example`, `key:generate` e `composer test` | **715 passaram e 7 pulados**, 8357 asserções | 20,5 s de testes |
+| `composer test` no SQLite (PHP 8.5.12) | **735 passaram e 7 pulados**, 8470 asserções | 119,4 s |
+| MySQL 8.4.13 descartável (PHP 8.4.27), o mesmo digest do job `MySQL` do CI, com `phpunit.mysql.xml` e o banco num tmpfs | **742 passaram, nenhum pulado**, 8492 asserções | 2 min 6 s de testes |
+| Igual ao CI: uma cópia sem `vendor`, `node_modules`, `public/build` e `.env`, num `composer:2` descartável, com `composer install`, o `.env` do `.env.example`, `key:generate` e `composer test` | **735 passaram e 7 pulados**, 8470 asserções | 22,5 s de testes |
 
-São as rodadas com as correções da revisão final (seção 4.10), que trouxeram 9 casos novos; na verificação de antes delas, o resultado tinha sido 706 e 7 pulados no SQLite e 713 no MySQL. Os 7 pulados no SQLite são os de trava (`AppointmentConcurrencyTest`, `PaymentConcurrencyTest` e `LoyaltyConcurrencyTest`), que rodaram e passaram no MySQL (722 = 715 + 7). A rodada igual à do CI prova que nenhum teste depende do `public/build`, do `vendor` ou do `.env` da pasta de trabalho.
+São as rodadas com as correções da rodada de acabamento (seção 4.10), que trouxeram 17 casos novos (o e-mail repetido no mesmo instante, o cadastro de conta com o e-mail fora do ar, o limite de leitura do MySQL, o menu numa linha só e a lista dos cadastros no celular), e da revisão dela, que trouxe mais 3 (o cadastro de serviço, de cliente e de conta que perde a conexão depois de gravar). A rodada igual à do CI foi repetida depois desses 3, com o mesmo resultado do SQLite. Antes das correções, a revisão final tinha dado 715 e 7 pulados no SQLite e 722 no MySQL, e a verificação de antes da revisão, 706 e 713. Os 7 pulados no SQLite são os de trava (`AppointmentConcurrencyTest`, `PaymentConcurrencyTest` e `LoyaltyConcurrencyTest`), que rodaram e passaram no MySQL (742 = 735 + 7). A rodada igual à do CI prova que nenhum teste depende do `public/build`, do `vendor` ou do `.env` da pasta de trabalho; na rodada de acabamento, foi ela que achou um teste novo que só passava sem o `DB_READ_TIMEOUT` no `.env` (seção 4.10).
 
 ### 4.2 Qualidade
 
 | O quê | Resultado |
 |---|---|
-| Pint | Passou nos 128 arquivos (126 antes da revisão final) |
-| `npm run build` (Vite 8.3.5) | 62 módulos; o CSS com 31,80 kB e o JS com 41,71 kB depois do gzip |
+| Pint | Passou nos 131 arquivos (126 na verificação, 128 depois da revisão final e 129 na rodada de acabamento, antes da revisão dela) |
+| `npm run build` (Vite 8.3.5) | 62 módulos; o CSS com 31,81 kB e o JS com 42,12 kB depois do gzip (31,80 kB e 41,71 kB antes da rodada de acabamento) |
 | `npm audit` | Nenhuma vulnerabilidade |
 | `composer audit` | **1 alerta de severidade baixa:** GHSA-63hm-g96r-2m2q no `laravel/framework` 13.33.0, corrigido na 13.40.0. Espera o OK do Leonam (seção 7) |
 
@@ -233,13 +233,14 @@ Roteiro do `load-tests/resiliencia/README.md`, na homolog com os limites normais
 | Cache fora (`stop redis`) | 503 em 3,94 s | 200 | 200 logo depois do `start` |
 | PHP-FPM cai (`kill -TERM 1`) | | 502 na hora | `/up` 200 em 1,7 s; o Docker reiniciou o container |
 | App parado (`stop app`) | 504 em 2,00 s | 504 em 2,00 s | `/api/health` 200 em 0,7 s depois do `start` |
-| Banco congelado (`pause db`) | **504 em 60,00 s** | 200 | 200 logo depois do `unpause` |
+| Banco congelado (`pause db`), antes do limite de leitura | **504 em 60,00 s** | 200 | 200 logo depois do `unpause` |
+| Banco congelado, com o limite de leitura (rodada de acabamento, seção 4.10) | **503 em 20,05 s** | 200 | 200 em 0,03 s depois do `unpause` |
 | Banco fora (`stop db`) | 503 em 13,30 s | 200 | MySQL saudável em 8,8 s |
 
 - O `/up` respondeu 200 em todos os casos menos com o app fora: é raso, como o ALB precisa.
 - **Timeouts curtos, medidos à parte** (o código do `/api/health` num container descartável, com o banco ou o cache apontando para um endereço que descarta toda conexão nova): banco em 503 em 12,03 s (o Laravel tenta 4 vezes, 4 vezes os 3 s), cache em 503 em 3,02 s. Com 10 s no lugar dos 3, 40 s e 10 s.
 - **O banco fora levou 13,3 s** porque o nome do serviço parado some do DNS do Docker, e cada procura leva 4,6 s, que nenhum timeout limita. Na AWS o endereço do RDS continua existindo, e vale o caso do endereço que descarta.
-- **O banco congelado é um achado** (seção 8): a conexão abre e o PHP espera a resposta sem limite curto.
+- **O banco congelado foi um achado** (seção 8): a conexão abre e o PHP esperava a resposta sem limite curto, até o 504 do Nginx. Com o limite de leitura (`DB_READ_TIMEOUT`), que entrou na rodada de acabamento, o mesmo caso passou a dar 503 em 20 s, e o processo do PHP-FPM volta livre com o banco ainda congelado (seção 4.10). As outras linhas são da verificação; a rodada de acabamento mediu de novo o cache congelado e o banco fora, com os mesmos números.
 - **Log de erro de banco:** nas quedas, 3 linhas `Erro no banco de dados.` chegaram ao Loki, só com a conexão, os códigos e o arquivo:linha, sem SQL, e-mail ou pilha.
 
 ### 4.6 Headers e CSRF
@@ -269,9 +270,9 @@ Com a função `tf` do `docs/nuvem/TERRAFORM.md` (`hashicorp/terraform:1.13.3` f
 
 ### 4.9 Prints das telas
 
-44 prints em `docs/prints-telas/` (20 do admin, 10 do barbeiro, 6 da cliente e 8 do visitante), em 1280 e 390 px, tirados em 15/11/2026 na homolog, com os dados do `DemoSeeder`. Os 2 da Minha conta do barbeiro entraram na revisão final (seção 4.10). Ficaram sem print a "Redefinir senha", que só abre pelo link do e-mail, e as páginas de erro 403, 419, 429, 500 e 503, com o mesmo layout da 404. Nenhum mostra senha, token ou e-mail de verdade, e nenhuma tela de 390 px tem rolagem lateral. Os três detalhes visuais que eles mostraram estão na seção 8.
+44 prints em `docs/prints-telas/` (20 do admin, 10 do barbeiro, 6 da cliente e 8 do visitante), em 1280 e 390 px, tirados em 15/11/2026 na homolog, com os dados do `DemoSeeder`. Os 2 da Minha conta do barbeiro entraram na revisão final (seção 4.10). Ficaram sem print a "Redefinir senha", que só abre pelo link do e-mail, e as páginas de erro 403, 419, 429, 500 e 503, com o mesmo layout da 404. Nenhum mostra senha, token ou e-mail de verdade, e nenhuma tela de 390 px tem rolagem lateral. Os três detalhes visuais que eles mostraram (as tabelas dos cadastros no celular, o menu do admin em 1280 px e os blocos curtos da Agenda) foram corrigidos depois, na rodada de acabamento (seção 8). No mesmo dia, os 22 prints que as correções mudaram (os 18 de 1280 px com login e os 4 dos cadastros em 390 px) foram refeitos na homolog, com os mesmos dados, logins e registros abertos; os outros 22 foram tirados de novo e saíram iguais aos de antes, pixel a pixel (`docs/prints-telas/README.md`, "Refeitos na rodada de acabamento").
 
-### 4.10 Revisão final
+### 4.10 Revisão final e rodada de acabamento
 
 Depois da verificação, dois revisores de contexto limpo leram as mudanças da entrega final, um olhando a correção e as regras do `AGENTS.md`, outro a segurança. O que eles confirmaram foi corrigido no mesmo dia (15/11/2026):
 
@@ -280,7 +281,7 @@ Depois da verificação, dois revisores de contexto limpo leram as mudanças da 
 | A falha no envio de e-mail (confirmação de conta, "esqueci a senha" e reenvio do link) ia para o log com o endereço de quem ia receber, e o "esqueci a senha" respondia 500 só para e-mail cadastrado | O `report` do `bootstrap/app.php` grava a falha do Symfony Mailer só como "Falha no envio de e-mail.", com a classe, o código e o arquivo:linha, e o `PasswordResetter::sendLink` responde o mesmo com o e-mail fora do ar | `MailErrorLogTest` |
 | O `AdminUserSeeder` criava o admin com qualquer senha, até de 1 caractere | A mesma regra das contas (no mínimo 8 caracteres), dividida com o `DemoSeeder` (`database/seeders/Concerns/ChecksPasswordRule.php`) | `DatabaseSeederTest::test_admin_seeder_refuses_a_password_below_the_rule_of_the_accounts` |
 | O `DemoSeeder` chamava o `ServiceSeeder` e devolvia os 4 serviços ao preço e ao status padrão em toda rodada | Ele cria só os serviços de exemplo que nunca existiram, e o que o admin mudou fica | `DemoSeederTest::test_running_again_does_not_duplicate_or_change_anything` |
-| O `DatabaseErrorLogTest` tratava como esperado o 500 de dois cadastros com o mesmo e-mail ao mesmo tempo | O teste confere só o log e que a resposta é um erro do servidor, e a corrida entrou nas limitações (seção 8) | `DatabaseErrorLogTest` |
+| O `DatabaseErrorLogTest` tratava como esperado o 500 de dois cadastros com o mesmo e-mail ao mesmo tempo | O teste confere só o log e que a resposta é um erro do servidor, e a corrida entrou nos achados (seção 8), corrigidos depois na rodada de acabamento | `DatabaseErrorLogTest` |
 | O README dizia que todos os números ficam no `.env` | O texto separa o que vem do `.env` do que é fixo no `config/barberflow.php` | `README.md` |
 | Faltavam os prints da Minha conta do barbeiro | Os 2 prints, em 1280 e 390 px | `docs/prints-telas/` |
 
@@ -289,6 +290,36 @@ Com as correções, a suíte rodou de novo (seção 4.1), e a homolog subiu outr
 - **Dados:** o `DemoSeeder` criou 177 agendamentos e 95 pagamentos e, na segunda rodada, nada. O `AdminUserSeeder` criou o admin e, com uma senha de 7 caracteres, respondeu "Administrador inicial não criado. O campo ADMIN_PASSWORD deve ter pelo menos 8 caracteres.", sem criar ninguém.
 - **Subir de novo sem perder nada (go-live A15):** `down`, sem `-v`, em 2,6 s, e `up` em 11,8 s, com "Nothing to migrate". O `/api/health` voltou em 200, com os mesmos 177 agendamentos e 95 pagamentos, o token da API de antes do `down` e a sessão do navegador valendo.
 - **Banco fora com o volume:** `/api/health` em 503 em 13,3 s com o banco parado e de volta a 200 em 1,9 s depois do `start`, sem `restart` do app, migrations ou seeders. Os dados e o token continuaram. No tmpfs, o mesmo caso apagava o banco (seção 4.5).
+
+**Rodada de acabamento.** Ainda em 15/11/2026, uma última rodada corrigiu os seis achados da seção 8 que pediam código (três das telas e três do servidor; o que mudou em cada um e o teste que prova estão lá), rodou de novo os testes (seção 4.1), refez os prints que as correções mudaram (seção 4.9) e mediu de novo na homolog, entre 9h45 e 10h10, com as imagens refeitas a partir da pasta de trabalho, sem o monitoramento e com o MySQL no mesmo volume `barberflow-homolog_dbdata-r`:
+
+- **Subida:** as imagens com o código novo dentro (o manifest do Vite igual ao do `npm run build` da pasta de trabalho) e os 6 containers saudáveis em 11,9 s, com "Nothing to migrate" e sem seeder: os mesmos dados da revisão final. Como admin, 7 telas com a API em 200 e o console vazio.
+- **Banco congelado, com o limite de leitura** (`pause db`, `DB_READ_TIMEOUT` de 5 s), comparado com a verificação (seção 4.5):
+
+| Medida | Antes do limite | Com o limite |
+|---|---|---|
+| `/api/health` | 504 em 60,00 s | **503 em 20,05 s** |
+| API com token | 504 em 60,06 s | **500 em 20,03 s** |
+| Tela com sessão (`/dashboard`) | Não medida | **500 em 20,03 s** |
+| Processo do PHP-FPM | Preso até o banco voltar | Livre cerca de 20 s depois de cada pedido, com o banco ainda congelado |
+| Log | Nenhuma linha | Uma linha `Erro no banco de dados.` (código 2006) por pedido, sem SQL e sem e-mail |
+| Cache congelado: `/api/health`, `/login` e API com token | 503 em 3,02 s, 500 em 3,01 s e 500 em 3,02 s | 503 em 3,01 s, 500 em 3,01 s e 500 em 3,02 s |
+| Banco fora: `/api/health` e API com token | 503 em 13,30 s e 500 em 12,43 s | 503 em 13,31 s e 500 em 12,48 s, de volta em 1,19 s depois do `start`, com os mesmos dados |
+
+- **Os 20 s** são as 4 tentativas do Laravel (ele repete a conexão e a consulta quando a conexão parece perdida) vezes os 5 s do limite, um terço dos 60 s do Nginx.
+- **Pool cheio:** 10 pedidos ao mesmo tempo com o banco congelado, o tamanho do pool, ocuparam os 10 processos do PHP-FPM, e um `/up` mandado no meio esperou 16,79 s. Os 10 responderam 503 entre 20,02 e 23,11 s, e o `/up` voltou a 0,01 s logo depois, ainda com o banco congelado. É o risco que sobra (seção 8).
+- **Servidor de e-mail fora** (`stop mailpit`), com duas contas de cliente novas, de e-mail do domínio de teste: o cadastro pela API respondeu 201 com o aviso de que o link não saiu (4,31 s), e o reenvio do link, 503 (3,13 s). Pela tela, o cliente entrou na tela "Confirme seu e-mail" com o aviso amarelo, que voltou no reenvio. O log ganhou 5 linhas `Falha no envio de e-mail.`, sem nenhum endereço. Com o Mailpit de volta, o reenvio deu 202 e o e-mail chegou. As duas contas ficaram na homolog sem confirmar e não viraram cliente: a tela Clientes continua com os 15 da demonstração.
+- **Servidor de e-mail congelado** (`pause mailpit`, medido a mais): o reenvio levou 60,03 s até o 503, porque o SMTP não tem limite de tempo, e a rodada do lembrete que caiu no meio esperou 55 s. Ficou nos achados em aberto (seção 8).
+- **A rodada igual à do CI achou um teste frágil:** o teste novo do limite de leitura só passava sem o `DB_READ_TIMEOUT` no `.env`. Com o `.env` copiado do `.env.example`, como no CI, o Laravel deixava o `.env` escrever por cima do valor do teste quando o app subia de novo. O teste passou a começar com um repositório de variáveis novo, e a rodada passou (seção 4.1).
+
+**Revisão da rodada de acabamento.** Dois revisores de contexto limpo leram as mudanças da rodada, de novo um olhando a correção e outro a segurança. O que eles confirmaram e pedia código foi corrigido no mesmo dia, com testes:
+
+| Achado | O que mudou | Prova |
+|---|---|---|
+| Com o `DB_READ_TIMEOUT`, um `INSERT` lento fora de transação podia desistir depois que o banco gravou, e o Laravel repetia o comando numa conexão nova: o serviço saía em dobro, e o cliente e a conta de cliente recebiam o 422 de e-mail em uso já criados (a conta, sem o e-mail de confirmação) | Os três `INSERT` (`ServiceController::store`, `ClientController::store` e `ClientRegistration::register`) vão dentro de um `DB::transaction()`: o Laravel não repete o comando, e a conexão que cai sem `COMMIT` desfaz a gravação. O pedido responde 500, sem nada gravado | `LostConnectionWriteTest`, com o `loseConnectionAfter()` do `tests/TestCase.php`, que faz o `INSERT` gravar e dar o erro 2006 logo depois. Sem a transação, o serviço respondia 201 e o cliente e a conta, 422 |
+| A tela "Confirme seu e-mail", recarregada depois do cadastro ou do reenvio que falharam, voltava a dizer "Enviamos um link de confirmação": o aviso amarelo vale para uma vez só | O texto fixo da tela só diz que falta confirmar o e-mail. Quem diz que o link saiu é o aviso verde do cadastro (novo) e do reenvio que deram certo | `MailErrorLogTest` (a tela aberta de novo depois do cadastro e do reenvio que falharam), `RegistrationTest::test_web_registration_logs_in_and_shows_the_confirmation_notice` e `WebPagesTest::test_email_confirmation_notice_responds_ok` |
+
+Os outros achados eram dos docs: o `AGENTS.md` e o checklist do README diziam que a rodada mediu tudo de novo na homolog (k6, ZAP, headers e CSRF não foram repetidos, e o 422 do e-mail repetido foi provado só nos testes), e a árvore de pastas da `docs/ARQUITETURA.md` não trazia o `EmailTakenException`. A repetição das leituras lentas ficou em aberto (seção 8). Com a transação nova, os testes de corrida do e-mail repetido de clientes e de conta passaram a gravar o outro cadastro logo depois da consulta da regra `unique` (o `afterQuery()` do `tests/TestCase.php`), antes da transação, para ele continuar no banco quando ela é desfeita, como num banco de verdade.
 
 ## 5. Faltas da auditoria de 12/11/2026
 
@@ -310,7 +341,7 @@ Cada linha diz em que branch a falta foi resolvida, com o arquivo que prova, ou 
 | `dashboard-basico` | Feito em A5 | `App\Services\DashboardMetrics` e `DashboardApiTest` |
 | `colisao-nomes-rotas` (o menu abria o JSON e o `route:cache` quebrava) | Feito em A1 | `bootstrap/app.php` (rotas da API com o nome `api.`) e `WebPagesTest::test_route_names_are_unique` |
 | `merge-fix-stack-local` (seeders repetíveis, `phpunit.xml` com `force` e testes de seed) | Feito em A1, por cópia manual da `fix/stack-local` | `database/seeders/DatabaseSeeder.php`, `ServiceSeeder.php`, `phpunit.xml` e `DatabaseSeederTest` |
-| `testes-novos-recursos` (auth, agenda, horários livres, status, pagamentos e dashboard) | Feito de A3 a A6 | `tests/Feature` (715 no SQLite e 722 no MySQL, seção 4.1) |
+| `testes-novos-recursos` (auth, agenda, horários livres, status, pagamentos e dashboard) | Feito de A3 a A6 | `tests/Feature` (735 no SQLite e 742 no MySQL, seção 4.1) |
 | `docs-api-postman-novos-endpoints` | Feito de A3 a A6 | `docs/API.md` e `docs/BarberFlow.postman_collection.json` |
 | `paginacao-listagens` | Feito em A2 (agenda e pagamentos em A4 e A5) | `ServiceApiTest::test_page_comes_as_data_links_and_meta` |
 | `form-requests-api-resources` | O cast do `price` foi feito em A2. Form Requests e API Resources ficaram fora do escopo, porque não estão em nenhuma das duas réguas (§7 do plano) | `app/Models/Service.php` (casts) |
@@ -330,7 +361,7 @@ Cada linha diz em que branch a falta foi resolvida, com o arquivo que prova, ou 
 | `front-protecao-rotas-web` | Feito em A3 | `routes/web.php` (`auth` e `can:`) e `WebAuthTest::test_visitor_is_sent_to_the_login` |
 | `front-home-welcome` | Feito em A3 (a `welcome` saiu, e a `/` leva à tela inicial do perfil) | `app/Http/Controllers/HomeController.php` e `WebAuthTest::test_login_takes_each_profile_to_its_home` |
 | `front-agenda-por-data` | Feito em A4 | `resources/views/appointments/index.blade.php` e `resources/js/pages.js` |
-| `front-agendar-post-conflito` | Feito em A4 (o erro aparece no campo e, com o horário ocupado no meio do caminho, a tela avisa e busca os horários de novo) | `resources/views/partials/appointment-form.blade.php` e `resources/js/pages.js:2621-2636` |
+| `front-agendar-post-conflito` | Feito em A4 (o erro aparece no campo e, com o horário ocupado no meio do caminho, a tela avisa e busca os horários de novo) | `resources/views/partials/appointment-form.blade.php` e `resources/js/pages.js:2727-2742` |
 | `front-status-atendimento` | Feito em A4 (as ações no detalhe da Agenda) | `WebPagesTest::test_agenda_gets_the_business_hours_and_the_status_rules_from_the_server` |
 | `front-pagamentos` | Feito em A5 | `resources/views/payments/index.blade.php` e `resources/views/partials/payment-modal.blade.php` |
 | `front-dashboard` | Feito em A5 | `resources/views/dashboard/index.blade.php` e `WebPagesTest::test_dashboard_page_has_the_period_choices_the_cards_and_the_tables` |
@@ -340,7 +371,7 @@ Cada linha diz em que branch a falta foi resolvida, com o arquivo que prova, ou 
 | `front-testes-rotas-web` | Feito em A1 e ampliado de A3 a A6 | `tests/Feature/WebPagesTest.php` |
 | `front-lembretes-fidelidade` | Feito em A6 | `WebPagesTest::test_clients_page_has_the_loyalty_column_for_the_staff` e `test_payment_modal_offers_the_loyalty_reward` |
 | `front-a11y-basica` | Feito em A2 | `resources/views/layouts/app.blade.php` ("Pular para o conteúdo") e `resources/views/partials/form-field.blade.php` |
-| `front-responsivo-390` | Feito em A2; conferido nos prints da F | `docs/prints-telas/*-390.png` (nenhum com rolagem lateral) |
+| `front-responsivo-390` | Feito em A2; conferido nos prints da F; a lista dos cadastros no celular entrou na rodada de acabamento (seção 8) | `docs/prints-telas/*-390.png` (nenhum com rolagem lateral) e `resources/views/partials/crud.blade.php` |
 | `front-estados-erro` | Feito em A2 (o Agendar não fica mais em "Carregando...") e em A3 (401, 403 e 419 no `apiRequest`) | `resources/js/pages.js` |
 | `front-campos-planejados` | Fora do escopo, porque a `docs/ARQUITETURA.md` adiou status e comissão do barbeiro (§7 do plano). O vínculo com o login entrou em A3 | `docs/ARQUITETURA.md`, "Diferenças em relação ao esboço inicial" |
 | `front-paginacao-exclusao` | Feito em A2 (paginação nas telas) e em A4 (o 409 da exclusão com a mensagem na tela) | `resources/views/partials/crud.blade.php` e `App\Models\Concerns\HasAppointments` |
@@ -391,9 +422,9 @@ Cada linha diz em que branch a falta foi resolvida, com o arquivo que prova, ou 
 | `imagem-docker-sem-hardening` | Feito em N1 | `docker/php/Dockerfile` (`USER www-data`) e `docker-compose.prod.yml` (`read_only` e `no-new-privileges`) |
 | `dependencias-com-cve` | Feito em A1 (os 7 alertas do Symfony) e em N5 (`composer audit` no CI). Um alerta novo apareceu depois no `laravel/framework` (seção 7) | `composer.lock` e `.github/workflows/ci.yml` |
 | `validacao-sem-limites-do-banco` | Feito em A2 | `ServiceApiTest::test_rejects_values_outside_the_limits` e `ClientApiTest::test_rejects_fields_longer_than_the_columns` |
-| `pint-falhando` | Feito em A1 | Seção 4.2 (Pint passou nos 128 arquivos) |
+| `pint-falhando` | Feito em A1 | Seção 4.2 (Pint passou nos 131 arquivos) |
 | `testes-js-front` | Fora do escopo, porque teste e lint de JS exigiriam dependência nova, e nenhuma das réguas pede (§7 do plano) | |
-| `testes-resiliencia` | Feito em N6 (roteiro) e na F (o `/api/health` em 503 e 200) | `load-tests/resiliencia/README.md` |
+| `testes-resiliencia` | Feito em N6 (roteiro) e na F (o `/api/health` em 503 e 200; na rodada de acabamento, também o banco congelado e o servidor de e-mail fora) | `load-tests/resiliencia/README.md` |
 | `readme-desatualizado` | Feito em A1 e reescrito na F | `README.md` |
 | `agents-md-desatualizado` | Feito em A1 e atualizado na F | `AGENTS.md` |
 | `arquitetura-sem-front-e-nuvem` | Feito de A2 a A6 (cada módulo), em N6 (nuvem) e na F (telas e topologia) | `docs/ARQUITETURA.md` e `docs/nuvem/ARQUITETURA-NUVEM.md` |
@@ -455,18 +486,34 @@ Esperam o OK do Leonam:
 
 ## 8. Achados que ficaram registrados
 
-A verificação, os prints e a revisão final acharam pontos que pedem decisão ou código, e nada foi mudado neles na entrega final:
+A verificação, os prints, a revisão final e a rodada de acabamento acharam pontos que pedem decisão ou código. Os que continuam em aberto:
 
 | Achado | Onde | O que resolveria |
 |---|---|---|
-| Com o MySQL de pé e sem responder (congelado), a requisição fica presa até o 504 do Nginx, em 60 s, e o processo do PHP-FPM, até o banco voltar | Seção 4.5 | Um limite de leitura do `mysqlnd` (`mysqlnd.net_read_timeout`) no `docker/php/conf.d`, com decisão e teste |
+| Com o banco congelado, cada pedido que lê o banco ocupa um processo do PHP-FPM por até cerca de 20 s, e 10 pedidos ao mesmo tempo enchem o pool: até o `/up`, que não lê o banco, esperou 16,79 s. Na AWS, o health check do ALB (`/up`, com 5 s de limite e 3 falhas seguidas) e o Auto Scaling, que usa o health check do ELB, podem dar as instâncias como doentes e trocá-las se o tráfego mantiver o pool cheio | Seção 4.10, `terraform/alb.tf` e `terraform/compute.tf` | Mais processos no pool, um limite de leitura menor ou um `/up` que não espere o pool (decisão de código e de infra) |
+| O envio de e-mail não tem limite de tempo (`config/mail.php`, `'timeout' => null`): com o servidor de e-mail de pé e sem responder, o reenvio do link levou 60,03 s, empatado com os 60 s do Nginx, que pode responder 504 no lugar do 503, e a rodada do lembrete esperou 55 s | Seção 4.10 | Um `timeout` curto no SMTP, lido do ambiente, como os do banco e do cache |
+| Com o `DB_READ_TIMEOUT`, a leitura que passa do limite fora de uma transação é repetida pelo Laravel numa conexão nova, e a primeira continua rodando no MySQL até o fim: com o banco já lento, uma leitura pesada (como a lista de clientes com a fidelidade) pesa em dobro, e o pedido espera até duas vezes o limite. Achado pela leitura do código, na revisão da rodada de acabamento | `Connection::tryAgainIfCausedByLostConnection` do Laravel e `app/Providers/AppServiceProvider.php` | Um limite do lado do MySQL só nas requisições web (o `max_execution_time` da sessão, um pouco abaixo do `DB_READ_TIMEOUT`), medido num MySQL de verdade |
+| O log do lembrete que falha deve se perder na homolog e na AWS: o agendador roda o `appointments:send-reminders` com a saída em `/dev/null`, e ali o log da aplicação vai para o `stderr` (`LOG_CHANNEL=stderr`). Achado pela leitura do código, sem uma falha de lembrete de verdade | `routes/console.php` e `docker-compose.prod.yml` | Provocar uma falha para confirmar e levar a saída do comando ao log do container (ou usar um canal de log que não dependa dela) |
+| Uma conta que confirma o e-mail no mesmo instante em que a barbearia cadastra um cliente com o mesmo e-mail ainda recebe 500: o cadastro de cliente que a confirmação cria bate no índice `unique` | `App\Listeners\LinkClientToVerifiedUser` | Ligar a conta ao cadastro que acabou de nascer, e não responder 422 num link de e-mail |
+| Em 390 px, a tela "Confirme seu e-mail" quebra um e-mail longo no meio da palavra (o `text-break` da view, de antes da rodada de acabamento) | `resources/views/auth/verify-email.blade.php` | A mesma quebra das tabelas: depois do @ e antes de cada ponto |
 | Com o banco inalcançável, o `/api/health` leva 4 vezes o `DB_CONNECT_TIMEOUT` (12 s com 3), porque o Laravel tenta de novo | Seção 4.5 | Nada urgente: fica abaixo dos 60 s do Nginx |
 | O campo `file` do log de erro de banco aponta o `app/Http/Middleware/SecurityHeaders.php:28` quando a consulta nasce no vendor (o guard do Sanctum) | `bootstrap/app.php` | Não vaza nada; só pode confundir quem investiga |
-| Dois cadastros com o mesmo e-mail ao mesmo tempo (clientes, barbeiros ou conta de cliente): o segundo passa pela validação e recebe 500 do `unique` do banco, e não o 422 de e-mail em uso | `ClientController`, `BarberController` e `ClientRegistration` | Converter a violação em 422, como o `PaymentRecorder` faz com o pagamento repetido (decisão do grupo). Nada fica gravado em dobro |
-| Com o servidor de e-mail fora do ar, o cadastro de conta responde 500 com a conta já criada, e o reenvio do link de confirmação também responde 500 | `ClientRegistration` e o reenvio (`AuthController` e `EmailVerificationController`) | Uma resposta própria (como o 503 do "Enviar lembrete agora"). O log já sai sem o endereço, e o "esqueci a senha" já responde o mesmo de sempre |
 | O POST da mesma origem passa sem o token de CSRF, pelo `Sec-Fetch-Site` | Seção 4.6 | É o comportamento do Laravel 13, não uma brecha; ficou documentado |
-| Em 390 px, as tabelas de Clientes, Barbeiros e Serviços quebram nome e e-mail no meio da palavra | `resources/js/pages.js` (as colunas) e os prints `admin-clientes-390.png`, `admin-barbeiros-390.png` e `admin-servicos-390.png` | Uma lista no celular, como a de Pagamentos |
-| No menu do admin em 1280 px, com um nome longo, o Sair desce para uma segunda linha | `docs/prints-telas/admin-dashboard-1280.png` | Ajuste de layout do menu |
-| No bloco de 20 minutos da Agenda em 1280 px, a linha do serviço aparece cortada pela metade | `resources/css/pages.css` e `docs/prints-telas/admin-agenda-1280.png` | Ajuste da altura das linhas do bloco |
 | O ZAP rodou sem login e só viu as telas abertas | Seção 4.7 | Uma varredura autenticada (com a sessão do admin) numa próxima rodada |
 | O HSTS em HTTPS não deu para ver ao vivo | Seção 4.6 | Conferir na AWS, com domínio e certificado (go-live B3) |
+
+Os três detalhes visuais que os prints mostraram foram corrigidos depois, na rodada de acabamento (15/11/2026), conferidos no navegador do Orca, no servidor local, como admin, barbeiro e cliente (o menu em 992, 1024, 1200, 1280 e 1440 px, os cadastros em 390, 768 e 1280 px e a Agenda em 1280 e 390 px), e os prints que eles mudaram foram refeitos na homolog (seção 4.9):
+
+| Achado | O que mudou | Prova |
+|---|---|---|
+| Em 390 px, as tabelas de Clientes, Barbeiros e Serviços partiam nome e e-mail no meio da palavra | Abaixo de 768 px, os cadastros saem numa lista no lugar da tabela, como Pagamentos: o nome em cima, cada dado com o nome da coluna embaixo dele e os botões no fim. O e-mail quebra só depois do @ e antes de cada ponto, na lista e na tabela | `WebPagesTest::test_crud_page_has_a_list_for_the_phone_and_the_table_from_the_tablet_up` |
+| No menu do admin em 1280 px, com um nome longo, o Sair descia para uma segunda linha | O menu abre a partir de 1200 px e, aberto, fica numa linha só: os links não quebram, e quem encolhe é o nome, cortado com reticências e inteiro no `title` e para o leitor de tela | `WebPagesTest::test_menu_fits_in_one_line_and_keeps_the_full_name` |
+| O bloco de 20 minutos da Agenda cortava a linha do serviço pela metade | O bloco mostra só as linhas que cabem inteiras na altura dele: num de 15 ou 20 minutos, o início vai na linha do cliente. Se o navegador aumentar a fonte, a linha que não cabe some inteira, sem aparecer cortada | Conferido no navegador, com blocos de 15, 20, 30 e 45 minutos (o projeto não tem teste de JavaScript, seção 6) |
+
+Na mesma rodada, os três achados do servidor também foram corrigidos, com testes:
+
+| Achado | O que mudou | Prova |
+|---|---|---|
+| Dois cadastros com o mesmo e-mail ao mesmo tempo (clientes, barbeiros e o login deles, ou conta de cliente) passavam os dois pela validação, e o segundo recebia 500 do índice `unique` do banco | O `EmailTakenException::guard()` troca a recusa do índice `unique` de e-mail pelo mesmo 422 da regra ("Este e-mail já está cadastrado.", no campo `email`), como o `PaymentRecorder` faz com o pagamento repetido. A recusa de outro índice continua sendo erro. Nada fica gravado em dobro | `ClientApiTest`, `BarberApiTest` e `RegistrationTest`, com o `beforeQuery()` gravando o mesmo e-mail logo antes da gravação (`test_two_requests_with_the_same_email_at_the_same_time_get_the_same_422` e os vizinhos), e `ClientApiTest::test_a_refusal_of_another_unique_index_is_not_reported_as_the_email`. O `DatabaseErrorLogTest` passou a provocar o 500 por uma chave estrangeira |
+| Com o servidor de e-mail fora do ar, o cadastro de conta respondia 500 com a conta já criada, e o reenvio do link também | O cadastro responde como feito (201 na API; nas telas, o cliente entra), com o aviso de que o link não saiu e de que dá para pedir outro em alguns minutos. O reenvio responde 503 na API e volta à tela com o aviso. A falha continua no log sem o endereço | `MailErrorLogTest` (`test_registration_with_the_email_down_creates_the_account_and_warns` e os vizinhos), com o `failMailDelivery()`. Na homolog, com o Mailpit parado: 201 com o aviso no cadastro, 503 no reenvio e 5 linhas no log sem nenhum endereço (seção 4.10) |
+| Com o MySQL de pé e sem responder (congelado), a requisição ficava presa até o 504 do Nginx, em 60 s, e o processo do PHP-FPM, até o banco voltar | Limite de cada leitura do MySQL só nas requisições web: o `DB_READ_TIMEOUT` (padrão 5 s), que o `AppServiceProvider` aplica como o `mysqlnd.net_read_timeout`. Com as 4 tentativas do Laravel, o pedido desiste em até 20 s. A linha de comando (migrations, agendador e seeders) fica sem o limite | `ConnectionTimeoutTest` (requisição web e linha de comando). Num PHP 8.4.27 descartável, contra um MySQL falso que aceita a conexão e nunca responde: o `select 1` do `/api/health` desistiu em 20,02 s com o padrão e em 8,01 s com 2 s, sempre com `2006 MySQL server has gone away`, e na linha de comando continuou esperando. Num MySQL 8.4.13 com um ano sintético (2.000 clientes, 28.170 agendamentos e 19.846 pagamentos), a consulta mais lenta do Dashboard de um ano levou 51 ms, e a mais lenta de todas, a da lista de clientes com a fidelidade, 730 ms. Na homolog, com o banco congelado: 503 em 20,05 s no `/api/health`, 500 em 20,03 s na tela e na API e o PHP-FPM livre de novo, sem esperar o banco (seção 4.10) |

@@ -2,7 +2,7 @@
 
 O roteiro derruba, um de cada vez, o banco, o app e o cache da homolog, mostra o que a aplicação responde enquanto isso e mede quanto tempo ela leva para voltar. É o ensaio local do que acontece na AWS quando o RDS reinicia ou troca de zona, quando o PHP-FPM de uma instância cai e quando o ElastiCache fica fora do ar.
 
-**Situação:** medido duas vezes no mesmo computador. Em 14/11/2026, na homolog da branch `feat/observabilidade`, que ainda não tinha o `/api/health`, pelo `/up`, pelas telas e pela API. Em 15/11/2026, na entrega final (`feat/entrega-final`), com o código inteiro: o `/api/health` em 503 e depois em 200 nos três casos, a API com token, o banco congelado e os timeouts curtos (seção "Medições"). Na revisão final do mesmo dia, o banco caiu de novo com o MySQL num volume de verdade, e o `start` bastou. Falta só a AWS (seção "O que falta conferir").
+**Situação:** medido no mesmo computador em 14 e 15/11/2026. Em 14/11/2026, na homolog da branch `feat/observabilidade`, que ainda não tinha o `/api/health`, pelo `/up`, pelas telas e pela API. Em 15/11/2026, na entrega final (`feat/entrega-final`), com o código inteiro: o `/api/health` em 503 e depois em 200 nos três casos, a API com token, o banco congelado e os timeouts curtos (seção "Medições"). Na revisão final do mesmo dia, o banco caiu de novo com o MySQL num volume de verdade, e o `start` bastou. Na rodada de acabamento, ainda em 15/11, com o limite de leitura do MySQL (`DB_READ_TIMEOUT`), o banco congelado passou de 504 em 60 s para 503 em 20 s, e o servidor de e-mail caiu e congelou. Falta só a AWS (seção "O que falta conferir").
 
 ## Antes de começar
 
@@ -109,11 +109,11 @@ Na homolog da `feat/entrega-final`, com os limites normais e o monitoramento, o 
 | Cache fora (`homologmon stop redis`) | **503 em 3,94 s**, `"cache":"falhou"` | 200 | 500 em 3,12 s | 500 em 3,11 s | 200 logo depois do `start`; `/login` e API com token 200 |
 | PHP-FPM cai (`kill -TERM 1`) | | 502 na hora | | | `/up` 200 em **1,7 s** desde o kill (o Docker reiniciou o container) |
 | App parado (`stop app`) | 504 em 2,00 s | 504 em 2,00 s | 504 em 2,00 s | | `/favicon.ico` 200 o tempo todo; `/api/health` 200 em 0,7 s depois do `start` |
-| Banco congelado (`pause db`) | **504 em 60,00 s** | 200 | 200 | 504 em 60,06 s | `/api/health` 200 logo depois do `unpause` |
+| Banco congelado (`pause db`), antes do limite de leitura | **504 em 60,00 s** | 200 | 200 | 504 em 60,06 s | `/api/health` 200 logo depois do `unpause` |
 | Banco fora (`stop db`) | **503 em 13,30 s**, `"database":"falhou"` | 200 | 200 | 500 em 12,43 s | MySQL saudável em **8,8 s** depois do `start`; `/api/health` 200 na hora |
 
 - O `/up` respondeu 200 em todos os casos, menos com o app fora: é raso, como o ALB precisa.
-- **Banco congelado:** com o MySQL de pé e sem responder, a conexão TCP abre e o PHP espera a resposta sem limite curto. O Nginx desiste em 60 s (o `fastcgi_read_timeout`), e o processo do PHP-FPM fica preso até o banco voltar. Nenhuma linha de erro entra no log, porque a requisição não falha: ela fica presa. O `DB_CONNECT_TIMEOUT` só vale para abrir a conexão; um limite de leitura do `mysqlnd` resolveria e ficou em aberto (`docs/ARQUITETURA.md`, "Limitações e riscos conhecidos").
+- **Banco congelado, antes do limite de leitura:** com o MySQL de pé e sem responder, a conexão TCP abre e o PHP esperava a resposta sem limite curto. O Nginx desistia em 60 s (o `fastcgi_read_timeout`), e o processo do PHP-FPM ficava preso até o banco voltar. Nenhuma linha de erro entrava no log, porque a requisição não falhava: ficava presa. O `DB_CONNECT_TIMEOUT` só vale para abrir a conexão. Por causa desta medição, entrou o limite de leitura do `mysqlnd` nas requisições web (`DB_READ_TIMEOUT`, padrão 5 s, `docs/ARQUITETURA.md`, "Quedas do banco e do cache"), e o mesmo caso passou a dar 503 em 20 s (seção "Com o limite de leitura do MySQL", adiante).
 - **Banco fora:** depois do `start`, a API com o token antigo deu 500 até as tabelas voltarem, porque o tmpfs apagou o banco. Um `homologmon restart app` rodou as migrations de novo (`/api/health` 200 em 4 s), e o `DemoSeeder` e o `AdminUserSeeder` refizeram os dados. Com o volume de verdade, o `start` basta (seção seguinte).
 - **Erro de banco no log:** nas quedas do banco entraram no Loki 3 linhas `Erro no banco de dados.`, só com a conexão, os códigos (2002, de conexão, duas vezes, e `42S02`/1146, de tabela que não existe) e o arquivo:linha do projeto. Nenhuma tem SQL, e-mail ou pilha.
 
@@ -141,6 +141,39 @@ Na homolog da `feat/entrega-final`, sem o monitoramento, com o MySQL num volume 
 - Só o caso do banco muda com o volume. A queda do app e a do cache não dependem de onde o MySQL guarda os dados, e valem os números da tabela de cima.
 - Na mesma rodada, o "subir de novo sem perder nada" (go-live A15): `homolog down`, sem `-v`, e `homolog up -d --wait`, com os mesmos dados, o token e a sessão do navegador valendo (`docs/nuvem/go-live-checklist.md`).
 
+### Com o limite de leitura do MySQL (15/11/2026, rodada de acabamento)
+
+Na homolog da `feat/entrega-final`, com as imagens refeitas com as correções da rodada de acabamento (entre elas, o limite de leitura do MySQL, `DB_READ_TIMEOUT` de 5 s, e o cadastro de conta que não depende do e-mail), sem o monitoramento, com o MySQL no volume `barberflow-homolog_dbdata-r` e os dados do `DemoSeeder` (177 agendamentos e 95 pagamentos). A tela com sessão é o `GET /dashboard` do admin, logado pelo formulário; a API com token, o `GET /api/appointments?per_page=1` de um login do barbeiro Carlos Mendes. O `curl` esperou até 75 segundos.
+
+| Caso | `/api/health` durante a queda | `/up` | `/login` | Tela com sessão (`/dashboard`) | API com token (`/api/appointments`) | Volta |
+|---|---|---|---|---|---|---|
+| Antes | 200 em 0,01 s | 200 em 0,00 s | 200 em 0,01 s | 200 em 0,01 s | 200 em 0,02 s | |
+| Banco congelado (`homolog pause db`) | **503 em 20,05 s**, `"database":"falhou"` | 200 em 0,01 s | 200 em 0,01 s | **500 em 20,03 s**, a página "Erro no servidor" | **500 em 20,03 s** | `/api/health` 200 em 0,03 s depois do `unpause`; a mesma sessão e o mesmo token com 200 |
+| Cache congelado (`homolog pause redis`) | **503 em 3,01 s**, `"cache":"falhou"` | 200 em 0,01 s | 500 em 3,01 s | 500 em 3,01 s | 500 em 3,02 s | `/api/health` 200 em 0,02 s depois do `unpause` |
+| Banco fora (`homolog stop db`) | **503 em 13,31 s**, `"database":"falhou"` | 200 em 0,01 s | 200 em 0,01 s | 500 em 12,50 s | 500 em 12,48 s | `/api/health` 200 em **1,19 s** depois do `start`, sem `restart` do app, migrations ou seeders, com os mesmos dados |
+
+- **Banco congelado:** o 503 do `/api/health` e o 500 da tela e da API saíram em 20 s, um terço dos 60 s do Nginx. São as 4 tentativas do Laravel (ele repete a conexão e a consulta quando a conexão parece perdida) vezes os 5 s do limite. Antes dele, o mesmo caso dava 504 em 60 s (tabela "Na entrega final").
+- **O PHP-FPM fica livre:** cada processo desiste em cerca de 20 s e volta ao pool com o banco ainda congelado. Logo depois das três medidas, o `app` não tinha nenhuma conexão aberta com a 3306 (contadas por estado no `/proc/net/tcp` do container), e o ping do PHP-FPM respondeu em 0,12 s. Antes do limite, o processo ficava preso até o banco voltar.
+- **Pool cheio:** 10 pedidos ao `/api/health` ao mesmo tempo, o tamanho do pool (`pm.max_children`), ocuparam os 10 processos, com 10 conexões abertas com a 3306. Um `/up` mandado nesse instante esperou um processo livre: 200 em **16,79 s**. Os 10 responderam 503 entre 20,02 e 23,11 s, e logo depois o `/up` voltou a 0,01 s, ainda com o banco congelado. Na AWS, o health check do ALB espera o `/up` por 5 s, e 3 falhas seguidas tiram a instância: com o banco congelado e um tráfego que mantenha o pool cheio, as instâncias podem ser dadas como doentes e trocadas (`docs/ARQUITETURA.md`, "Limitações e riscos conhecidos"). Antes do limite era pior: 10 pedidos durante a queda, em qualquer ritmo, prendiam o pool inteiro até o banco voltar.
+- **Log:** uma linha `Erro no banco de dados.` por pedido que falhou, com o código 2006 ("MySQL server has gone away", a leitura que desistiu) e o arquivo:linha, sem SQL e sem e-mail. Antes do limite, o banco congelado não deixava nenhuma linha.
+- **Nada piorou:** o cache congelado e o banco fora deram os mesmos números da tabela "Na entrega final", e os dados ficaram iguais depois do `stop` e do `start`.
+
+**Servidor de e-mail fora** (`homolog stop mailpit`), com duas contas de cliente novas, uma pela API e outra pela tela `/register`, com e-mails do domínio `demo.barberflow.test`:
+
+| Pedido, com o Mailpit fora | Resposta | Tempo |
+|---|---|---|
+| `POST /api/register` | **201**, com o aviso `Conta criada, mas não foi possível enviar o e-mail de confirmação agora. Peça um novo link em alguns minutos.` | 4,31 s |
+| `POST /api/email/verification-notification`, com o token da conta nova | **503**, `Não foi possível enviar o link de confirmação agora. Tente de novo em alguns minutos.` | 3,13 s |
+| Tela `/register`, botão "Criar conta" | Entrou na tela "Confirme seu e-mail", já logada, com o aviso amarelo de que o link não saiu | 4,96 s |
+| Botão "Reenviar o link" da mesma tela | Voltou à tela com o aviso amarelo | 5,06 s |
+
+- Antes da rodada de acabamento, o cadastro e o reenvio respondiam 500 com o e-mail fora do ar, com a conta já criada.
+- O log ganhou 5 linhas `Falha no envio de e-mail.` (os 2 cadastros e 3 reenvios), sem nenhum endereço.
+- Os 3 a 5 s são quase todos a procura do nome `mailpit`, que some do DNS do Docker com o `stop`, como no banco fora.
+- Com o Mailpit de volta (`start`), o reenvio deu 202 em 0,08 s, e o e-mail chegou. As duas contas ficaram sem confirmar e não viraram cliente: o cadastro de cliente só nasce na confirmação do e-mail.
+
+**Servidor de e-mail congelado** (`homolog pause mailpit`): o reenvio do link levou **60,03 s** até o 503. O SMTP do Laravel está sem limite de tempo (`config/mail.php`, `'timeout' => null`), então a leitura espera o `default_socket_timeout` do PHP, de 60 s, o mesmo número do `fastcgi_read_timeout` do Nginx, que pode responder 504 no lugar do 503. O processo do PHP-FPM fica preso esse tempo, e a rodada do lembrete do agendador que caiu no meio esperou 55 s. É um achado em aberto (`docs/ARQUITETURA.md`, "Limitações e riscos conhecidos").
+
 ### Na `feat/observabilidade` (14/11/2026)
 
 Na homolog da `feat/observabilidade`, com o `curl` esperando até 75 segundos:
@@ -161,4 +194,4 @@ Os 13 segundos do banco fora e os 4 do cache fora são o tempo de o PHP desistir
 
 - Os três casos na AWS, depois do primeiro `apply`, com o RDS e o ElastiCache de verdade.
 
-O volume `barberflow-homolog_dbdata` deste computador, com a senha perdida, continua sem uso: a medição com volume usou um volume novo (`barberflow-homolog_dbdata-r`). Apagar ou trocar o antigo, e apagar o novo se ele não for mais usado, espera o OK do Leonam.
+O volume `barberflow-homolog_dbdata` deste computador, com a senha perdida, continua sem uso: as medições com volume (revisão final e rodada de acabamento) usaram um volume novo (`barberflow-homolog_dbdata-r`). Apagar ou trocar o antigo, e apagar o novo se ele não for mais usado, espera o OK do Leonam.

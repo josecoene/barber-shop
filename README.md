@@ -258,7 +258,7 @@ Quem já tinha o projeto rodando antes do login precisa de alguns ajustes:
 1. Rodar `php artisan migrate` (no jeito 2, `docker exec -w /app barberflow-app php artisan migrate`). Ele só acrescenta colunas (`deleted_at`, `users.role`, `users.phone`, `barbers.user_id`, `clients.user_id`, `appointments.reminder_sent_at`, `payments.discount` e `payments.loyalty_reward`), as tabelas `appointments` e `payments` e índices, e não apaga nada.
 2. Rodar `php artisan db:seed` de novo: ele dá o perfil admin ao `test@example.com` sem mudar a senha. Sem perfil, o usuário não entra.
 3. No `.env`, trocar `APP_LOCALE=en` por `APP_LOCALE=pt_BR` e acrescentar `APP_TIMEZONE=America/Sao_Paulo`. Sem isso, as mensagens da API continuam em inglês.
-4. Copiar do `.env.example` as variáveis novas: as do login, da segurança, da agenda, da fidelidade e do lembrete (`SANCTUM_*`, `API_RATE_LIMIT`, `LOGIN_*`, `ADMIN_*`, `TRUSTED_*`, `SECURITY_CSP`, `CORS_ALLOWED_ORIGINS`, `CLIENT_CANCEL_MIN_HOURS`, `CLIENT_MAX_ACTIVE_APPOINTMENTS`, `BOOKING_DAYS_AHEAD`, o expediente em `BUSINESS_*`, `LOYALTY_*`, `REMINDER_HOURS_BEFORE` e os dados da barbearia em `BARBERSHOP_*`) e as da entrega final (os timeouts `DB_CONNECT_TIMEOUT`, `REDIS_CONNECT_TIMEOUT` e `REDIS_READ_TIMEOUT`, o `MYSQL_ATTR_SSL_CA` e o `RUN_MIGRATIONS` dos containers e o `DEMO_SEED_ENABLED` e a `DEMO_USER_PASSWORD` da homologação). Vazias, valem os padrões descritos nos comentários do `.env.example`.
+4. Copiar do `.env.example` as variáveis novas: as do login, da segurança, da agenda, da fidelidade e do lembrete (`SANCTUM_*`, `API_RATE_LIMIT`, `LOGIN_*`, `ADMIN_*`, `TRUSTED_*`, `SECURITY_CSP`, `CORS_ALLOWED_ORIGINS`, `CLIENT_CANCEL_MIN_HOURS`, `CLIENT_MAX_ACTIVE_APPOINTMENTS`, `BOOKING_DAYS_AHEAD`, o expediente em `BUSINESS_*`, `LOYALTY_*`, `REMINDER_HOURS_BEFORE` e os dados da barbearia em `BARBERSHOP_*`) e as da entrega final (os timeouts `DB_CONNECT_TIMEOUT`, `DB_READ_TIMEOUT`, `REDIS_CONNECT_TIMEOUT` e `REDIS_READ_TIMEOUT`, o `MYSQL_ATTR_SSL_CA` e o `RUN_MIGRATIONS` dos containers e o `DEMO_SEED_ENABLED` e a `DEMO_USER_PASSWORD` da homologação). Vazias, valem os padrões descritos nos comentários do `.env.example`.
 5. Rodar `npm install` (o Tailwind saiu do projeto) e reiniciar o servidor (no jeito 2, `docker restart barberflow-app`).
 
 ## Testes
@@ -322,24 +322,24 @@ Os testes de feature ficam em `tests/Feature`, um arquivo por recurso ou assunto
 
 | Assunto | Arquivos | O que conferem |
 |---|---|---|
-| Cadastros | `ServiceApiTest`, `ClientApiTest` e `BarberApiTest` | Listagem paginada (`data`, `links` e `meta`), busca, `page` e `per_page` inválidos, limites de cada campo, exclusão lógica (com a anonimização do cliente e a troca do e-mail e do telefone do barbeiro), recadastro do e-mail de quem foi excluído, 404 e o login do barbeiro criado pelo campo `password` |
+| Cadastros | `ServiceApiTest`, `ClientApiTest` e `BarberApiTest` | Listagem paginada (`data`, `links` e `meta`), busca, `page` e `per_page` inválidos, limites de cada campo, exclusão lógica (com a anonimização do cliente e a troca do e-mail e do telefone do barbeiro), recadastro do e-mail de quem foi excluído, o mesmo 422 de e-mail em uso para dois pedidos com o mesmo e-mail no mesmo instante, 404 e o login do barbeiro criado pelo campo `password` |
 | Agenda | `AppointmentApiTest`, `AppointmentAuthorizationTest`, `AvailableSlotsTest` e `AppointmentConcurrencyTest` (só MySQL) | Término calculado, expediente, fatias, passado, domingo, limite de 60 dias, sobreposição por barbeiro e por cliente (com o horário encostado permitido), remarcação, transições de status, filtros, o 409 ao excluir cadastro com agendamento futuro, as permissões de cada perfil, os horários livres com o relógio fixo e as travas no MySQL |
 | Pagamentos | `PaymentApiTest`, `PaymentAuthorizationTest` e `PaymentConcurrencyTest` (só MySQL) | Só atendimento concluído, um pagamento por atendimento (mesmo depois do estorno), valor padrão, `paid_at` do servidor, transições, correção pelo admin, filtros e totais, permissões e a trava no MySQL |
 | Fidelidade | `LoyaltyApiTest` e `LoyaltyConcurrencyTest` (só MySQL) | Visitas, prêmio pela config, desconto em centavos, recusa sem prêmio, o atendimento que está sendo pago fora da conta, estorno que devolve o prêmio, a listagem sem uma consulta por cliente e a trava no MySQL |
 | Lembretes | `ReminderCommandTest`, `ReminderApiTest` e `ReminderMailTest` | A janela de 24 horas, sem repetir, sem cliente excluído, a reserva da linha contra rodadas e envios simultâneos, a falha que libera para a rodada seguinte com só o id no log, o "Enviar lembrete agora" com os limites e o 503, e o e-mail sem dado pessoal |
 | Dashboard | `DashboardApiTest` | Os números de uma semana conhecida, um a um, o corte grátis fora do faturamento, a ocupação, o mês atual como padrão, o limite de 366 dias e só o admin vendo |
-| Login e permissões | `AuthApiTest`, `AuthorizationTest`, `WebAuthTest`, `RegistrationTest` e `PasswordResetTest` | Token com prefixo e validade, limite de tentativas, logout, troca de senha que derruba as outras sessões, 401 em todas as rotas, 403 para cada perfil, conta de cliente com confirmação de e-mail e "esqueci minha senha" |
-| Segurança e erros | `SecurityHeadersTest`, `RateLimitTest`, `ApiErrorsTest`, `LocalizationTest`, `HealthApiTest`, `DatabaseErrorLogTest`, `MailErrorLogTest` e `ConnectionTimeoutTest` | Headers, CSP, HSTS só em HTTPS, CORS, hosts aceitos, links pelo `APP_URL`, limites de requisição, erros em português, idioma e fuso, o `/api/health` com o banco ou o cache fora, o erro de banco no log sem o SQL, a falha no envio de e-mail no log sem o endereço (com o "esqueci a senha" respondendo o mesmo) e os timeouts de conexão |
-| Telas | `WebPagesTest` | Cada tela responde para o perfil que a usa, o layout com o token CSRF e o Sair, o menu de cada perfil, os valores que as telas recebem do servidor, as páginas de erro em português, nenhum estilo inline e nenhum nome de rota repetido |
+| Login e permissões | `AuthApiTest`, `AuthorizationTest`, `WebAuthTest`, `RegistrationTest` e `PasswordResetTest` | Token com prefixo e validade, limite de tentativas, logout, troca de senha que derruba as outras sessões, 401 em todas as rotas, 403 para cada perfil, conta de cliente com confirmação de e-mail (com o 422 de e-mail em uso também para dois cadastros no mesmo instante) e "esqueci minha senha" |
+| Segurança e erros | `SecurityHeadersTest`, `RateLimitTest`, `ApiErrorsTest`, `LocalizationTest`, `HealthApiTest`, `DatabaseErrorLogTest`, `MailErrorLogTest`, `ConnectionTimeoutTest` e `LostConnectionWriteTest` | Headers, CSP, HSTS só em HTTPS, CORS, hosts aceitos, links pelo `APP_URL`, limites de requisição, erros em português, idioma e fuso, o `/api/health` com o banco ou o cache fora, o erro de banco no log sem o SQL, a falha no envio de e-mail no log sem o endereço (com o "esqueci a senha" respondendo o mesmo e o cadastro de conta criando a conta com um aviso, que a tela não repete ao recarregar), os timeouts de conexão, o limite de leitura do MySQL só nas requisições web e o cadastro de serviço, de cliente e de conta que perde a conexão depois de gravar, sem sair em dobro nem virar o 422 de e-mail em uso |
+| Telas | `WebPagesTest` | Cada tela responde para o perfil que a usa, o layout com o token CSRF e o Sair, o menu de cada perfil (numa linha só, com o nome inteiro para o leitor de tela), a lista dos cadastros no celular, os valores que as telas recebem do servidor, as páginas de erro em português, nenhum estilo inline e nenhum nome de rota repetido |
 | Seeds e banco | `DatabaseSeederTest`, `DemoSeederTest`, `SqliteConnectionTest` e `TestDatabaseGuardTest` | O seed repetível, o admin inicial só com a senha da regra das contas, a demonstração (só com a flag e a senha, sem duplicar nem mudar o que já existe, seguindo as regras da agenda), o SQLite que espera a vez e a recusa de banco que não é de teste |
 
 ### Resultado na entrega final (15/11/2026)
 
 | Rodada | Resultado |
 |---|---|
-| `composer test` (SQLite, PHP 8.5) | 715 passaram e 7 pulados (as travas, que só valem no MySQL), 8357 asserções |
-| `composer test:mysql` (MySQL 8.4.13, PHP 8.4.27) | 722 passaram, nenhum pulado, 8379 asserções |
-| Igual ao CI, numa cópia sem `vendor`, `public/build` e `.env` | 715 passaram e 7 pulados |
+| `composer test` (SQLite, PHP 8.5) | 735 passaram e 7 pulados (as travas, que só valem no MySQL), 8470 asserções |
+| `composer test:mysql` (MySQL 8.4.13, PHP 8.4.27) | 742 passaram, nenhum pulado, 8492 asserções |
+| Igual ao CI, numa cópia sem `vendor`, `public/build` e `.env` | 735 passaram e 7 pulados, 8470 asserções |
 | Pint e `npm run build` | Sem erro |
 | `npm audit` e `composer audit` | `npm audit` sem vulnerabilidade; `composer audit` com 1 alerta baixo (veja [Pendências](#pendências)) |
 
@@ -420,7 +420,8 @@ app/
   Console/Commands/   # appointments:send-reminders (lembrete por e-mail, chamado pelo agendador)
   Enums/              # UserRole (perfis), AppointmentStatus (status e transições da agenda),
                       # PaymentStatus (status e transições do pagamento) e PaymentMethod (formas)
-  Exceptions/         # 429 do login bloqueado (TooManyLoginAttemptsException)
+  Exceptions/         # 429 do login bloqueado (TooManyLoginAttemptsException) e 422 do e-mail
+                      # em uso no mesmo instante (EmailTakenException)
   Http/Controllers/   # ServiceController, ClientController, BarberController, AppointmentController,
                       # AvailableSlotController (horários livres), PaymentController, DashboardController,
                       # HealthController e AuthController (login da API)
@@ -451,6 +452,7 @@ routes/
   console.php         # agendador: o lembrete a cada 15 minutos e a limpeza dos tokens vencidos
 tests/
   Feature/            # testes dos endpoints, da agenda, da autenticação, das telas e dos seeders
+  Support/            # LostConnectionStatement (o comando que perde a conexão depois de gravar)
 phpunit.xml           # testes no SQLite em memória (composer test)
 phpunit.mysql.xml     # a mesma suíte num MySQL descartável (composer test:mysql)
 docker/               # php/ (Dockerfile, entrypoints e ajustes do PHP), nginx/, mysql/ e homolog/
@@ -495,7 +497,7 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 - [x] Lembrete por e-mail: o comando `appointments:send-reminders`, a cada 15 minutos pelo agendador, nas 24 horas antes do horário (configurável), sem repetir e sem sair para cliente excluído, e o "Enviar lembrete agora" no detalhe da Agenda
 - [x] Fidelidade: a cada 10 atendimentos concluídos, o seguinte sai grátis (configurável), com o progresso em Clientes e em Meus horários e o "Usar o prêmio de fidelidade" no modal de pagamento
 - [x] Seed de demonstração para a homologação (`DemoSeeder`) e admin de produção com a senha do ambiente (`AdminUserSeeder`)
-- [x] Erro de banco e falha no envio de e-mail no log sem dado pessoal (sem o SQL e sem o endereço), e timeouts curtos de conexão com o banco e o cache
+- [x] Erro de banco e falha no envio de e-mail no log sem dado pessoal (sem o SQL e sem o endereço), timeouts curtos de conexão com o banco e o cache e limite de leitura do MySQL nas requisições web
 - [x] `docs/API.md` e a coleção do Postman com todas as rotas
 
 **Telas**
@@ -503,7 +505,7 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 - [x] Login, cadastro de conta, "esqueci minha senha" e páginas de erro em português
 - [x] Menu e tela inicial por perfil (admin, barbeiro e cliente)
 - [x] Dashboard, Agenda, Agendar, Pagamentos, Clientes, Barbeiros, Serviços, Minha conta e, para o cliente, Agendar e Meus horários
-- [x] Celular (390 px) sem rolagem lateral e acessibilidade básica (campos obrigatórios, erros ligados aos campos e "Pular para o conteúdo")
+- [x] Celular (390 px) sem rolagem lateral, com a Agenda, Pagamentos e os cadastros em lista, e acessibilidade básica (campos obrigatórios, erros ligados aos campos e "Pular para o conteúdo")
 - [x] Prints das telas de cada perfil (admin, barbeiro e cliente) e das telas abertas do visitante, em 1280 e 390 px ([`docs/prints-telas/`](docs/prints-telas/README.md))
 
 **Nuvem (`Sistema Cloud.pdf`)**
@@ -522,25 +524,25 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 - [x] Verificação completa: suíte no SQLite, no MySQL e igual à do CI, homolog com as imagens de produção, k6, resiliência, headers, CSRF no navegador, OWASP ZAP, Terraform e os prints
 - [ ] `laravel/framework` 13.40.0 (alerta GHSA-63hm-g96r-2m2q): espera o OK do Leonam
 - [x] Queda do banco e "subir de novo sem perder nada" com o MySQL num volume de verdade (um volume novo, `barberflow-homolog_dbdata-r`, porque o antigo tem a senha perdida)
+- [x] Rodada de acabamento: o menu numa linha só, os cadastros em lista no celular e os blocos curtos da Agenda, com os prints refeitos; o 422 do e-mail repetido no mesmo instante, provado nos testes; e o cadastro de conta com o e-mail fora do ar e o limite de leitura do MySQL, medidos de novo na homolog (k6, ZAP, headers e CSRF ficaram os da verificação)
 - [ ] O volume antigo da homolog (`barberflow-homolog_dbdata`, senha perdida): apagar ou trocar espera o OK do Leonam
 
 ## Prints das telas
 
-Os 44 prints (admin, barbeiro, cliente e visitante, cada tela em 1280 e em 390 px) estão em [`docs/prints-telas/`](docs/prints-telas/README.md), com o endereço de cada tela e o que cada print mostra. Foram tirados em 15/11/2026 na homolog, com os dados do `DemoSeeder`. Nenhum mostra senha, token ou e-mail de verdade.
+Os 44 prints (admin, barbeiro, cliente e visitante, cada tela em 1280 e em 390 px) estão em [`docs/prints-telas/`](docs/prints-telas/README.md), com o endereço de cada tela e o que cada print mostra. Foram tirados em 15/11/2026 na homolog, com os dados do `DemoSeeder`, e 22 deles foram refeitos no mesmo dia, depois das correções da rodada de acabamento. Nenhum mostra senha, token ou e-mail de verdade.
 
 ## Limitações conhecidas
 
 - O usuário de teste `test@example.com` tem uma senha conhecida, que está no `DatabaseSeeder`. Serve só para o ambiente local: em produção, o admin vem do `AdminUserSeeder` e o seed de teste nunca roda.
 - O cadastro de conta avisa quando o e-mail já tem conta ("Este e-mail já está cadastrado."). O login e o "esqueci minha senha" não revelam isso.
-- Dois cadastros com o mesmo e-mail ao mesmo tempo (cliente, barbeiro ou conta de cliente): o segundo passa pela validação, o `unique` do banco recusa, e a resposta é um erro 500, e não o 422 de e-mail em uso. Nada fica gravado em dobro. Com o servidor de e-mail fora do ar, o cadastro de conta e o reenvio do link de confirmação também respondem 500 (a conta fica criada, e o cliente entra e pede outro link); o "esqueci a senha" responde o mesmo de sempre.
 - As listagens devolvem no máximo 100 itens por página. A tela Agendar carrega os 100 primeiros clientes, barbeiros e serviços ativos em ordem de nome. A Agenda e Meus horários leem até 1000 agendamentos.
 - Os horários livres olham só a agenda do barbeiro. Se o cliente já tem horário com outro barbeiro no mesmo período, o Agendar recusa ao salvar, com a mensagem no campo de cliente.
 - Cada atendimento tem um pagamento só: depois do estorno, ele não recebe outro. O dashboard conta tudo pela data do atendimento, não pela do pagamento.
 - O lembrete é só por e-mail e sai na hora, sem fila: o comando manda um de cada vez. Sem o agendador rodando (`schedule:work` no local, o container `scheduler` nos compose, cron num servidor), o lembrete automático não sai.
 - O prêmio de fidelidade vale para qualquer serviço (o desconto é sobre o preço do atendimento pago) e não vence.
 - No SQLite local, um pedido grava por vez: o `config/database.php` usa transações `IMMEDIATE` e espera até 5 segundos pela vez (`busy_timeout`), em vez de responder "database is locked" quando as telas fazem várias chamadas ao mesmo tempo.
-- Com o MySQL de pé e sem responder (congelado), a requisição fica presa até o `504` do Nginx, em 60 segundos. O timeout curto vale só para abrir a conexão (`docs/ARQUITETURA.md`, "Limitações e riscos conhecidos").
-- Em 390 px, as tabelas de Clientes, Barbeiros e Serviços cabem na tela, mas quebram nome e e-mail no meio da palavra.
+- Com o MySQL de pé e sem responder (congelado), cada pedido que lê o banco espera até cerca de 4 vezes o `DB_READ_TIMEOUT` (20 segundos com o padrão de 5) antes do erro, e ocupa um processo do PHP-FPM nesse tempo. Com 10 pedidos assim ao mesmo tempo, os processos de um container acabam, e até o `/up` espera (16,8 segundos na homolog). As migrations, o agendador e os seeders, na linha de comando, ficam sem esse limite (`docs/ARQUITETURA.md`, "Quedas do banco e do cache" e "Limitações e riscos conhecidos").
+- O envio de e-mail não tem limite de tempo (`config/mail.php`): com o servidor de e-mail de pé e sem responder, o cadastro de conta, o reenvio do link, o "esqueci a senha" e o "Enviar lembrete agora" esperam até 60 segundos, o mesmo limite do Nginx, e a rodada do lembrete espera junto. Com o servidor fora do ar, a falha sai em poucos segundos.
 - Sem domínio e certificado, o ALB atenderia só em HTTP. O Terraform já aceita o `certificate_arn` (`docs/nuvem/TERRAFORM.md`, "HTTPS com domínio próprio").
 
 ## Pendências

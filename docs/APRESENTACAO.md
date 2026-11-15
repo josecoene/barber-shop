@@ -63,7 +63,7 @@ A ordem importa: a cliente vê o prêmio de fidelidade **antes** de o admin usar
    - Clientes: a coluna Fidelidade (como 6/10) e o selo "Prêmio disponível" na Ana Paula Ribeiro.
    - Pagamentos: o "Registrar pagamento" do atendimento da Ana Paula Ribeiro, com o aviso do prêmio. Marque "Usar o prêmio de fidelidade": o valor trava em 0,00. **Isso grava no banco e só dá para mostrar uma vez por banco.**
 
-Se sobrar tempo, mostre uma tela em 390 px (as ferramentas de desenvolvedor do navegador, modo celular): a Agenda vira uma lista por barbeiro.
+Se sobrar tempo, mostre uma tela em 390 px (as ferramentas de desenvolvedor do navegador, modo celular): a Agenda vira uma lista por barbeiro, e Clientes e Pagamentos viram uma lista no lugar da tabela.
 
 ### Bloco 4: a API (2 minutos)
 
@@ -235,11 +235,11 @@ Navegador ou Postman, depois o Nginx, o PHP-FPM, os middlewares (headers, limite
 
 | O quê | Resultado |
 |---|---|
-| Suíte no SQLite | 715 passaram (7 só no MySQL) |
-| Suíte no MySQL 8.4 | 722 passaram |
+| Suíte no SQLite | 735 passaram (7 só no MySQL) |
+| Suíte no MySQL 8.4 | 742 passaram |
 | k6, estresse com 200 VUs | p95 de 17,6 ms, 0% de erro |
 | Concorrência da agenda | 1 criado em 50 pedidos iguais |
-| Resiliência | Cache fora: 503 em 3 a 4 s e de volta em 200; app de volta em 1,7 s; banco num volume de volta em 1,9 s, sem perder nada |
+| Resiliência | Cache fora: 503 em 3 a 4 s e de volta em 200; app de volta em 1,7 s; banco num volume de volta em 1,9 s, sem perder nada; banco congelado: 503 em 20 s (antes, 504 em 60 s) |
 | OWASP ZAP baseline | 0 FAIL, 4 avisos baixos ou informativos |
 | Terraform | 69 testes passaram; `trivy config` sem problema |
 
@@ -252,7 +252,7 @@ Os números do k6 valem para o computador da homolog, não para a AWS.
 - Aplicar na AWS e o go-live: precisa da conta do grupo e custa dinheiro
 - O CI verde no GitHub, os pull requests e a proteção da `main`: depois do push
 - Pendências: atualizar o `laravel/framework` (alerta de severidade baixa) e o volume do banco da homolog
-- Achado: com o banco congelado, o pedido espera 60 s até o Nginx desistir
+- Achados em aberto: o envio de e-mail sem limite de tempo e o pool do PHP-FPM cheio com o banco congelado (relatório, seção 8)
 
 ---
 
