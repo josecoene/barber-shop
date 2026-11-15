@@ -2,9 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Models\Barber;
 use App\Models\Client;
+use App\Models\Service;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\View\ViewException;
@@ -27,6 +30,11 @@ class DatabaseErrorLogTest extends TestCase
 
     private const EMAIL = 'maria.sigilosa@barberflow.test';
 
+    /**
+     * Observações com dado pessoal, que a mensagem do erro do insert repetiria.
+     */
+    private const NOTES = 'Maria Sigilosa, alérgica a amônia, telefone (11) 98888-7777';
+
     public function test_logs_the_query_error_without_the_sql_and_the_values(): void
     {
         [$exception, $line] = $this->duplicateEmailError();
@@ -46,29 +54,37 @@ class DatabaseErrorLogTest extends TestCase
 
     public function test_a_failed_request_logs_the_error_without_the_sql_and_the_values(): void
     {
+        // Segunda-feira, antes da abertura: as 10:00 do mesmo dia estão livres.
+        $this->travelTo(Carbon::parse('2026-11-16 08:00:00'));
         $this->actingAsAdmin();
 
-        // Outro pedido grava o mesmo e-mail entre a validação e o insert: o unique do banco recusa, e a
-        // mensagem do erro traz o insert com o nome, o e-mail e o telefone. Hoje essa corrida termina num
-        // erro do servidor, sem tratamento próprio (docs/ARQUITETURA.md, "Limitações e riscos conhecidos"):
-        // o que este teste confere é o log, e não a resposta. Se a corrida um dia virar 422, como no
-        // PaymentRecorder, o erro de banco daqui precisa vir de outro caminho.
-        $this->beforeQuery('/^insert into clients /', fn () => DB::table('clients')->insert([
-            'name' => 'Outra Pessoa',
-            'email' => self::EMAIL,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]));
+        $client = Client::create(['name' => 'Maria Sigilosa', 'email' => self::EMAIL, 'phone' => '(11) 98888-7777']);
+        $barber = Barber::create(['name' => 'Pedro', 'email' => 'pedro@barberflow.test']);
+        $service = Service::create(['name' => 'Corte', 'duration' => 30, 'price' => 35]);
+
+        // Alguém apaga o serviço direto no banco (a aplicação só faz exclusão lógica) entre as travas da agenda
+        // e o insert do agendamento: a chave estrangeira recusa o insert, e a mensagem do erro traz o insert com
+        // as observações, que podem ter dado pessoal. A aplicação não trata essa recusa, que é um erro do
+        // servidor de verdade (o e-mail repetido de dois pedidos ao mesmo tempo, que este teste usava antes,
+        // virou o 422 da regra unique, no EmailTakenException).
+        $this->beforeQuery('/^insert into appointments /', fn () => DB::table('services')->where('id', $service->id)->delete());
         Log::spy();
 
-        $this->postJson('/api/clients', ['name' => 'Maria Sigilosa', 'email' => self::EMAIL, 'phone' => '(11) 98888-7777'])
-            ->assertServerError();
+        $this->postJson('/api/appointments', [
+            'client_id' => $client->id,
+            'barber_id' => $barber->id,
+            'service_id' => $service->id,
+            'date' => '2026-11-16',
+            'start_time' => '10:00',
+            'notes' => self::NOTES,
+        ])->assertServerError();
 
         Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message, array $context) => $message === self::MESSAGE
             && array_keys($context) === ['connection', 'code', 'driver_code', 'file']
             && $context['connection'] === config('database.default')
             && $context['code'] === '23000'
-            && str_starts_with($context['file'], 'app/Http/Controllers/ClientController.php:'));
+            && str_starts_with($context['file'], 'app/Services/AppointmentScheduler.php:')
+            && ! str_contains((string) json_encode($context), 'Sigilosa'));
     }
 
     public function test_a_query_error_inside_another_error_is_logged_the_same_way(): void

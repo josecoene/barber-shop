@@ -150,10 +150,18 @@ class WebPagesTest extends TestCase
     {
         $client = $this->makeClientUser(verified: false);
 
+        // Sem aviso nenhum (a tela aberta de novo, depois de entrar ou recarregar), ela não sabe se o último
+        // envio deu certo e não diz que o link foi enviado; o aviso do cadastro e do reenvio fica no
+        // RegistrationTest e no MailErrorLogTest.
         $this->actingAs($client)
             ->get('/email/verify')
             ->assertOk()
             ->assertSee($client->email)
+            ->assertSeeText('Falta confirmar o e-mail')
+            ->assertSeeText('Não recebeu o link? Confira a caixa de spam ou peça um novo.')
+            ->assertDontSeeText('Enviamos')
+            ->assertDontSee('alert-warning')
+            ->assertDontSee('alert-success')
             ->assertSee('action="'.route('verification.send').'"', false)
             ->assertSee('Reenviar o link');
     }

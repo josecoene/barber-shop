@@ -72,6 +72,11 @@ return [
             ] + (extension_loaded('pdo_mysql') ? [
                 Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
             ] : [])),
+            // Segundos que cada leitura do MySQL espera a resposta, só nas requisições web (DB_READ_TIMEOUT,
+            // padrão 5). O PDO não tem essa opção: o AppServiceProvider aplica o valor como o
+            // mysqlnd.net_read_timeout do PHP, fora da linha de comando. Sem ele, com o banco de pé e sem
+            // responder, o PHP espera até 24 horas, e a requisição fica presa até o 504 do Nginx (60 s).
+            'read_timeout' => (int) (env('DB_READ_TIMEOUT') ?: 5),
         ],
 
         'mariadb' => [

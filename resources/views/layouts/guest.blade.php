@@ -27,6 +27,11 @@
                         <div class="alert alert-success" role="status">{{ session('status') }}</div>
                     @endif
 
+                    {{-- O que não deu certo e a pessoa precisa saber, como o e-mail de confirmação que não saiu. --}}
+                    @if (session('warning'))
+                        <div class="alert alert-warning" role="alert">{{ session('warning') }}</div>
+                    @endif
+
                     @yield('content')
                 </div>
             </div>

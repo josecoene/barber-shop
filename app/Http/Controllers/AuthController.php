@@ -12,6 +12,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rules\Password;
 use Laravel\Sanctum\PersonalAccessToken;
+use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 
 /**
  * Autenticação da API. Postman e clientes externos usam token Bearer (POST
@@ -118,20 +119,28 @@ class AuthController extends Controller
 
     /**
      * Cadastro de conta de cliente. A conta nasce sem o e-mail confirmado; o
-     * link de confirmação vai por e-mail.
+     * link de confirmação vai por e-mail. Com o servidor de e-mail fora do ar, a
+     * conta é criada do mesmo jeito (201), e a mensagem avisa que o link não
+     * saiu e que dá para pedir outro (ClientRegistration::VERIFICATION_NOT_SENT).
      */
     public function register(Request $request, ClientRegistration $registration): JsonResponse
     {
         $validated = $request->validate(ClientRegistration::rules());
 
-        $registration->register($validated);
+        [, $verificationSent] = $registration->register($validated);
 
         return response()->json([
-            'message' => 'Conta criada. Confirme seu e-mail pelo link que enviamos para começar a usar a conta.',
+            'message' => $verificationSent
+                ? 'Conta criada. Confirme seu e-mail pelo link que enviamos para começar a usar a conta.'
+                : ClientRegistration::VERIFICATION_NOT_SENT,
         ], 201);
     }
 
-    public function resendVerification(Request $request): JsonResponse
+    /**
+     * Reenvio do link de confirmação. Com o servidor de e-mail fora do ar, 503
+     * (ClientRegistration::RESEND_FAILED), e a pessoa tenta de novo depois.
+     */
+    public function resendVerification(Request $request, ClientRegistration $registration): JsonResponse
     {
         $user = $request->user();
 
@@ -139,7 +148,9 @@ class AuthController extends Controller
             return response()->json(['message' => 'Seu e-mail já está confirmado.']);
         }
 
-        $user->sendEmailVerificationNotification();
+        if (! $registration->resendVerification($user)) {
+            throw new ServiceUnavailableHttpException(null, ClientRegistration::RESEND_FAILED);
+        }
 
         return response()->json(['message' => 'Enviamos um novo link de confirmação para o seu e-mail.'], 202);
     }

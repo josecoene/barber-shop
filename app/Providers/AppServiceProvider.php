@@ -32,6 +32,7 @@ class AppServiceProvider extends ServiceProvider
         $this->configureRateLimiting();
         $this->configureTrustedProxies();
         $this->configureUrls();
+        $this->configureDatabaseReadTimeout();
 
         // Senha de conta: no mínimo 8 caracteres (cadastro, troca e redefinição).
         Password::defaults(fn () => Password::min(8));
@@ -128,5 +129,33 @@ class AppServiceProvider extends ServiceProvider
         if (str_starts_with($appUrl, 'https://')) {
             URL::forceScheme('https');
         }
+    }
+
+    /**
+     * Limite de cada leitura do MySQL nas requisições web (o mysqlnd.net_read_timeout
+     * do PHP, com o DB_READ_TIMEOUT de config/database.php, padrão 5 segundos).
+     *
+     * Sem ele, com o MySQL de pé na rede e sem responder (congelado), a conexão
+     * abre e o PHP espera a resposta pelo padrão do mysqlnd, de 24 horas: a
+     * requisição fica presa até o 504 do Nginx, em 60 segundos, e o processo do
+     * PHP-FPM, até o banco voltar. Com o limite, a leitura desiste e o erro sai.
+     * O Laravel tenta de novo quando a conexão parece perdida (abre outra conexão
+     * e repete a consulta, até 4 tentativas ao todo), então o pedido desiste em
+     * até cerca de 4 vezes o limite: 20 segundos com o padrão, abaixo dos 60 do
+     * Nginx.
+     *
+     * Só fora da linha de comando: as migrations, o agendador (lembretes) e os
+     * seeders podem ter consultas longas e não podem cair no meio delas. O valor
+     * vale até o fim da requisição; o PHP-FPM volta ao do php.ini na seguinte.
+     */
+    private function configureDatabaseReadTimeout(): void
+    {
+        $seconds = (int) config('database.connections.mysql.read_timeout');
+
+        if ($this->app->runningInConsole() || $seconds < 1) {
+            return;
+        }
+
+        ini_set('mysqlnd.net_read_timeout', (string) $seconds);
     }
 }

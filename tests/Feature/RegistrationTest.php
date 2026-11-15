@@ -25,6 +25,11 @@ class RegistrationTest extends TestCase
 
     private const EMAIL = 'cliente.a3@barberflow.test';
 
+    /**
+     * A consulta da regra unique do e-mail no cadastro de conta.
+     */
+    private const USERS_UNIQUE_RULE = '/^select count\(\*\) as aggregate from users where email /';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -119,14 +124,29 @@ class RegistrationTest extends TestCase
 
     public function test_web_registration_logs_in_and_shows_the_confirmation_notice(): void
     {
+        $this->withoutVite();
+
         $this->post('/register', $this->payload())
             ->assertSessionHasNoErrors()
-            ->assertRedirect('/email/verify');
+            ->assertRedirect('/email/verify')
+            ->assertSessionHas('status', 'Enviamos um link de confirmação para o seu e-mail.')
+            ->assertSessionMissing('warning');
 
         $user = User::firstWhere('email', self::EMAIL);
 
         $this->assertAuthenticatedAs($user, 'web');
         Notification::assertSentTo($user, VerifyEmail::class);
+
+        // O aviso de que o link saiu aparece só na primeira vez: recarregada, a tela não diz mais.
+        $this->get('/email/verify')
+            ->assertOk()
+            ->assertSeeText('Enviamos um link de confirmação para o seu e-mail.')
+            ->assertSeeText('Falta confirmar o e-mail');
+
+        $this->get('/email/verify')
+            ->assertOk()
+            ->assertDontSeeText('Enviamos')
+            ->assertSeeText('Falta confirmar o e-mail');
 
         // Até confirmar, a conta não abre as telas do cliente.
         $this->get('/account')->assertRedirect('/email/verify');
@@ -150,6 +170,39 @@ class RegistrationTest extends TestCase
             ->assertJsonValidationErrors(['email', 'name', 'phone']);
 
         $this->assertSame(1, User::count());
+    }
+
+    /**
+     * Outro cadastro grava o mesmo e-mail entre a validação e o insert: a regra
+     * unique já passou, e quem recusa é o índice unique do banco. A resposta é a
+     * mesma da regra, e não um erro 500; a conta não é criada e nenhum e-mail sai.
+     * O outro cadastro entra logo depois da consulta da regra (afterQuery()),
+     * antes da transação do insert, e por isso continua lá quando ela é desfeita.
+     */
+    public function test_two_registrations_with_the_same_email_at_the_same_time_get_the_same_422(): void
+    {
+        $this->afterQuery(self::USERS_UNIQUE_RULE, fn () => User::create(['name' => 'Outra Pessoa', 'email' => self::EMAIL, 'password' => 'outra-senha-123']));
+
+        $this->postJson('/api/register', $this->payload())
+            ->assertUnprocessable()
+            ->assertExactJson(['message' => 'Este e-mail já está cadastrado.', 'errors' => ['email' => ['Este e-mail já está cadastrado.']]]);
+
+        $this->assertSame(['Outra Pessoa'], User::where('email', self::EMAIL)->pluck('name')->all());
+        Notification::assertNothingSent();
+    }
+
+    public function test_screen_registration_racing_another_one_goes_back_with_the_email_error(): void
+    {
+        $this->afterQuery(self::USERS_UNIQUE_RULE, fn () => User::create(['name' => 'Outra Pessoa', 'email' => self::EMAIL, 'password' => 'outra-senha-123']));
+
+        $this->from('/register')
+            ->post('/register', $this->payload())
+            ->assertRedirect('/register')
+            ->assertSessionHasErrors(['email' => 'Este e-mail já está cadastrado.']);
+
+        $this->assertGuest('web');
+        $this->assertSame(1, User::where('email', self::EMAIL)->count());
+        Notification::assertNothingSent();
     }
 
     public function test_confirming_the_email_links_the_account_to_the_client_with_the_same_email(): void

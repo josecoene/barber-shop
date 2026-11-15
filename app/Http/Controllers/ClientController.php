@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\EmailTakenException;
 use App\Models\Client;
 use App\Services\LoyaltyService;
 use Illuminate\Http\JsonResponse;
@@ -97,6 +98,13 @@ class ClientController extends Controller
         ]);
     }
 
+    /**
+     * O e-mail repetido que passou pela regra unique (outro cadastro com o mesmo
+     * e-mail no mesmo instante) sai como o mesmo 422 dela (EmailTakenException).
+     * O insert vai dentro de uma transação: se a espera pela resposta do banco
+     * desistir (DB_READ_TIMEOUT) depois que ele gravou, o Laravel não repete o
+     * insert, que daria esse 422 para o cliente que acabou de ser criado.
+     */
     public function store(Request $request)
     {
         Gate::authorize('create', Client::class);
@@ -108,7 +116,9 @@ class ClientController extends Controller
             'phone' => 'nullable|string|max:20',
         ]);
 
-        return response()->json(Client::create($validated), 201);
+        $client = EmailTakenException::guard(fn () => DB::transaction(fn () => Client::create($validated)));
+
+        return response()->json($client, 201);
     }
 
     public function show(Client $client)
@@ -134,7 +144,10 @@ class ClientController extends Controller
             $rules['email'] = 'missing';
         }
 
-        $client->update($request->validate($rules));
+        $validated = $request->validate($rules);
+
+        // Outro cadastro gravou o mesmo e-mail depois da validação: o mesmo 422 da regra unique.
+        EmailTakenException::guard(fn () => $client->update($validated));
 
         return $client;
     }
