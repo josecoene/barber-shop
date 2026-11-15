@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Enums\UserRole;
 use App\Models\User;
+use Database\Seeders\Concerns\ChecksPasswordRule;
 use Illuminate\Database\Seeder;
 
 /**
@@ -13,6 +14,8 @@ use Illuminate\Database\Seeder;
  * php artisan db:seed --class=AdminUserSeeder (em produção, com --force)
  *
  * - Sem e-mail ou sem senha: só avisa e não cria nada.
+ * - Senha fora da regra das senhas do sistema (no mínimo 8 caracteres, como no
+ *   cadastro, na troca e na redefinição): também só avisa e não cria nada.
  * - Usuário com esse e-mail ainda não existe: cria o admin, com o e-mail já
  *   confirmado.
  * - Já existe: não muda nada. A senha de quem já existe nunca é trocada, e um
@@ -21,6 +24,8 @@ use Illuminate\Database\Seeder;
  */
 class AdminUserSeeder extends Seeder
 {
+    use ChecksPasswordRule;
+
     public function run(): void
     {
         $email = config('barberflow.admin.email');
@@ -28,6 +33,12 @@ class AdminUserSeeder extends Seeder
 
         if (blank($email) || blank($password)) {
             $this->command?->warn('Administrador inicial não criado: defina ADMIN_EMAIL e ADMIN_PASSWORD no .env.');
+
+            return;
+        }
+
+        if (($error = $this->passwordRuleError((string) $password, 'ADMIN_PASSWORD')) !== null) {
+            $this->command?->warn("Administrador inicial não criado. {$error}");
 
             return;
         }

@@ -31,8 +31,9 @@ $appUrl = $isBlank(env('APP_URL')) ? 'http://localhost' : env('APP_URL');
 return [
 
     /*
-    | Administrador inicial, criado pelo AdminUserSeeder. Sem e-mail ou sem
-    | senha, o seeder só avisa e não cria nada.
+    | Administrador inicial, criado pelo AdminUserSeeder. Sem e-mail, sem senha
+    | ou com uma senha de menos de 8 caracteres (a regra das outras senhas do
+    | sistema), o seeder só avisa e não cria nada.
     */
 
     'admin' => [
@@ -182,6 +183,22 @@ return [
         'name' => $text('BARBERSHOP_NAME', $text('APP_NAME', 'BarberFlow')),
         'address' => $text('BARBERSHOP_ADDRESS', ''),
         'phone' => $text('BARBERSHOP_PHONE', ''),
+    ],
+
+    /*
+    | Seed de demonstração (Database\Seeders\DemoSeeder), só para a
+    | homologação: barbeiros com login, clientes, um mês de agenda com
+    | pagamentos e um cliente com prêmio de fidelidade.
+    | - enabled: o seeder só roda com DEMO_SEED_ENABLED=true (a homologação
+    |   liga no docker-compose.homolog.yml). Desligado, ele não cria nada;
+    | - password: a senha dos logins de demonstração (barbeiros e clientes com
+    |   conta), de DEMO_USER_PASSWORD. Fica só no ambiente do comando, nunca
+    |   num arquivo do repositório. Sem ela, o seeder também não cria nada.
+    */
+
+    'demo' => [
+        'enabled' => filter_var(env('DEMO_SEED_ENABLED', false), FILTER_VALIDATE_BOOL),
+        'password' => $isBlank(env('DEMO_USER_PASSWORD')) ? null : (string) env('DEMO_USER_PASSWORD'),
     ],
 
 ];

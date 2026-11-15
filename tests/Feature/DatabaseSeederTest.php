@@ -8,6 +8,7 @@ use App\Models\User;
 use Database\Seeders\AdminUserSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class DatabaseSeederTest extends TestCase
@@ -100,6 +101,33 @@ class DatabaseSeederTest extends TestCase
 
         $this->artisan('db:seed', ['--class' => AdminUserSeeder::class])
             ->expectsOutputToContain('Administrador inicial não criado')
+            ->assertSuccessful();
+
+        $this->assertDatabaseMissing('users', ['email' => 'dono@barberflow.test']);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function passwordsBelowTheRule(): array
+    {
+        return [
+            '1 caractere' => ['1'],
+            '7 caracteres' => ['curta12'],
+        ];
+    }
+
+    #[DataProvider('passwordsBelowTheRule')]
+    public function test_admin_seeder_refuses_a_password_below_the_rule_of_the_accounts(string $password): void
+    {
+        config([
+            'barberflow.admin.email' => 'dono@barberflow.test',
+            'barberflow.admin.password' => $password,
+        ]);
+
+        // A mesma regra do cadastro, da troca e da redefinição de senha (Password::defaults()).
+        $this->artisan('db:seed', ['--class' => AdminUserSeeder::class])
+            ->expectsOutputToContain('Administrador inicial não criado. O campo ADMIN_PASSWORD deve ter pelo menos 8 caracteres.')
             ->assertSuccessful();
 
         $this->assertDatabaseMissing('users', ['email' => 'dono@barberflow.test']);

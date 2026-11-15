@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password as PasswordRule;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\Mailer\Exception\TransportExceptionInterface;
 
 /**
  * "Esqueci minha senha", pelas telas e pela API, com o broker de senha do Laravel
@@ -45,13 +46,20 @@ class PasswordResetter
     /**
      * Manda o link de redefinição se o e-mail for de algum usuário.
      *
-     * A resposta é sempre a mesma: com e-mail cadastrado ou não, e também quando
-     * o link foi pedido há pouco. Assim ninguém usa esta tela para descobrir quem
-     * tem conta.
+     * A resposta é sempre a mesma: com e-mail cadastrado ou não, quando o link
+     * foi pedido há pouco e também quando o servidor de e-mail está fora do ar
+     * ou recusa o endereço. Assim ninguém usa esta tela para descobrir quem tem
+     * conta: sem isso, a falha no envio, que só acontece com o e-mail
+     * cadastrado, viraria um erro 500 só para quem tem conta. A falha vai para o
+     * log sem o endereço (bootstrap/app.php), e a pessoa pede o link de novo.
      */
     public function sendLink(string $email): string
     {
-        Password::sendResetLink(['email' => $email]);
+        try {
+            Password::sendResetLink(['email' => $email]);
+        } catch (TransportExceptionInterface $e) {
+            report($e);
+        }
 
         return __('passwords.sent');
     }
