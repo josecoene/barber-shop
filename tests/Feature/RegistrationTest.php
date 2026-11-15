@@ -425,6 +425,33 @@ class RegistrationTest extends TestCase
     }
 
     /**
+     * Dois cliques no link (ou duas abas) confirmam a mesma conta ao mesmo
+     * tempo: os dois pedidos passam pela conferência do começo do listener, e o
+     * segundo acha o cadastro que o primeiro acabou de ligar a ela (no MySQL,
+     * também depois da transação repetida por deadlock). Ele não faz nada: nem
+     * outro cadastro, nem o aviso de que o cadastro já tem outra conta, que
+     * seria falso.
+     */
+    public function test_confirming_the_email_twice_at_the_same_time_links_once_without_a_warning(): void
+    {
+        Log::spy();
+        $user = $this->register();
+
+        // O outro pedido liga a conta a um cadastro novo logo antes da busca deste pelo e-mail.
+        $this->beforeQuery('/^select \* from clients where email = /', function () use ($user) {
+            $client = new Client(['name' => $user->name, 'email' => $user->email]);
+            $client->user()->associate($user);
+            $client->save();
+        });
+
+        $this->actingAs($user)->get($this->verificationUrl($user))->assertRedirect('/');
+
+        $this->assertTrue($user->fresh()->hasVerifiedEmail());
+        $this->assertTrue(Client::sole()->user()->is($user));
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    /**
      * Alguém cria a conta com o e-mail de um cliente da barbearia e com o nome e o telefone dele
      * mesmo. O dono do e-mail recebe "Este e-mail já está cadastrado.", recupera a conta pelo
      * "esqueci minha senha" e confirma o e-mail. O que o outro digitou não pode ir para o cadastro.

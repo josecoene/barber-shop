@@ -12,6 +12,7 @@ use Illuminate\Auth\Events\Verified;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use PDOException;
 use Tests\TestCase;
 
 /**
@@ -42,6 +43,17 @@ class EmailVerificationConcurrencyTest extends TestCase
      * Erro do MySQL quando a espera por uma trava passa do innodb_lock_wait_timeout.
      */
     private const LOCK_WAIT_TIMEOUT = 1205;
+
+    /**
+     * Erro do MySQL quando ele desfaz uma transação para sair de um deadlock.
+     */
+    private const DEADLOCK = 1213;
+
+    /**
+     * Quantas vezes o insert do cadastro recebeu o erro de deadlock
+     * (deadlockOnTheClientInsert()).
+     */
+    private int $deadlocks = 0;
 
     private const REQUESTS = ['first', 'second'];
 
@@ -148,6 +160,8 @@ class EmailVerificationConcurrencyTest extends TestCase
         DB::connection('second')->beginTransaction();
         $this->shopSaves();
 
+        // Cada espera vencida (1205) faz o listener rodar a transação de novo, até LinkClientToVerifiedUser::ATTEMPTS
+        // vezes: com a barbearia parada aqui, ele desiste com o mesmo erro.
         $this->assertTrue($this->waitsForALock('first', fn () => $this->confirm()), 'A confirmação devia esperar a trava da barbearia.');
 
         DB::connection('second')->commit();
@@ -155,6 +169,67 @@ class EmailVerificationConcurrencyTest extends TestCase
         $this->confirm();
 
         $this->assertAccountLinkedToTheOnlyClient(name: 'Cliente da barbearia');
+    }
+
+    /**
+     * Duas contas confirmam o e-mail no mesmo instante, com e-mails que caem no
+     * mesmo intervalo do índice unique: as duas leituras com trava travam o
+     * intervalo, os dois inserts esperam um pelo outro, e o MySQL desfaz uma
+     * das transações (deadlock, erro 1213). O deadlock de verdade precisa de
+     * dois processos (num processo só, o insert que espera para o teste até o
+     * innodb_lock_wait_timeout), então aqui o primeiro insert do cadastro
+     * recebe o erro que o MySQL manda. O listener roda a transação de novo, e a
+     * conta fica ligada ao cadastro que nasce na segunda vez.
+     */
+    public function test_the_confirmation_runs_again_after_a_deadlock(): void
+    {
+        $this->deadlockOnTheClientInsert(times: 1);
+
+        $this->confirm();
+
+        $this->assertSame(1, $this->deadlocks);
+        $this->assertAccountLinkedToTheOnlyClient(name: 'Conta Corrida');
+    }
+
+    /**
+     * Com o deadlock em todas as vezes, o listener desiste depois de
+     * LinkClientToVerifiedUser::ATTEMPTS transações, com o erro do MySQL (o
+     * pedido responde 500, como antes da repetição), e cada uma é desfeita.
+     */
+    public function test_the_confirmation_gives_up_after_the_attempts(): void
+    {
+        $this->deadlockOnTheClientInsert(times: PHP_INT_MAX);
+
+        try {
+            $this->confirm();
+            $this->fail('A confirmação devia desistir com o erro de deadlock.');
+        } catch (QueryException $e) {
+            $this->assertSame(self::DEADLOCK, $e->errorInfo[1] ?? null);
+        }
+
+        $this->assertSame(LinkClientToVerifiedUser::ATTEMPTS, $this->deadlocks);
+        $this->assertSame(0, DB::connection('first')->transactionLevel());
+    }
+
+    /**
+     * O insert do cadastro de cliente pela conexão da confirmação ("first")
+     * recebe o erro de deadlock do MySQL (1213) nas $times primeiras vezes,
+     * antes de chegar ao banco. $this->deadlocks conta quantas vezes ele saiu.
+     */
+    private function deadlockOnTheClientInsert(int $times): void
+    {
+        DB::connection('first')->beforeExecuting(function (string $sql, array $bindings) use ($times) {
+            if ($this->deadlocks >= $times || ! str_starts_with($sql, 'insert into `clients`')) {
+                return;
+            }
+
+            $this->deadlocks++;
+
+            $error = new PDOException('SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock; try restarting transaction');
+            $error->errorInfo = ['40001', self::DEADLOCK, 'Deadlock found when trying to get lock; try restarting transaction'];
+
+            throw new QueryException('first', $sql, $bindings, $error);
+        });
     }
 
     /**
