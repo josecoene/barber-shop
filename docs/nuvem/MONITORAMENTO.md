@@ -103,7 +103,9 @@ O tempo de resposta e os status saem do log de acesso do Nginx, que manteve o co
   | Respostas 5xx do Nginx | `{service="web"} \|~ "\" 5[0-9][0-9] "` |
   | Uma rota | `{service="web"} \|= "/api/services"` |
   | O agendador | `{service="scheduler"}` |
+  | Lembrete por e-mail que falhou (a rodada do agendador) | `{service="scheduler"} \|~ "Lembrete\|ERROR"` |
 
+- **A rodada do lembrete escreve no log do `scheduler`.** Desde a segunda rodada de acabamento (15/11/2026), ela roda dentro do processo do agendador, e não como um comando à parte com a saída no `/dev/null`: quando um lembrete falha, o `scheduler` escreve um aviso `Lembrete por e-mail não enviado.` só com o `appointment_id` e uma linha `ERROR` só com as contas da rodada, e o Alloy leva as duas ao Loki, como o resto da saída do container. Antes, essas linhas se perdiam. A linha da rodada (`Running [appointments:send-reminders] ... DONE`) sai `DONE` mesmo quando ela falha, por um detalhe do Laravel 13.33: procure o `ERROR`, e não o `FAIL`. Conferido em 15/11/2026 na saída do `scheduler` da homolog, sem o monitoramento (`load-tests/resiliencia/README.md`, "Com o limite de tempo do servidor de e-mail").
 - O log de acesso do Nginx grava o caminho sem a query string e esconde o token dos links de redefinição de senha e de confirmação de e-mail. Em 14/11/2026, uma busca com um e-mail na query string (`/api/services?search=...`) chegou ao Loki só como `/api/services`, e o e-mail não aparece em nenhuma linha.
 - O Grafana grava só avisos e erros (`GF_LOG_LEVEL=warn`). Sem isso, cada subida nova encheria o Loki com perto de 2 mil linhas da migração do banco interno dele.
 - Quando cria o banco da homolog, o MySQL escreve no log, uma vez, a senha aleatória do root (`GENERATED ROOT PASSWORD: ...`). O Alloy troca a senha por `[oculto]` antes de mandar a linha ao Loki (`loki.process` do `config.alloy`), porque o Grafana mostra os logs sem login. No `docker compose logs db` ela continua aparecendo.

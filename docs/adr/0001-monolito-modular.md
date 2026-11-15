@@ -35,7 +35,7 @@ O que pesa na escolha:
 | Agenda | `App\Services\AppointmentScheduler` e o enum `AppointmentStatus` |
 | Pagamentos | `App\Services\PaymentRecorder` e os enums `PaymentStatus` e `PaymentMethod` |
 | Fidelidade | `App\Services\LoyaltyService` |
-| Lembretes | `App\Services\ReminderSender`, o `App\Mail\AppointmentReminder` e o comando `appointments:send-reminders` |
+| Lembretes | `App\Services\ReminderSender`, o `App\Mail\AppointmentReminder`, a rodada do agendador em `routes/console.php` e o comando `appointments:send-reminders`, que faz a mesma rodada na mão |
 | Dashboard | `App\Services\DashboardMetrics` |
 
 As fronteiras são de código, não de rede. Os módulos dividem o banco e se chamam direto, dentro da mesma transação quando a regra pede (o pagamento lê e trava o agendamento; a exclusão do cliente apaga as observações dos agendamentos e dos pagamentos dele).
@@ -54,7 +54,7 @@ As fronteiras são de código, não de rede. Os módulos dividem o banco e se ch
 
 **O que ganha:**
 
-- Uma transação garante as regras que importam (sem sobreposição, um pagamento por atendimento, o prêmio usado uma vez só), provadas no SQLite (735 testes), no MySQL (742) e com pedidos simultâneos de verdade no k6.
+- Uma transação garante as regras que importam (sem sobreposição, um pagamento por atendimento, o prêmio usado uma vez só), provadas no SQLite (745 testes), no MySQL (754) e com pedidos simultâneos de verdade no k6.
 - Um deploy só: duas imagens (`app` e `web`), um pipeline (`.github/workflows/ci.yml` e `deploy.yml`), um banco com backup e restore documentados (`docs/nuvem/BACKUP.md`).
 - Os testes de feature rodam a aplicação inteira, de ponta a ponta, sem simular outros serviços.
 

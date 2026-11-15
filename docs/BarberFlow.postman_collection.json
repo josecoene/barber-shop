@@ -2157,7 +2157,7 @@
     },
     {
       "name": "Lembretes",
-      "description": "Rode depois das pastas Agendamentos e Pagamentos. O lembrete por e-mail sai sozinho pelo comando appointments:send-reminders, que o agendador roda a cada 15 minutos, para os agendamentos das próximas REMINDER_HOURS_BEFORE horas (padrão 24). Esta pasta usa o \"Enviar lembrete agora\", do admin e do barbeiro do agendamento: manda o lembrete do agendamento da pasta Agendamentos (appointmentId), mostra o 429 de um segundo envio antes de 10 minutos e o 422 de um atendimento concluído (o da pasta Pagamentos, paymentAppointmentId). No local, com MAIL_MAILER=log, o e-mail vai para o fim do storage/logs/laravel.log. Rodar a pasta de novo antes de 10 minutos dá 429 já no primeiro request; rode antes a pasta Agendamentos, que cria outro agendamento.",
+      "description": "Rode depois das pastas Agendamentos e Pagamentos. O lembrete por e-mail sai sozinho pela rodada do agendador (routes/console.php), a cada 15 minutos, para os agendamentos das próximas REMINDER_HOURS_BEFORE horas (padrão 24); o comando appointments:send-reminders faz a mesma rodada na mão. Esta pasta usa o \"Enviar lembrete agora\", do admin e do barbeiro do agendamento: manda o lembrete do agendamento da pasta Agendamentos (appointmentId), mostra o 429 de um segundo envio antes de 10 minutos e o 422 de um atendimento concluído (o da pasta Pagamentos, paymentAppointmentId). No local, com MAIL_MAILER=log, o e-mail vai para o fim do storage/logs/laravel.log. Rodar a pasta de novo antes de 10 minutos dá 429 já no primeiro request; rode antes a pasta Agendamentos, que cria outro agendamento.",
       "item": [
         {
           "name": "Enviar lembrete agora",
@@ -2201,7 +2201,7 @@
                 "reminder"
               ]
             },
-            "description": "Admin, ou o barbeiro do agendamento (o cliente recebe 403, mesmo no próprio horário). Sem corpo. Manda o lembrete por e-mail na hora, grava o reminder_sent_at e devolve o agendamento. Só agendado ou confirmado que ainda não começou, nunca para cliente excluído nem para e-mail do domínio barberflow.invalid (422 em reminder). Um envio a cada 10 minutos por agendamento, contando o do comando e mesmo depois de remarcar, e até 10 por minuto por usuário (429 com Retry-After). Se o e-mail não sair, 503, e o reminder_sent_at volta ao que era."
+            "description": "Admin, ou o barbeiro do agendamento (o cliente recebe 403, mesmo no próprio horário). Sem corpo. Manda o lembrete por e-mail na hora, grava o reminder_sent_at e devolve o agendamento. Só agendado ou confirmado que ainda não começou, nunca para cliente excluído nem para e-mail do domínio barberflow.invalid (422 em reminder). Um envio a cada 10 minutos por agendamento, contando o lembrete automático e mesmo depois de remarcar, e até 10 por minuto por usuário (429 com Retry-After). Se o e-mail não sair, 503, e o reminder_sent_at volta ao que era."
           }
         },
         {
@@ -2759,7 +2759,7 @@
                 }
               }
             },
-            "description": "Cria a conta com perfil client e manda o link de confirmação por e-mail (no local, ele aparece no storage/logs/laravel.log). Preencha clientPassword antes. O e-mail não pode ter conta (422, também quando outro cadastro com o mesmo e-mail chega no mesmo instante). Com o servidor de e-mail fora do ar, a conta é criada do mesmo jeito: 201 com o aviso de que o link não saiu, e o link se pede de novo pelo reenvio. Até confirmar o e-mail, a conta só usa as rotas da própria conta (usuário logado, troca de senha, reenvio do link e logout): services, clients e barbers respondem 403."
+            "description": "Cria a conta com perfil client e manda o link de confirmação por e-mail (no local, ele aparece no storage/logs/laravel.log). Preencha clientPassword antes. O e-mail não pode ter conta (422, também quando outro cadastro com o mesmo e-mail chega no mesmo instante) nem acento (422: só letras, números e símbolos simples, porque o MySQL compara sem diferenciar acento). Com o servidor de e-mail fora do ar, a conta é criada do mesmo jeito: 201 com o aviso de que o link não saiu, e o link se pede de novo pelo reenvio. Até confirmar o e-mail, a conta só usa as rotas da própria conta (usuário logado, troca de senha, reenvio do link e logout): services, clients e barbers respondem 403."
           }
         },
         {

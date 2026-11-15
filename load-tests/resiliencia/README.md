@@ -2,7 +2,7 @@
 
 O roteiro derruba, um de cada vez, o banco, o app e o cache da homolog, mostra o que a aplicação responde enquanto isso e mede quanto tempo ela leva para voltar. É o ensaio local do que acontece na AWS quando o RDS reinicia ou troca de zona, quando o PHP-FPM de uma instância cai e quando o ElastiCache fica fora do ar.
 
-**Situação:** medido no mesmo computador em 14 e 15/11/2026. Em 14/11/2026, na homolog da branch `feat/observabilidade`, que ainda não tinha o `/api/health`, pelo `/up`, pelas telas e pela API. Em 15/11/2026, na entrega final (`feat/entrega-final`), com o código inteiro: o `/api/health` em 503 e depois em 200 nos três casos, a API com token, o banco congelado e os timeouts curtos (seção "Medições"). Na revisão final do mesmo dia, o banco caiu de novo com o MySQL num volume de verdade, e o `start` bastou. Na rodada de acabamento, ainda em 15/11, com o limite de leitura do MySQL (`DB_READ_TIMEOUT`), o banco congelado passou de 504 em 60 s para 503 em 20 s, e o servidor de e-mail caiu e congelou. Falta só a AWS (seção "O que falta conferir").
+**Situação:** medido no mesmo computador em 14 e 15/11/2026. Em 14/11/2026, na homolog da branch `feat/observabilidade`, que ainda não tinha o `/api/health`, pelo `/up`, pelas telas e pela API. Em 15/11/2026, na entrega final (`feat/entrega-final`), com o código inteiro: o `/api/health` em 503 e depois em 200 nos três casos, a API com token, o banco congelado e os timeouts curtos (seção "Medições"). Na revisão final do mesmo dia, o banco caiu de novo com o MySQL num volume de verdade, e o `start` bastou. Na rodada de acabamento, ainda em 15/11, com o limite de leitura do MySQL (`DB_READ_TIMEOUT`), o banco congelado passou de 504 em 60 s para 503 em 20 s, e o servidor de e-mail caiu e congelou. Na segunda rodada de acabamento, com o limite de tempo do servidor de e-mail (`MAIL_TIMEOUT`), o servidor de e-mail congelado passou de 60 s para 10 s, e a falha do lembrete passou a aparecer no log do agendador. Falta só a AWS (seção "O que falta conferir").
 
 ## Antes de começar
 
@@ -172,7 +172,25 @@ Na homolog da `feat/entrega-final`, com as imagens refeitas com as correções d
 - Os 3 a 5 s são quase todos a procura do nome `mailpit`, que some do DNS do Docker com o `stop`, como no banco fora.
 - Com o Mailpit de volta (`start`), o reenvio deu 202 em 0,08 s, e o e-mail chegou. As duas contas ficaram sem confirmar e não viraram cliente: o cadastro de cliente só nasce na confirmação do e-mail.
 
-**Servidor de e-mail congelado** (`homolog pause mailpit`): o reenvio do link levou **60,03 s** até o 503. O SMTP do Laravel está sem limite de tempo (`config/mail.php`, `'timeout' => null`), então a leitura espera o `default_socket_timeout` do PHP, de 60 s, o mesmo número do `fastcgi_read_timeout` do Nginx, que pode responder 504 no lugar do 503. O processo do PHP-FPM fica preso esse tempo, e a rodada do lembrete do agendador que caiu no meio esperou 55 s. É um achado em aberto (`docs/ARQUITETURA.md`, "Limitações e riscos conhecidos").
+**Servidor de e-mail congelado** (`homolog pause mailpit`): o reenvio do link levou **60,03 s** até o 503. O SMTP do Laravel estava sem limite de tempo (`config/mail.php`, `'timeout' => null`), então a leitura esperava o `default_socket_timeout` do PHP, de 60 s, o mesmo número do `fastcgi_read_timeout` do Nginx, que podia responder 504 no lugar do 503. O processo do PHP-FPM ficava preso esse tempo, e a rodada do lembrete do agendador que caiu no meio esperou 55 s. Era um achado em aberto, corrigido na segunda rodada de acabamento (seção seguinte).
+
+### Com o limite de tempo do servidor de e-mail (15/11/2026, segunda rodada de acabamento)
+
+Na homolog da `feat/entrega-final`, com as imagens refeitas com as correções da segunda rodada de acabamento (entre elas, o limite de tempo do SMTP, `MAIL_TIMEOUT` de 10 s, e a rodada do lembrete dentro do processo do agendador), sem o monitoramento, com o MySQL no volume `barberflow-homolog_dbdata-r` e os mesmos dados. O Mailpit congelado com `homolog pause mailpit`: a conexão TCP abre, e a saudação do SMTP não chega. Os pedidos (pelo `Invoke-WebRequest` do PowerShell) esperaram até 75 segundos.
+
+| Pedido, com o Mailpit congelado | Antes do limite (rodada de acabamento) | Com o limite |
+|---|---|---|
+| `POST /api/email/verification-notification` (reenvio do link) | 503 em 60,03 s | **503 em 10,04 s e 10,03 s** |
+| `POST /api/register` | Não medido (o mesmo limite de 60 s) | **201 em 10,42 s**, com o aviso de que o link não saiu |
+| `POST /api/appointments/{id}/reminder` ("Enviar lembrete agora") | Não medido (o mesmo limite de 60 s) | **503 em 10,06 s**, com o `reminder_sent_at` de volta a nulo |
+| Rodada do lembrete do agendador | 55 s presa num lembrete só, até o `unpause` | **30 s para 3 lembretes**, 10 s cada |
+
+- O envio desiste nos 10 s do `MAIL_TIMEOUT` (a espera pela saudação do SMTP), um sexto dos 60 s do Nginx. O cadastro leva 0,4 s a mais que o reenvio: é a gravação da conta, com o hash da senha, antes do envio.
+- **Log do `app`:** 3 linhas `Falha no envio de e-mail.` (o cadastro e os dois reenvios), só com a classe, o código e o arquivo:linha, sem o endereço e sem o texto do erro do Symfony.
+- **Log do `scheduler`** (`homolog logs scheduler`), na rodada das 13h45, com o Mailpit congelado: 3 avisos `Lembrete por e-mail não enviado.`, cada um só com o `appointment_id`, e 1 linha `ERROR` só com as contas (`Lembretes por e-mail com falha nesta rodada: 3. Enviados: 0. Pulados: 0.`), sem nenhum nome, e-mail ou telefone. O `reminder_sent_at` dos 3 voltou a nulo. Antes, o comando agendado tinha a saída no `/dev/null`, e nada disso aparecia.
+- **A linha da rodada saiu `30s DONE`, e não `FAIL`,** com a rodada falhando: é do Laravel 13.33 (`docs/ARQUITETURA.md`, "Limitações e riscos conhecidos"). Quem acompanha o agendador procura a linha `ERROR`.
+- **Volta:** com o `unpause`, o reenvio deu 202 em 0,04 s, e o link chegou; a rodada das 14h00 mandou os 3 lembretes em 0,23 s.
+- **Não medido aqui:** o servidor que congela no meio da conversa (até 20 s, porque o comando sem resposta e o `QUIT` esperam o limite cada um). O `pause` do Docker congela o Mailpit antes da saudação, para toda conexão nova. Numa sonda no container local, esse caso levou 20,04 s.
 
 ### Na `feat/observabilidade` (14/11/2026)
 
@@ -193,5 +211,6 @@ Os 13 segundos do banco fora e os 4 do cache fora são o tempo de o PHP desistir
 ## O que falta conferir
 
 - Os três casos na AWS, depois do primeiro `apply`, com o RDS e o ElastiCache de verdade.
+- O servidor de e-mail que congela no meio da conversa, na homolog: até aqui, só a sonda local (20,04 s).
 
 O volume `barberflow-homolog_dbdata` deste computador, com a senha perdida, continua sem uso: as medições com volume (revisão final e rodada de acabamento) usaram um volume novo (`barberflow-homolog_dbdata-r`). Apagar ou trocar o antigo, e apagar o novo se ele não for mais usado, espera o OK do Leonam.

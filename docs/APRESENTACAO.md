@@ -235,11 +235,11 @@ Navegador ou Postman, depois o Nginx, o PHP-FPM, os middlewares (headers, limite
 
 | O quê | Resultado |
 |---|---|
-| Suíte no SQLite | 735 passaram (7 só no MySQL) |
-| Suíte no MySQL 8.4 | 742 passaram |
+| Suíte no SQLite | 745 passaram (9 só no MySQL) |
+| Suíte no MySQL 8.4 | 754 passaram |
 | k6, estresse com 200 VUs | p95 de 17,6 ms, 0% de erro |
 | Concorrência da agenda | 1 criado em 50 pedidos iguais |
-| Resiliência | Cache fora: 503 em 3 a 4 s e de volta em 200; app de volta em 1,7 s; banco num volume de volta em 1,9 s, sem perder nada; banco congelado: 503 em 20 s (antes, 504 em 60 s) |
+| Resiliência | Cache fora: 503 em 3 a 4 s e de volta em 200; app de volta em 1,7 s; banco num volume de volta em 1,9 s, sem perder nada; banco congelado: 503 em 20 s (antes, 504 em 60 s); servidor de e-mail congelado: 503 em 10 s (antes, 60 s) |
 | OWASP ZAP baseline | 0 FAIL, 4 avisos baixos ou informativos |
 | Terraform | 69 testes passaram; `trivy config` sem problema |
 
@@ -252,7 +252,7 @@ Os números do k6 valem para o computador da homolog, não para a AWS.
 - Aplicar na AWS e o go-live: precisa da conta do grupo e custa dinheiro
 - O CI verde no GitHub, os pull requests e a proteção da `main`: depois do push
 - Pendências: atualizar o `laravel/framework` (alerta de severidade baixa) e o volume do banco da homolog
-- Achados em aberto: o envio de e-mail sem limite de tempo e o pool do PHP-FPM cheio com o banco congelado (relatório, seção 8)
+- Achados em aberto: o pool do PHP-FPM cheio com o banco congelado e duas confirmações de e-mail no mesmo instante, que podem travar uma à outra no MySQL (relatório, seção 8)
 
 ---
 
