@@ -1,0 +1,78 @@
+# Valores da homologação. Copie para envs/homolog.tfvars (o Git ignora) e use no plan:
+#   terraform plan "-var-file=envs/homolog.tfvars"
+# Sem senha nem segredo aqui: o que for sensível vem do SSM ou de variável de ambiente.
+
+environment = "homolog"
+region      = "us-east-1"
+vpc_cidr    = "10.20.0.0/16"
+az_count    = 2
+
+# Banco (RDS): numa zona só e sem proteção contra exclusão, para economizar e para o
+# terraform destroy apagar o ambiente depois da apresentação (fica o snapshot final).
+db_deletion_protection = false
+db_multi_az            = false
+
+# Cache (ElastiCache Valkey): um nó só, sem réplica e sem failover.
+cache_node_type          = "cache.t4g.micro"
+cache_num_cache_clusters = 1
+cache_automatic_failover = false
+
+# Imagens com tag guardadas em cada repositório do ECR e dias de log no CloudWatch.
+ecr_keep_tagged_images = 10
+log_retention_days     = 30
+
+# Sem domínio: deixe os dois vazios, e o APP_URL fica com o DNS do ALB, em HTTP. Com domínio e
+# certificado do ACM (mesma região), os dois juntos, ex.:
+#   app_url         = "https://homolog.barberflow.com.br"
+#   certificate_arn = "arn:aws:acm:us-east-1:<conta>:certificate/<id>"
+app_url         = ""
+certificate_arn = ""
+
+# E-mail: smtp com o provedor do grupo. Preencha o servidor (mail_host) e a porta
+# (mail_port) do provedor; com mail_host vazio, o parâmetro MAIL_HOST não é criado e o
+# e-mail não sai. Usuário e senha (MAIL_USERNAME e MAIL_PASSWORD) entram à mão no SSM, veja
+# docs/nuvem/TERRAFORM.md. Troque o remetente por um endereço do domínio verificado no provedor.
+mail_mailer       = "smtp"
+mail_host         = ""
+mail_port         = 587
+mail_from_address = "nao-responda@example.com"
+
+# ALB sem proteção contra exclusão, para o terraform destroy apagar a homolog depois da apresentação.
+alb_deletion_protection = false
+
+# Instâncias do app (Auto Scaling): t3.micro com disco de 30 GB, de 1 a 2 instâncias, escalando
+# pela CPU média. No primeiro apply, antes de existir imagem no ECR, use mínimo e desejado 0
+# (docs/nuvem/TERRAFORM.md, "Primeiro deploy").
+instance_type        = "t3.micro"
+root_volume_size     = 30
+asg_min_size         = 1
+asg_desired_capacity = 1
+asg_max_size         = 2
+asg_cpu_target       = 60
+
+# Orçamento mensal da conta inteira, com aviso por e-mail. Vazio, não é criado. Com homolog e
+# prod na mesma conta, preencha o e-mail num ambiente só (o prod.tfvars), para não receber o
+# mesmo aviso duas vezes.
+budget_limit_usd   = 30
+budget_alert_email = ""
+
+# Deploy pelo GitHub Actions (cicd.tf e docs/nuvem/CI-CD.md). A homolog fica sem role de deploy
+# (false): o deploy.yml só publica na prod, e o environment homolog do GitHub não é configurado.
+# O GitHub cria sem nenhuma proteção o environment que um workflow cita e que não existe, então
+# uma role da homolog seria assumida por um workflow de qualquer branch. Sem a role, a homolog
+# também não lê o provedor OIDC, e a ordem dos apply de homolog e prod não importa. Para dar uma
+# role à homolog, crie antes o environment homolog no GitHub com revisores e branches, como o
+# production (CI-CD.md, "Configurar o GitHub"); aí, na mesma conta da prod, aplique a prod antes
+# (o provedor OIDC é um por conta e nasce lá). Os IDs seguem a regra do prod.tfvars.example.
+create_deploy_role          = false
+create_github_oidc_provider = false
+github_repository           = "josecoene/barber-shop"
+github_environment          = "homolog"
+github_repository_owner_id  = ""
+github_repository_id        = ""
+
+# Alarmes do CloudWatch (monitoring.tf): o tópico SNS e os alarmes existem sempre, e o e-mail
+# entra na assinatura do tópico. Vazio, ninguém é avisado. A AWS manda um e-mail de confirmação,
+# e o aviso só chega depois do clique no link. Os limites de cada alarme têm padrão no
+# variables.tf (docs/nuvem/TERRAFORM.md, "Observabilidade").
+alarm_email = ""

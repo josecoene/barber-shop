@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Barbearia Cloud Sprint 4</title>
+<style>
+  @page { size: A4; margin: 2cm 2.2cm; }
+  body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 1.45; color: #111; }
+  h1 { font-size: 19pt; color: #1f4e5f; margin: 0 0 10pt; line-height: 1.2; }
+  h2 { font-size: 14pt; color: #1f4e5f; margin: 18pt 0 6pt; }
+  p { margin: 0 0 8pt; text-align: justify; }
+  .meta p { margin: 0 0 3pt; text-align: left; }
+  ol, ul { margin: 0 0 8pt; padding-left: 22pt; }
+  li { margin-bottom: 5pt; text-align: left; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 10pt; }
+  table { border-collapse: collapse; width: 100%; margin: 4pt 0 8pt; font-size: 11pt; }
+  th, td { border: 1px solid #555; padding: 3pt 6pt; text-align: left; }
+  th { background: #e6e6e6; }
+  td.num { text-align: right; }
+  .nota { font-size: 10.5pt; }
+  figure { margin: 8pt 0 10pt; page-break-inside: avoid; break-inside: avoid; }
+  h2 { page-break-after: avoid; break-after: avoid; }
+  figure img { width: 100%; border: 1px solid #bbb; }
+  figcaption { font-size: 10pt; color: #333; margin-top: 3pt; }
+  .quebra { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>Relatório Técnico: Sprint 4 (Observabilidade, Testes de Carga e Go-Live)</h1>
+<div class="meta">
+  <p><b>Alunos:</b> Eduardo Romano, Jose Coene, Leonam e Manoel</p>
+  <p><b>Disciplina:</b> Computação em Nuvem</p>
+  <p><b>Data de Entrega:</b> 30/10/2026</p>
+</div>
+
+<h2>Resumo das Entregas da Sprint 4</h2>
+<ol>
+  <li><b>Monitoramento e logs centralizados:</b> Prometheus, Grafana, Loki e Grafana Alloy em containers. O painel "BarberFlow - Visão geral" mostra requisições por segundo, tempo de resposta, respostas por status HTTP, CPU e memória de cada container, conexões e consultas do MySQL e os logs de todos os serviços num só lugar.</li>
+  <li><b>Monitoramento na AWS como código:</b> <code>terraform/monitoring.tf</code> define 5 alarmes do CloudWatch (CPU e verificação de saúde da EC2; CPU, espaço livre e conexões do RDS), grupos de logs com retenção de 14 dias, um painel e alerta por e-mail via SNS. O código foi validado com <code>terraform validate</code> e não foi aplicado (nenhum recurso foi criado na AWS).</li>
+  <li><b>Testes de carga e estresse com k6:</b> 5 execuções em duas configurações, 54.163 requisições, 0% de erro.</li>
+  <li><b>Homologação:</b> checklist de go-live com 12 itens executados no ambiente local.</li>
+  <li><b>Ambiente reproduzível:</b> <code>docker compose up -d</code> sobe a API e todo o monitoramento com um comando. Para isso foram corrigidos a versão do PHP (8.2 para 8.4, exigida pelas dependências da API), o caminho da API no compose, a conexão com o MySQL e as migrations de <code>barbers</code> e <code>clients</code>, que não criavam as colunas <code>name</code>, <code>email</code> e <code>phone</code>.</li>
+</ol>
+
+<h2>Resultados do teste de carga</h2>
+<table>
+  <tr><th>Configuração</th><th>Cenário</th><th>Req/s</th><th>p95</th><th>Erros</th><th>Meta</th></tr>
+  <tr><td>Original</td><td>Carga (50 usuários)</td><td class="num">27,9</td><td class="num">852 ms</td><td class="num">0%</td><td>não atingiu</td></tr>
+  <tr><td>Original</td><td>Estresse (até 200 usuários)</td><td class="num">34,3</td><td class="num">3,96 s</td><td class="num">0%</td><td>não atingiu</td></tr>
+  <tr><td>Otimizada</td><td>Carga (50 usuários)</td><td class="num">40,0</td><td class="num">95 ms</td><td class="num">0%</td><td>atingiu</td></tr>
+  <tr><td>Otimizada</td><td>Estresse (até 200 usuários)</td><td class="num">97,9</td><td class="num">24 ms</td><td class="num">0%</td><td>atingiu</td></tr>
+</table>
+<p class="nota">Meta: 95% das respostas (p95) em menos de 500 ms e menos de 1% de erros. A configuração otimizada liga o modo de produção do Laravel e ajusta o cache do PHP, sem mudar código. Os números completos estão em <code>load-tests/RESULTADOS.md</code>.</p>
+
+<h2>Principais achados</h2>
+<ul>
+  <li>Na configuração original, a vazão travou em cerca de 39 req/s e o tempo de resposta (p95) passou de 2 s quando os usuários simultâneos chegaram à faixa de 101 a 125. A máquina não era o limite: a API usou menos de 1 núcleo de CPU de 16. O limite era o tempo de cada requisição PHP com apenas 5 processos de atendimento.</li>
+  <li>Com a configuração otimizada, o p95 caiu de 852 ms para 95 ms com 50 usuários, e o sistema aguentou 200 usuários sem formar fila.</li>
+  <li>A rota <code>GET /api/barbers</code> devolve todos os barbeiros de uma vez. No teste, a resposta chegou a 123 KB e ficou mais lenta conforme a tabela cresceu. Recomendação: paginação.</li>
+</ul>
+
+<h2>Painéis de monitoramento</h2>
+<figure>
+  <img src="../prints/baseline-estresse-dashboard.png" alt="Painel durante o estresse na configuração original">
+  <figcaption>Figura 1. Estresse na configuração original: a vazão para em cerca de 40 req/s enquanto o tempo de resposta cresce com o número de usuários.</figcaption>
+</figure>
+<figure>
+  <img src="../prints/otimizado-estresse-dashboard.png" alt="Painel durante o estresse na configuração otimizada">
+  <figcaption>Figura 2. Estresse na configuração otimizada: a vazão acompanha os usuários até 200 e o tempo de resposta fica perto de 25 ms.</figcaption>
+</figure>
+
+<figure>
+  <img src="../prints/logs-centralizados.png" alt="Logs centralizados no Grafana">
+  <figcaption>Figura 3. Logs centralizados: nginx e aplicação no mesmo painel, com o tempo de resposta de cada requisição.</figcaption>
+</figure>
+
+<h2>Homologação (go-live local)</h2>
+<p>Dos 12 itens do checklist, 10 passaram sem ressalva. As duas ressalvas: as metas de desempenho só são atingidas com a configuração otimizada, e existe uma senha real em <code>terraform/main.tf:23</code>. Como o Terraform nunca foi aplicado, o go-live foi homologado no ambiente local, com os mesmos containers que iriam para a EC2. O checklist completo está em <code>docs/go-live-checklist.md</code>.</p>
+
+<h2>Recomendações antes de colocar na AWS</h2>
+<ol>
+  <li>Tirar a senha do RDS do código (<code>terraform/main.tf:23</code>) e usar <code>manage_master_user_password = true</code>.</li>
+  <li>Criar security groups e o script de inicialização da EC2. Hoje ela sobe vazia e sem portas liberadas.</li>
+  <li>Ligar criptografia e retenção de backup no RDS, e atualizar o MySQL 8.0 (fim de suporte em 2026) para 8.4.</li>
+  <li>Usar a configuração otimizada em produção e paginar <code>GET /api/barbers</code>.</li>
+</ol>
+
+</body>
+</html>

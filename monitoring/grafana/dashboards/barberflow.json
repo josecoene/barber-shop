@@ -1,0 +1,195 @@
+{
+  "uid": "barberflow",
+  "title": "BarberFlow: visão geral",
+  "description": "Painel da Sprint 4 (13 painéis) com os nomes de serviço da homolog: tráfego do Nginx (serviço web), recursos dos containers, MySQL e os logs de todos os serviços. Guia em docs/nuvem/MONITORAMENTO.md.",
+  "tags": ["barberflow", "sprint4", "homolog"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-15m", "to": "now" },
+  "schemaVersion": 41,
+  "editable": true,
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Serviço (logs)",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": { "label": "service", "type": 1, "stream": "", "refId": "LokiVariableQueryEditor-VariableQuery" },
+        "definition": "label_values(service)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "allValue": ".+"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Tráfego (Nginx, serviço web)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Requisições por segundo",
+      "description": "Taxa de requisições atendidas pelo Nginx do serviço web (nginx-prometheus-exporter).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(nginx_http_requests_total[30s])", "legendFormat": "req/s" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Tempo de resposta no servidor (p50 / p95)",
+      "description": "Calculado a partir do $request_time do log de acesso do Nginx (serviço web) no Loki. A meta dos testes de carga é p95 abaixo de 500 ms.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "quantile_over_time(0.95, {service=\"web\"} |= \"HTTP/\" | pattern `<_> - <_> [<_>] \"<_> <_> <_>\" <status> <_> <request_time> <_>` | unwrap request_time [30s]) by ()",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "B",
+          "expr": "quantile_over_time(0.50, {service=\"web\"} |= \"HTTP/\" | pattern `<_> - <_> [<_>] \"<_> <_> <_>\" <status> <_> <request_time> <_>` | unwrap request_time [30s]) by ()",
+          "legendFormat": "p50"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Respostas por status HTTP",
+      "description": "Contagem de respostas por código HTTP, a partir do log de acesso do Nginx (serviço web). O 502 aparece quando o PHP-FPM do app está fora do ar.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (count_over_time({service=\"web\"} |= \"HTTP/\" | pattern `<_> - <_> [<_>] \"<_> <_> <_>\" <status> <_>` [30s]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Conexões no Nginx",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "nginx_connections_active", "legendFormat": "ativas" },
+        { "refId": "B", "expr": "nginx_connections_waiting", "legendFormat": "aguardando" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Erros da aplicação (logs do Laravel)",
+      "description": "Linhas com ERROR nos logs do container app.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"app\"} |= \"ERROR\" [30s])) or vector(0)",
+          "legendFormat": "erros"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Alvos de métricas ativos",
+      "description": "Quantos coletores o Prometheus está conseguindo ler. O esperado são 4: prometheus, cadvisor, nginx e mysql.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(up)", "legendFormat": "alvos up" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Recursos dos containers e banco",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "CPU por serviço",
+      "description": "Uso de CPU (1 = um núcleo inteiro), via cAdvisor.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service!=\"\"}[30s]))",
+          "legendFormat": "{{container_label_com_docker_compose_service}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Memória por serviço",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service!=\"\"})",
+          "legendFormat": "{{container_label_com_docker_compose_service}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "MySQL: conexões e consultas por segundo",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "mysql_global_status_threads_connected", "legendFormat": "conexões" },
+        { "refId": "B", "expr": "rate(mysql_global_status_queries[30s])", "legendFormat": "consultas/s" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Logs centralizados",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }
+    },
+    {
+      "id": 13,
+      "type": "logs",
+      "title": "Logs de todos os serviços",
+      "description": "Filtre pelo seletor 'Serviço (logs)' no topo.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 27 },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
+      "targets": [
+        { "refId": "A", "expr": "{service=~\"$service\"}" }
+      ]
+    }
+  ]
+}

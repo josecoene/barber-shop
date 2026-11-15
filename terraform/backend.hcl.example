@@ -1,0 +1,15 @@
+# Configuração do state remoto. Copie para backend.hcl (o Git ignora) e use no init:
+#   terraform init "-backend-config=backend.hcl" "-backend-config=key=homolog/terraform.tfstate"
+# (com aspas: no PowerShell, sem elas o argumento quebra no ponto)
+# Passo a passo em docs/nuvem/TERRAFORM.md.
+# A trava (use_lockfile) e a criptografia (encrypt) ficam no backend.tf, que vai para o Git.
+# Não repita as duas aqui: o que vem do init vale mais que o backend.tf.
+
+# Nome que o terraform/bootstrap mostra no output state_bucket_name.
+bucket = "barberflow-tfstate-123456789012"
+
+# Um state por ambiente: homolog/terraform.tfstate ou prod/terraform.tfstate.
+# No init, o "-backend-config=key=..." escrito depois do arquivo vale mais que esta linha.
+key = "homolog/terraform.tfstate"
+
+region = "us-east-1"

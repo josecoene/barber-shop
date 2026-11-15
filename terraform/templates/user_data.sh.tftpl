@@ -1,0 +1,223 @@
+#!/bin/bash
+# Primeira subida das instâncias do app do BarberFlow: user_data do launch template (compute.tf).
+# O Terraform preenche os valores do bloco abaixo com o templatefile. Roda uma vez, como root,
+# quando a instância nasce; num reboot, o Docker religa os containers (restart: unless-stopped).
+#
+#   1. instala o Docker, o jq e o gzip pelo dnf e liga o Docker;
+#   2. instala o plugin Docker Compose numa versão fixa, conferida pelo SHA-256;
+#   3. manda os logs dos containers para o CloudWatch (driver awslogs no daemon.json);
+#   4. monta o /opt/barberflow/.env com os parâmetros do SSM do ambiente;
+#   5. entra no ECR, grava o docker-compose.prod.yml e sobe app, web e scheduler.
+#
+# Nenhum segredo passa por este arquivo nem pelo launch template: a senha do banco, a chave do
+# Laravel e o resto vêm do SSM na subida, com a permissão da role da instância (iam.tf).
+# Log da subida: /var/log/barberflow-bootstrap.log (e /var/log/cloud-init-output.log).
+set -euo pipefail
+
+# A AWS CLI nunca abre paginador (less) para a saída.
+export AWS_PAGER=""
+
+# Valores do Terraform (compute.tf).
+readonly AWS_REGION_NAME='${region}'
+readonly SSM_PATH='${ssm_path}'
+readonly REGISTRY='${registry}'
+readonly APP_REPOSITORY='${app_repository_url}'
+readonly WEB_REPOSITORY='${web_repository_url}'
+readonly LOG_GROUP_APP='${log_group_app}'
+readonly LOG_GROUP_WEB='${log_group_web}'
+readonly IMAGE_TAG_PLACEHOLDER='${image_tag_placeholder}'
+readonly COMPOSE_VERSION='${compose_version}'
+readonly COMPOSE_SHA256='${compose_sha256}'
+# O docker-compose.prod.yml do repositório, compactado com gzip e em base64.
+readonly COMPOSE_FILE_GZIP_BASE64='${compose_file_gzip_base64}'
+
+readonly APP_DIR=/opt/barberflow
+readonly LOG_FILE=/var/log/barberflow-bootstrap.log
+readonly COMPOSE_PROJECT=barberflow
+
+# Chaves que este script escreve no .env. Um parâmetro do SSM com um destes nomes repetiria a
+# linha, então a subida para.
+readonly RESERVED_KEYS='["APP_IMAGE","WEB_IMAGE","AWSLOGS_REGION","AWSLOGS_WEB_GROUP","INSTANCE_ID"]'
+
+log() {
+  printf '%s [barberflow] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
+}
+
+fail() {
+  log "ERRO: $*"
+  exit 1
+}
+
+# Repete um comando de rede até 5 vezes, esperando 5, 10, 15 e 20 segundos entre as tentativas:
+# um espelho do dnf ou o GitHub fora do ar por um instante não derruba a subida. O log cita só o
+# nome do comando, nunca os argumentos.
+retry() {
+  local attempt=1
+  until "$@"; do
+    if (( attempt >= 5 )); then
+      log "desisti depois de 5 tentativas: $1"
+      return 1
+    fi
+    log "falhou ($1); nova tentativa em $(( attempt * 5 )) s"
+    sleep $(( attempt * 5 ))
+    attempt=$(( attempt + 1 ))
+  done
+}
+
+install_packages() {
+  log "1/5 instalando Docker, jq e gzip (dnf)"
+  retry dnf install -y docker jq gzip
+  systemctl enable --now docker
+}
+
+# O Amazon Linux 2023 não traz o plugin compose no dnf. O binário vem da release do GitHub e só
+# é instalado se o SHA-256 bater com o do checksums.txt da release, gravado no compute.tf.
+install_compose_plugin() {
+  local url="https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64"
+  local download
+  log "2/5 instalando o Docker Compose $COMPOSE_VERSION"
+  download=$(mktemp)
+  retry curl -fsSL --proto '=https' --tlsv1.2 -o "$download" "$url"
+  if ! printf '%s  %s\n' "$COMPOSE_SHA256" "$download" | sha256sum --check --status; then
+    rm -f "$download"
+    fail "o SHA-256 do Docker Compose baixado não é o esperado ($COMPOSE_SHA256); nada foi instalado"
+  fi
+  install -D -m 0755 "$download" /usr/local/lib/docker/cli-plugins/docker-compose
+  rm -f "$download"
+  docker compose version
+}
+
+# ID da instância pelo IMDSv2 (com token, o único que o launch template aceita). Entra no nome
+# dos streams de log, para separar as instâncias dentro de cada log group.
+get_instance_id() {
+  local token
+  token=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
+  curl -fsS -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/instance-id
+}
+
+# Driver awslogs como padrão de todos os containers, no log group app (app e scheduler). O web
+# troca pelo grupo dele no docker-compose.prod.yml. O grupo nasce no Terraform (logs.tf), com
+# retenção, e a role da instância não pode criar grupo (awslogs-create-group false). O stream se
+# chama <ID da instância>/<nome do container>. Com o modo non-blocking, se o CloudWatch demorar,
+# o log espera num buffer de 4 MB em vez de travar a aplicação; o que passar disso se perde.
+configure_docker_logs() {
+  local instance_id=$1
+  log "3/5 mandando os logs dos containers para o CloudWatch ($LOG_GROUP_APP)"
+  install -d -m 0755 /etc/docker
+  cat > /etc/docker/daemon.json <<EOF
+{
+  "log-driver": "awslogs",
+  "log-opts": {
+    "awslogs-region": "$AWS_REGION_NAME",
+    "awslogs-group": "$LOG_GROUP_APP",
+    "awslogs-create-group": "false",
+    "tag": "$instance_id/{{.Name}}",
+    "mode": "non-blocking",
+    "max-buffer-size": "4m"
+  }
+}
+EOF
+  systemctl restart docker
+}
+
+# Linhas CHAVE='valor' do .env, uma por parâmetro de SSM_PATH (entrada: a resposta JSON do
+# get-parameters-by-path). O valor vai entre aspas simples, com \' no lugar de cada aspa simples:
+# dentro delas o compose não interpreta $ nem nada, e =, #, aspas duplas e espaços ficam como
+# estão. A image_tag não vira chave (vira APP_IMAGE e WEB_IMAGE). Para com erro, citando só o
+# nome do parâmetro, se o nome não servir de variável, se for uma chave que este script escreve
+# ou se o valor tiver o que o formato não representa: barra invertida antes de aspas simples ou
+# no fim do valor.
+env_lines_from_ssm() {
+  local filter
+  filter=$(cat <<'JQ'
+.Parameters
+| sort_by(.Name)
+| .[]
+| (.Name | ltrimstr($prefix)) as $key
+| if $key == "image_tag" then empty
+  elif ($key | test("^[A-Za-z_][A-Za-z0-9_]*$") | not) then error("parâmetro com nome que não serve de variável de ambiente: \(.Name)")
+  elif ($reserved | any(.[]; . == $key)) then error("parâmetro com nome reservado ao user_data: \(.Name)")
+  elif (.Value | test("\\\\('|\\z)")) then error("valor que o .env não representa (barra invertida antes de aspas simples ou no fim): \(.Name)")
+  else "\($key)='\(.Value | gsub("'"; "\\'"))'"
+  end
+JQ
+)
+  jq -r --arg prefix "$SSM_PATH/" --argjson reserved "$RESERVED_KEYS" "$filter"
+}
+
+# Monta o APP_DIR/.env (modo 600, só o root lê) com os parâmetros do SSM, mais as imagens da
+# image_tag, a região e o grupo de log do web e o ID da instância, que o docker-compose.prod.yml
+# usa. Para enquanto a image_tag tiver o valor provisório: nenhum deploy publicou imagem ainda.
+write_env_file() {
+  local instance_id=$1
+  local params_json image_tag env_lines env_tmp
+  log "4/5 montando $APP_DIR/.env com os parâmetros de $SSM_PATH/ (SSM)"
+  params_json=$(retry aws ssm get-parameters-by-path --region "$AWS_REGION_NAME" --path "$SSM_PATH" --recursive --with-decryption --output json)
+  image_tag=$(printf '%s' "$params_json" | jq -r --arg name "$SSM_PATH/image_tag" 'first(.Parameters[] | select(.Name == $name) | .Value) // ""')
+  if [[ -z "$image_tag" || "$image_tag" == "$IMAGE_TAG_PLACEHOLDER" ]]; then
+    fail "nenhum deploy feito ainda: $SSM_PATH/image_tag está vazio ou com o valor provisório ($IMAGE_TAG_PLACEHOLDER). Publique as imagens pelo deploy e troque as instâncias (docs/nuvem/TERRAFORM.md, \"Primeiro deploy\")."
+  fi
+  if [[ ! "$image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+    fail "$SSM_PATH/image_tag não é uma tag de imagem válida"
+  fi
+  # As linhas saem antes do arquivo: um parâmetro recusado para a subida sem deixar .env pela metade.
+  env_lines=$(printf '%s' "$params_json" | env_lines_from_ssm)
+  env_tmp=$(mktemp "$APP_DIR/.env.XXXXXX")
+  {
+    printf '%s\n' "# Gerado pelo user_data com os parâmetros de $SSM_PATH/ do SSM. Não edite: cada instância nova monta de novo."
+    printf '%s\n' "$env_lines"
+    printf "APP_IMAGE='%s'\n" "$APP_REPOSITORY:$image_tag"
+    printf "WEB_IMAGE='%s'\n" "$WEB_REPOSITORY:$image_tag"
+    printf "AWSLOGS_REGION='%s'\n" "$AWS_REGION_NAME"
+    printf "AWSLOGS_WEB_GROUP='%s'\n" "$LOG_GROUP_WEB"
+    printf "INSTANCE_ID='%s'\n" "$instance_id"
+  } > "$env_tmp"
+  chmod 600 "$env_tmp"
+  mv -f "$env_tmp" "$APP_DIR/.env"
+  log "$APP_DIR/.env pronto, com as imagens da tag $image_tag"
+}
+
+write_compose_file() {
+  printf '%s' "$COMPOSE_FILE_GZIP_BASE64" | base64 --decode | gunzip > "$APP_DIR/docker-compose.prod.yml"
+}
+
+ecr_login() {
+  aws ecr get-login-password --region "$AWS_REGION_NAME" | docker login --username AWS --password-stdin "$REGISTRY"
+}
+
+compose_prod() {
+  docker compose --project-name "$COMPOSE_PROJECT" --project-directory "$APP_DIR" --file "$APP_DIR/docker-compose.prod.yml" "$@"
+}
+
+start_containers() {
+  log "5/5 baixando as imagens do ECR e subindo app, web e scheduler"
+  write_compose_file
+  retry ecr_login
+  retry compose_prod pull --quiet
+  # O token do ECR vale 12 horas e fica em /root/.docker/config.json. Com as imagens baixadas,
+  # ele sai do disco: num reboot, os containers voltam com as imagens que já estão na instância.
+  docker logout "$REGISTRY"
+  compose_prod up --detach --wait --wait-timeout 300
+}
+
+main() {
+  touch "$LOG_FILE"
+  chmod 600 "$LOG_FILE"
+  exec > >(tee -a "$LOG_FILE") 2>&1
+  log "subida da instância: parâmetros de $SSM_PATH/, região $AWS_REGION_NAME"
+  install_packages
+  install_compose_plugin
+  local instance_id
+  instance_id=$(get_instance_id)
+  configure_docker_logs "$instance_id"
+  install -d -m 0700 "$APP_DIR"
+  write_env_file "$instance_id"
+  start_containers
+  log "pronto: app, web e scheduler no ar"
+}
+
+# Executado (cloud-init), roda tudo. Com "source", só define as funções: é assim que o teste da
+# montagem do .env usa o script (docs/nuvem/TERRAFORM.md, "Como o user_data foi testado").
+if [[ "$${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

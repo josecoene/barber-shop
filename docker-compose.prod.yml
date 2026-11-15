@@ -1,0 +1,136 @@
+# Produção (EC2 da AWS): app, web e scheduler, com as imagens do ECR.
+# O banco (RDS) e o cache (ElastiCache) são serviços gerenciados e não estão aqui.
+#
+# Na EC2, o user_data (terraform/templates/user_data.sh.tftpl) grava este arquivo e o .env ao
+# lado dele, com os parâmetros do SSM, e roda:
+#   docker compose -f docker-compose.prod.yml up -d
+# Os logs vão para o CloudWatch pelo driver awslogs. O padrão fica no daemon do Docker da EC2
+# (log group app, que atende o app e o scheduler); só o web tem "logging:" aqui, para escrever no
+# log group web. A homolog troca esse bloco pelo driver padrão do Docker e sobe no Docker Desktop
+# sem credencial da AWS.
+#
+# Homologação local com estas mesmas imagens: docker-compose.homolog.yml (veja docs/nuvem/DOCKER.md).
+
+# APP_IMAGE e WEB_IMAGE (repositório:tag do ECR) são obrigatórias na EC2 e vêm do .env ou do
+# ambiente. Sem elas o compose para com "service ... has neither an image nor a build context".
+# Elas não usam ${VAR:?}, porque o compose avalia este arquivo inteiro antes de juntar com o
+# docker-compose.homolog.yml, que troca as duas pelas imagens construídas localmente.
+
+# Configuração comum do app (PHP-FPM) e do scheduler: mesma imagem, mesmo ambiente.
+x-app: &app
+  image: ${APP_IMAGE:-}
+  env_file: .env
+  environment: &app-environment
+    # Bloco de produção: vale mais que o .env
+    APP_ENV: production
+    APP_DEBUG: "false"
+    LOG_CHANNEL: stderr
+    LOG_LEVEL: info
+    # Cache e sessão no Redis: as travas do migrate --isolated e do onOneServer()
+    # precisam de um cache que todas as instâncias enxerguem.
+    CACHE_STORE: redis
+    SESSION_DRIVER: redis
+    # Cookie de sessão só por HTTPS. Sem certificado no ALB, defina SESSION_SECURE_COOKIE=false.
+    SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-true}
+  restart: unless-stopped
+  # Disco do container só de leitura; o Laravel escreve só nas pastas em memória abaixo.
+  # uid/gid 33 é o www-data, usuário da imagem: sem isso a pasta em memória nasce do root
+  # e o Laravel não grava o cache de config, rotas e views.
+  # O storage/framework inteiro fica em memória (o entrypoint recria as subpastas cache,
+  # sessions e views) porque o "php artisan down" grava ali o maintenance.php, com qualquer
+  # driver de manutenção. Manutenção com várias instâncias: veja docs/nuvem/DOCKER.md.
+  read_only: true
+  tmpfs:
+    - /tmp
+    - /var/www/html/bootstrap/cache:uid=33,gid=33,mode=0755
+    - /var/www/html/storage/framework:uid=33,gid=33,mode=0755
+    - /var/www/html/storage/logs:uid=33,gid=33,mode=0755
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  app:
+    <<: *app
+    healthcheck:
+      test: ["CMD", "php-fpm-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    networks:
+      - frontend
+      - backend
+
+  # Agendador do Laravel. Com várias instâncias no Auto Scaling, cada uma tem o seu,
+  # e o onOneServer() garante que cada tarefa rode uma vez só.
+  scheduler:
+    <<: *app
+    command: ["php", "artisan", "schedule:work"]
+    environment:
+      <<: *app-environment
+      # Quem roda as migrations é o app
+      RUN_MIGRATIONS: "false"
+    # init repassa o sinal de parada ao PHP, que sozinho como processo 1 ignoraria o SIGTERM
+    init: true
+    stop_signal: SIGTERM
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "artisan", "schedule:list"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+      start_interval: 5s
+    networks:
+      - backend
+
+  web:
+    image: ${WEB_IMAGE:-}
+    ports:
+      # O ALB chega na porta 80 da instância
+      - "80:80"
+    restart: unless-stopped
+    # O Nginx só escreve em cache temporário, PID e /tmp, todos em memória
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /run
+      - /tmp
+    depends_on:
+      app:
+        condition: service_healthy
+        # Se o app for recriado, o Nginx reinicia junto e pega o endereço novo
+        restart: true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/nginx_status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - frontend
+    # Logs do Nginx no log group web do CloudWatch. Região, grupo e ID da instância vêm do .env
+    # que o user_data monta (AWSLOGS_REGION, AWSLOGS_WEB_GROUP e INSTANCE_ID). As opções repetem
+    # as do daemon.json da EC2, só com outro grupo. Sem ${VAR:?} pelo mesmo motivo das imagens:
+    # o docker-compose.homolog.yml troca este bloco inteiro pelo driver padrão do Docker.
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWSLOGS_REGION:-}
+        awslogs-group: ${AWSLOGS_WEB_GROUP:-}
+        awslogs-create-group: "false"
+        tag: "${INSTANCE_ID:-}/{{.Name}}"
+        mode: non-blocking
+        max-buffer-size: 4m
+
+networks:
+  # web e app
+  frontend:
+  # app e scheduler (na homolog, também db, redis e mailpit)
+  backend:

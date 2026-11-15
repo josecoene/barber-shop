@@ -1,0 +1,34 @@
+# Pasta de trabalho do Terraform (providers baixados pelo init), aqui e no bootstrap/.
+.terraform/
+
+# State e cópias dele. O state pode ter senhas em texto puro: nunca vai para o Git.
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+
+# Planos salvos com -out também guardam valores sensíveis.
+*.tfplan
+
+# Valores de cada ambiente: só os exemplos entram no Git.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Cópia local do backend.hcl.example, com o bucket da conta.
+backend.hcl
+
+# Arquivos de override, para ajustes que valem só no computador de quem criou.
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Configuração da CLI do Terraform, que pode ter token.
+.terraformrc
+terraform.rc
+
+# Log de erro do Terraform.
+crash.log
+crash.*.log
+
+# O .terraform.lock.hcl entra no Git: ele fixa a versão e os hashes do provider.

@@ -1,0 +1,55 @@
+// Alloy do monitoramento local da homolog (docker-compose.monitoring.yml): lê os logs (stdout e
+// stderr) dos containers deste projeto compose pelo socket do Docker e manda ao Loki.
+// Cada linha chega ao Loki com dois rótulos: service (o nome do serviço no compose, como app, web
+// ou db) e container. O painel do Grafana filtra por service.
+
+// Só os containers do projeto (barberflow-homolog), pelo rótulo que o compose põe em cada um.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + sys.env("COMPOSE_PROJECT")]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.secrets.receiver]
+}
+
+// Esconde a senha do root que o MySQL gera quando cria o banco da homolog
+// (MYSQL_RANDOM_ROOT_PASSWORD) e escreve uma vez no log, na linha "GENERATED ROOT PASSWORD: ...".
+// Sem isso, ela ficaria 7 dias no Loki, à vista no Grafana sem login. O resto da linha fica, para
+// mostrar que o banco foi criado.
+loki.process "secrets" {
+  stage.replace {
+    expression = "GENERATED ROOT PASSWORD: (\\S+)"
+    replace    = "[oculto]"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

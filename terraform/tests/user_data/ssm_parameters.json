@@ -1,0 +1,27 @@
+{
+  "Parameters": [
+    { "Name": "/barberflow/homolog/APP_NAME", "Type": "String", "Value": "BarberFlow" },
+    { "Name": "/barberflow/homolog/APP_URL", "Type": "String", "Value": "http://barberflow-homolog-alb-123456789.us-east-1.elb.amazonaws.com" },
+    { "Name": "/barberflow/homolog/REDIS_HOST", "Type": "String", "Value": "tls://master.barberflow-homolog-cache.abc123.use1.cache.amazonaws.com" },
+    { "Name": "/barberflow/homolog/SESSION_SECURE_COOKIE", "Type": "String", "Value": "false" },
+    { "Name": "/barberflow/homolog/MAIL_PASSWORD", "Type": "SecureString", "Value": "senha-falsa'de\"teste$x#1" },
+    { "Name": "/barberflow/homolog/TESTE_ASPA_COMECO", "Type": "String", "Value": "'começo" },
+    { "Name": "/barberflow/homolog/TESTE_ASPA_FIM", "Type": "String", "Value": "fim'" },
+    { "Name": "/barberflow/homolog/TESTE_ASPA_SOZINHA", "Type": "String", "Value": "'" },
+    { "Name": "/barberflow/homolog/TESTE_DUAS_ASPAS_SIMPLES", "Type": "String", "Value": "''" },
+    { "Name": "/barberflow/homolog/TESTE_ASPAS_DUPLAS", "Type": "String", "Value": "\"entre aspas duplas\"" },
+    { "Name": "/barberflow/homolog/TESTE_DOLAR", "Type": "String", "Value": "$HOME e $$ e $1" },
+    { "Name": "/barberflow/homolog/TESTE_DOLAR_CHAVES", "Type": "String", "Value": "${APP_KEY} e ${HOME:-padrao}" },
+    { "Name": "/barberflow/homolog/TESTE_CERQUILHA", "Type": "String", "Value": "#nao-e-comentario # nem isto" },
+    { "Name": "/barberflow/homolog/TESTE_CRASE", "Type": "String", "Value": "`whoami` e $(id)" },
+    { "Name": "/barberflow/homolog/TESTE_IGUAL", "Type": "String", "Value": "a=b=c" },
+    { "Name": "/barberflow/homolog/TESTE_BARRA_N_LITERAL", "Type": "String", "Value": "linha\\nliteral" },
+    { "Name": "/barberflow/homolog/TESTE_BARRA_NO_MEIO", "Type": "String", "Value": "C:\\pasta\\arquivo" },
+    { "Name": "/barberflow/homolog/TESTE_QUEBRA_DE_LINHA", "Type": "String", "Value": "linha 1\nlinha 2" },
+    { "Name": "/barberflow/homolog/TESTE_TAB", "Type": "String", "Value": "antes\tdepois" },
+    { "Name": "/barberflow/homolog/TESTE_ESPACOS_NAS_PONTAS", "Type": "String", "Value": "  espaços nas pontas  " },
+    { "Name": "/barberflow/homolog/TESTE_ACENTOS", "Type": "String", "Value": "Barbearia São João ✂" },
+    { "Name": "/barberflow/homolog/TESTE_SIMBOLOS", "Type": "String", "Value": "&|;<>()*?[]!%^~{}" },
+    { "Name": "/barberflow/homolog/image_tag", "Type": "String", "Value": "3f2a9c1b7d4e" }
+  ]
+}

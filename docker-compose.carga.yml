@@ -1,0 +1,61 @@
+# Homolog de carga: os limites de requisição da aplicação levantados e o k6, para os testes de
+# load-tests/ (passo a passo em load-tests/README.md). Sempre por cima da homolog e do
+# monitoramento, no mesmo projeto:
+#
+#   docker compose --env-file docker/homolog/homolog.env -f docker-compose.prod.yml -f docker-compose.homolog.yml -f docker-compose.monitoring.yml -f docker-compose.carga.yml -p barberflow-homolog up -d --wait
+#
+# Só para a máquina local, nunca na AWS: com estes valores, a API para de segurar quem testa
+# senhas ou dispara milhares de requisições por minuto.
+
+services:
+  app:
+    environment:
+      # Toda a API, por usuário logado (padrão 120 por minuto). Na carga, todas as VUs entram
+      # com o mesmo usuário: 200 VUs fazem perto de 12 mil requisições por minuto.
+      API_RATE_LIMIT: "100000"
+      # Tentativas de login por IP (padrão 20 por minuto). O setup() faz um login por VU, todos
+      # do IP do container do k6: 200 no estresse.
+      LOGIN_IP_RATE_LIMIT: "1000"
+      # Senhas erradas por e-mail e IP (padrão 5 por minuto). Com a senha certa não conta; fica
+      # alto para uma senha errada no ambiente falhar no setup(), sem bloquear o e-mail.
+      LOGIN_RATE_LIMIT: "1000"
+      # O k6 chama http://web, de dentro da rede do Docker. Fora do local, a aplicação só aceita
+      # o host do APP_URL (localhost) e os IPs privados, e responderia 400 para "web".
+      TRUSTED_HOSTS: web
+
+  # O k6 dos testes de carga. Só roda quando chamado (o profile tira ele do up):
+  #   docker compose ... run --rm -e LOAD_USER_EMAIL -e LOAD_USER_PASSWORD -e SCENARIO=smoke k6
+  # O -e sem valor repassa a variável do terminal: o e-mail e a senha do usuário de carga
+  # nunca ficam em arquivo.
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: ["carga"]
+    # root dentro do container só para gravar os resultados na pasta montada em qualquer sistema
+    # (no Linux, a pasta do repositório não é do usuário 12345 da imagem).
+    user: "0"
+    environment:
+      BASE_URL: http://web
+      SCENARIO: smoke
+      RODADA: teste
+      # Sem estatísticas de uso enviadas para a Grafana Labs
+      K6_NO_USAGE_REPORT: "true"
+    volumes:
+      - ./load-tests:/scripts:ro
+      - ./load-tests/results:/results
+    command: ["run", "/scripts/barberflow.js"]
+    depends_on:
+      web:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - carga
+
+  # O web entra também na rede carga, só dele e do k6. Assim o k6 alcança o Nginx, como um
+  # cliente de fora, e fica longe da frontend, onde está o PHP-FPM do app.
+  web:
+    networks:
+      - carga
+
+networks:
+  carga:

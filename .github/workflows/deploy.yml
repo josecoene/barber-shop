@@ -1,0 +1,432 @@
+# Deploy na AWS: build das imagens app e web, Trivy nas duas, push no ECR com a tag do commit,
+# troca da image_tag no SSM e instance refresh do Auto Scaling, que sobe instâncias novas com a
+# imagem nova. Entra na AWS por OIDC, na role de deploy do terraform/cicd.tf, sem chave de acesso
+# guardada no GitHub.
+#
+# Roda num push de tag v* (versão nova) ou à mão (Actions > Deploy > Run workflow). À mão, com
+# o image_tag preenchido, é o rollback: pula o build e volta para uma tag que já está no ECR,
+# de um commit da main.
+# Passo a passo, variáveis do environment e rollback: docs/nuvem/CI-CD.md.
+#
+# Antes de rodar: o environment production com a aprovação do grupo e as variáveis que o
+# terraform output github_environment_variables mostra (CI-CD.md, "Variáveis do environment").
+
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Rollback: tag de uma versão que já está no ECR (os 12 primeiros caracteres de um commit da main). Vazio faz o build do commit escolhido.'
+        required: false
+        type: string
+        default: ''
+
+# id-token: write é o que deixa o job pedir o token OIDC ao GitHub.
+permissions:
+  id-token: write
+  contents: read
+
+# Um deploy de cada vez, sem cancelar o que está rodando: o próximo espera.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+# As mesmas imagens do Trivy e do BuildKit do ci.yml, pela versão e pelo digest: troque nos dois
+# arquivos juntos (docs/nuvem/CI-CD.md, "Atualizar versões").
+env:
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      ASG_NAME: ${{ vars.ASG_NAME }}
+      APP_URL: ${{ vars.APP_URL }}
+      ECR_APP_REPOSITORY: ${{ vars.ECR_APP_REPOSITORY }}
+      ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY }}
+      IMAGE_TAG_PARAMETER: ${{ vars.IMAGE_TAG_PARAMETER }}
+      # Passa pelo ambiente, e não direto no script: o valor digitado nunca vira comando.
+      ROLLBACK_IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - name: Confere as variáveis do environment
+        run: |
+          missing=0
+          for name in AWS_DEPLOY_ROLE_ARN AWS_REGION ASG_NAME APP_URL ECR_APP_REPOSITORY ECR_WEB_REPOSITORY IMAGE_TAG_PARAMETER; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Variável faltando::Crie a variável $name no environment production (docs/nuvem/CI-CD.md, Variáveis do environment)."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # Histórico inteiro, para conferir que o commit está na main.
+      - name: Baixa o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Só vai para a AWS o que já passou pela main (PR revisado e CI verde).
+      - name: Confere que o commit está na main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error title=Commit fora da main::O commit $GITHUB_SHA não está na main. Faça o merge pelo pull request e crie a tag (ou rode o rollback) a partir da main."
+            exit 1
+          fi
+
+      # Deploy novo: a tag é o começo do commit (12 caracteres). Só o deploy publica tags assim: a
+      # imagem feita à mão (docs/nuvem/TERRAFORM.md, "Primeiro deploy") leva o prefixo manual-.
+      # Rollback: a tag digitada, conferida antes de qualquer uso: o formato e o commit, que
+      # precisa estar na main (o deploy só publica imagem de commit da main).
+      - name: Define a tag das imagens
+        id: tag
+        run: |
+          if [ -n "$ROLLBACK_IMAGE_TAG" ]; then
+            if ! [[ $ROLLBACK_IMAGE_TAG =~ ^[0-9a-f]{12,40}$ ]]; then
+              echo "::error title=image_tag inválida::Use o começo do commit de uma versão que já está no ECR: de 12 a 40 caracteres, só 0-9 e a-f."
+              exit 1
+            fi
+            commit=$(git rev-parse --verify --quiet "$ROLLBACK_IMAGE_TAG^{commit}" || true)
+            if [[ -z $commit || $commit != "$ROLLBACK_IMAGE_TAG"* ]] || ! git merge-base --is-ancestor "$commit" origin/main; then
+              echo "::error title=image_tag fora da main::A tag $ROLLBACK_IMAGE_TAG não é o começo de um commit da main. O rollback só volta para uma versão que o deploy publicou a partir da main (docs/nuvem/CI-CD.md, Rollback)."
+              exit 1
+            fi
+            tag=$ROLLBACK_IMAGE_TAG
+            mode=rollback
+          else
+            tag=${GITHUB_SHA:0:12}
+            mode=build
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Tag das imagens: $tag ($mode)"
+
+      # Passo 1: entra na AWS pela role de deploy, com um token OIDC do GitHub.
+      - name: Entra na AWS (OIDC)
+        id: aws
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: barberflow-deploy-${{ github.run_id }}
+          mask-aws-account-id: true
+
+      # Passo 3, antes do build para falhar cedo: o docker-compose.prod.yml vai dentro do user_data
+      # do launch template, e só o terraform apply leva uma mudança nele às instâncias. Se o do
+      # commit não é o do launch template (tag ComposeFileSha256), falta o apply.
+      - name: Confere o docker-compose.prod.yml com o launch template
+        id: asg
+        run: |
+          read -r lt_id desired < <(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names "$ASG_NAME" \
+            --query 'AutoScalingGroups[0].[LaunchTemplate.LaunchTemplateId,DesiredCapacity]' --output text)
+          if [ -z "$lt_id" ] || [ "$lt_id" = None ]; then
+            echo "::error title=Auto Scaling não encontrado::O Auto Scaling $ASG_NAME não existe nesta conta e região, ou não usa launch template. Confira as variáveis ASG_NAME e AWS_REGION."
+            exit 1
+          fi
+          expected=$(aws ec2 describe-launch-templates --launch-template-ids "$lt_id" \
+            --query "LaunchTemplates[0].Tags[?Key=='ComposeFileSha256'].Value | [0]" --output text)
+          actual=$(sha256sum docker-compose.prod.yml | cut -d ' ' -f 1)
+          echo "docker-compose.prod.yml do commit: $actual"
+          echo "launch template ($lt_id):          $expected"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error title=Falta o terraform apply::O docker-compose.prod.yml deste commit não é o que está no launch template. Mudança no compose só chega às instâncias pelo terraform apply: rode o plan e o apply deste commit e depois este deploy de novo (docs/nuvem/CI-CD.md, Ordem com o terraform apply)."
+            exit 1
+          fi
+          echo "desired=$desired" >> "$GITHUB_OUTPUT"
+
+      # Um instance refresh por vez: a AWS recusa outro, e trocar a tag no meio de um refresh
+      # (o do terraform apply, por exemplo) misturaria versões.
+      - name: Confere que não há instance refresh em andamento
+        run: |
+          running=$(aws autoscaling describe-instance-refreshes --auto-scaling-group-name "$ASG_NAME" \
+            --query "InstanceRefreshes[?Status=='Pending' || Status=='InProgress' || Status=='Cancelling' || Status=='RollbackInProgress' || Status=='Baking'].InstanceRefreshId" \
+            --output text)
+          if [ -n "$running" ] && [ "$running" != None ]; then
+            echo "::error title=Instance refresh em andamento::O Auto Scaling $ASG_NAME já está trocando as instâncias ($running). Espere terminar (aws autoscaling describe-instance-refreshes) e rode o deploy de novo."
+            exit 1
+          fi
+
+      # Tags imutáveis no ECR: a mesma tag não aceita outra imagem. No rollback as duas precisam
+      # existir; no deploy repetido do mesmo commit, o build pula a imagem que já está lá. Só o
+      # deploy publica tags com o começo do commit (a imagem à mão leva o prefixo manual-), então
+      # a imagem achada é de um deploy anterior, que passou pelo Trivy antes do push.
+      - name: Procura as imagens no ECR
+        id: images
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          MODE: ${{ steps.tag.outputs.mode }}
+        run: |
+          image_exists() {
+            local out
+            if out=$(aws ecr describe-images --repository-name "$1" --image-ids "imageTag=$TAG" \
+              --query 'imageDetails[0].imageDigest' --output text 2>&1); then
+              echo true
+            elif grep -q ImageNotFoundException <<< "$out"; then
+              echo false
+            else
+              echo "$out" >&2
+              return 1
+            fi
+          }
+          app=$(image_exists "$ECR_APP_REPOSITORY")
+          web=$(image_exists "$ECR_WEB_REPOSITORY")
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "No ECR com a tag $TAG: app=$app web=$web"
+          if [ "$MODE" = rollback ] && { [ "$app" != true ] || [ "$web" != true ]; }; then
+            echo "::error title=Tag não está no ECR::Para o rollback, as imagens $ECR_APP_REPOSITORY:$TAG e $ECR_WEB_REPOSITORY:$TAG precisam existir. O ECR guarda só as imagens mais novas (ecr_keep_tagged_images); veja as tags com aws ecr describe-images (docs/nuvem/CI-CD.md, Rollback)."
+            exit 1
+          fi
+
+      # Passo 2: build, Trivy e push das imagens, só no deploy novo. Build limpo, sem o cache do
+      # CI, e só com a tag do commit (nunca latest). As imagens vão primeiro para arquivos no
+      # runner: o Trivy confere exatamente o que vai para o ECR, e o push só acontece se as duas
+      # passarem.
+      - name: Login no ECR
+        if: steps.tag.outputs.mode == 'build'
+        id: ecr
+        env:
+          ACCOUNT_ID: ${{ steps.aws.outputs.aws-account-id }}
+        run: |
+          registry="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+          echo "registry=$registry" >> "$GITHUB_OUTPUT"
+
+      # O BuildKit fixado no bloco env. Sem isto, o Buildx baixaria a moby/buildkit:buildx-stable-1,
+      # uma tag que muda de conteúdo, e é o BuildKit que roda os RUN do Dockerfile.
+      - name: Buildx
+        if: steps.tag.outputs.mode == 'build'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Build da imagem app
+        if: steps.tag.outputs.mode == 'build' && steps.images.outputs.app != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/php/Dockerfile
+          target: app
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_APP_REPOSITORY }}:${{ steps.tag.outputs.tag }}
+          outputs: type=docker,dest=${{ runner.temp }}/barberflow-app.tar
+          provenance: false
+
+      - name: Build da imagem web
+        if: steps.tag.outputs.mode == 'build' && steps.images.outputs.web != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/php/Dockerfile
+          target: web
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_WEB_REPOSITORY }}:${{ steps.tag.outputs.tag }}
+          outputs: type=docker,dest=${{ runner.temp }}/barberflow-web.tar
+          provenance: false
+
+      # O mesmo Trivy do job Docker do ci.yml, nas imagens deste build: falha com vulnerabilidade
+      # CRITICAL que já tem correção publicada. Se falhar, nada foi para o ECR e a image_tag
+      # continua a anterior. A imagem que já estava no ECR (deploy repetido do mesmo commit)
+      # passou por este passo quando foi publicada.
+      - name: Trivy nas imagens
+        if: steps.tag.outputs.mode == 'build'
+        env:
+          APP_IN_ECR: ${{ steps.images.outputs.app }}
+          WEB_IN_ECR: ${{ steps.images.outputs.web }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          for image in app web; do
+            in_ecr="${image^^}_IN_ECR"
+            if [ "${!in_ecr}" = true ]; then
+              echo "== barberflow-$image: já está no ECR com esta tag, sem build nem Trivy"
+              continue
+            fi
+            echo "== barberflow-$image"
+            docker run --rm \
+              -v "$RUNNER_TEMP:/scan:ro" \
+              -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+              "$TRIVY_IMAGE" image --input "/scan/barberflow-$image.tar" \
+              --scanners vuln --ignore-unfixed --severity CRITICAL --exit-code 1 --no-progress
+          done
+
+      # Só depois do Trivy: carrega no Docker do runner a imagem que o Trivy conferiu e manda
+      # para o ECR.
+      - name: Push das imagens
+        if: steps.tag.outputs.mode == 'build'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          APP_IN_ECR: ${{ steps.images.outputs.app }}
+          WEB_IN_ECR: ${{ steps.images.outputs.web }}
+        run: |
+          for image in app web; do
+            in_ecr="${image^^}_IN_ECR"
+            if [ "${!in_ecr}" = true ]; then
+              continue
+            fi
+            repository="ECR_${image^^}_REPOSITORY"
+            docker load --input "$RUNNER_TEMP/barberflow-$image.tar"
+            docker push "$REGISTRY/${!repository}:$TAG"
+          done
+
+      # Passo 4: grava a tag no SSM. Cada instância nova lê o parâmetro ao subir. A tag anterior
+      # fica guardada para o aviso de rollback, se algo der errado depois daqui. Sem --type: o
+      # parâmetro continua String, e um nome errado dá erro em vez de criar um parâmetro novo.
+      - name: Grava a image_tag no SSM
+        id: parameter
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          previous=$(aws ssm get-parameter --name "$IMAGE_TAG_PARAMETER" --query Parameter.Value --output text)
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          aws ssm put-parameter --name "$IMAGE_TAG_PARAMETER" --value "$TAG" --overwrite > /dev/null
+          echo "image_tag: $previous -> $TAG"
+
+      # Primeiro deploy (docs/nuvem/TERRAFORM.md, "Primeiro deploy"): o Auto Scaling ainda está
+      # com 0 instância. As imagens e a tag já estão publicadas; o apply que sobe a capacidade
+      # cria as instâncias com elas.
+      - name: Auto Scaling sem instâncias (primeiro deploy)
+        if: steps.asg.outputs.desired == '0'
+        run: |
+          echo "::notice title=Sem instâncias para trocar::O Auto Scaling $ASG_NAME está com 0 instância. Imagens e image_tag publicadas; suba a capacidade com o terraform apply (docs/nuvem/TERRAFORM.md, Primeiro deploy). O teste do /api/health fica para depois do apply."
+
+      # Passo 5: troca as instâncias aos poucos, com as mesmas preferências do compute.tf.
+      - name: Começa o instance refresh
+        if: steps.asg.outputs.desired != '0'
+        id: refresh
+        run: |
+          refresh_id=$(aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" \
+            --strategy Rolling --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}' \
+            --query InstanceRefreshId --output text)
+          echo "id=$refresh_id" >> "$GITHUB_OUTPUT"
+          echo "Instance refresh $refresh_id começou."
+
+      # As credenciais do passo 1 valem 1 hora, e o build já gastou parte dela.
+      - name: Renova as credenciais da AWS
+        if: steps.asg.outputs.desired != '0'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: barberflow-deploy-${{ github.run_id }}
+          mask-aws-account-id: true
+
+      - name: Espera o instance refresh
+        if: steps.asg.outputs.desired != '0'
+        env:
+          REFRESH_ID: ${{ steps.refresh.outputs.id }}
+        run: |
+          deadline=$((SECONDS + 45 * 60))
+          while :; do
+            read -r status percent < <(aws autoscaling describe-instance-refreshes \
+              --auto-scaling-group-name "$ASG_NAME" --instance-refresh-ids "$REFRESH_ID" \
+              --query 'InstanceRefreshes[0].[Status,PercentageComplete]' --output text)
+            echo "$(date -u +%H:%M:%S) instance refresh: $status ($percent%)"
+            case "$status" in
+              Successful)
+                exit 0
+                ;;
+              Pending | InProgress | Baking)
+                ;;
+              *)
+                reason=$(aws autoscaling describe-instance-refreshes --auto-scaling-group-name "$ASG_NAME" \
+                  --instance-refresh-ids "$REFRESH_ID" --query 'InstanceRefreshes[0].StatusReason' --output text)
+                echo "::error title=Instance refresh terminou em $status::$reason"
+                exit 1
+                ;;
+            esac
+            if (( SECONDS >= deadline )); then
+              echo "::error title=Instance refresh demorou demais::Passou de 45 minutos e o refresh continua na AWS. Acompanhe com aws autoscaling describe-instance-refreshes e veja os logs da subida (docs/nuvem/CI-CD.md, Problemas comuns)."
+              exit 1
+            fi
+            sleep 30
+          done
+
+      # Passo 6: a aplicação no ar responde o /api/health (banco e cache conferidos) com 200.
+      # São 20 tentativas, uma a cada 15 s: perto de 5 minutos, até 8 se cada uma esperar os 10 s.
+      - name: Testa o /api/health
+        if: steps.asg.outputs.desired != '0'
+        run: |
+          url="${APP_URL%/}/api/health"
+          for attempt in $(seq 1 20); do
+            code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$url" || true)
+            echo "Tentativa $attempt: HTTP $code"
+            if [ "$code" = 200 ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error title=/api/health sem 200::$url não respondeu 200 em 20 tentativas. Veja os logs no CloudWatch (docs/nuvem/TERRAFORM.md, Logs no CloudWatch)."
+          exit 1
+
+      # A tag anterior pode ser a provisória (primeiro deploy), a de um deploy (o começo de um
+      # commit, que o rollback aceita) ou a de uma imagem feita à mão (manual-...), que o rollback
+      # recusa e que volta pelo caminho à mão.
+      - name: Resumo
+        if: success()
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          MODE: ${{ steps.tag.outputs.mode }}
+          PREVIOUS: ${{ steps.parameter.outputs.previous }}
+          APP_IN_ECR: ${{ steps.images.outputs.app }}
+          WEB_IN_ECR: ${{ steps.images.outputs.web }}
+        run: |
+          {
+            echo "### Deploy ($MODE)"
+            echo
+            echo "- image_tag: \`$PREVIOUS\` -> \`$TAG\`"
+            if [ "$MODE" = build ]; then
+              for image in app web; do
+                in_ecr="${image^^}_IN_ECR"
+                if [ "${!in_ecr}" = true ]; then
+                  echo "- $image: já estava no ECR com esta tag (deploy repetido do mesmo commit), sem build nem Trivy nesta rodada."
+                fi
+              done
+            fi
+            if [ "$PREVIOUS" = PREENCHER_PELO_DEPLOY ]; then
+              echo "- Primeiro deploy: não há versão anterior para o rollback."
+            elif [[ $PREVIOUS =~ ^[0-9a-f]{12,40}$ ]]; then
+              echo "- Rollback para a versão anterior: rode o Deploy à mão com image_tag = \`$PREVIOUS\`"
+            else
+              echo "- A versão anterior (\`$PREVIOUS\`) foi publicada à mão, e o Deploy não volta para ela: veja docs/nuvem/CI-CD.md, Rollback."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Falhou depois de trocar a tag: as instâncias novas sobem com a versão nova. O caminho de
+      # volta é o rollback para a tag anterior.
+      - name: Como voltar
+        if: failure() && steps.parameter.outputs.previous != ''
+        env:
+          PREVIOUS: ${{ steps.parameter.outputs.previous }}
+        run: |
+          if [ "$PREVIOUS" = PREENCHER_PELO_DEPLOY ]; then
+            message="Era o primeiro deploy: não há versão anterior. Veja os logs da subida (docs/nuvem/TERRAFORM.md, Problemas comuns)."
+          elif [[ $PREVIOUS =~ ^[0-9a-f]{12,40}$ ]]; then
+            message="A image_tag já aponta para a versão nova. Para voltar, rode o Deploy à mão com image_tag = $PREVIOUS (docs/nuvem/CI-CD.md, Rollback)."
+          else
+            message="A image_tag já aponta para a versão nova. A anterior ($PREVIOUS) foi publicada à mão: para voltar, grave essa tag no SSM e faça o instance refresh (docs/nuvem/CI-CD.md, Rollback)."
+          fi
+          echo "::error title=Deploy falhou depois de trocar a image_tag::$message"
+          echo "### Deploy falhou" >> "$GITHUB_STEP_SUMMARY"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sai do ECR
+        if: always() && steps.ecr.outputs.registry != ''
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: docker logout "$REGISTRY"
