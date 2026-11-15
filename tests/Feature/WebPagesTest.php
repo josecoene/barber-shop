@@ -210,6 +210,40 @@ class WebPagesTest extends TestCase
     }
 
     /**
+     * O menu abre a partir de 1200px (navbar-expand-xl) e, aberto, fica numa linha
+     * só: os links e o Minha conta não quebram, e quem encolhe é o nome, que o CSS
+     * corta com reticências. O nome inteiro continua no title e depois do "Você
+     * entrou como" do leitor de tela, e o Sair continua um POST com o token CSRF.
+     */
+    public function test_menu_fits_in_one_line_and_keeps_the_full_name(): void
+    {
+        $name = 'Administrador da homologação com um nome bem comprido';
+        $admin = $this->makeAdmin();
+        $admin->update(['name' => $name]);
+
+        $html = $this->actingAs($admin)
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('<nav class="navbar navbar-expand-xl bg-dark"', false)
+            ->assertDontSee('navbar-expand-lg', false)
+            ->assertSee('<div class="navbar-account d-flex flex-wrap flex-xl-nowrap', false)
+            ->assertSeeInOrder([
+                '<span class="visually-hidden">Você entrou como</span>',
+                '<span class="navbar-user text-truncate text-white" title="'.$name.'">'.$name.'</span>',
+                '<span class="badge text-bg-secondary">Administrador</span>',
+                'small text-nowrap"',
+                'href="'.route('account.show').'">Minha conta</a>',
+                '<form method="POST" action="'.route('logout').'"',
+                'name="_token"',
+                '>Sair</button>',
+            ], false)
+            ->getContent();
+
+        // Os 7 links do admin, todos sem quebra de linha.
+        $this->assertSame(7, substr_count($html, 'class="nav-link text-nowrap'));
+    }
+
+    /**
      * Links do menu (rota => texto) que cada perfil vê. Abre a tela Minha conta,
      * que todos os perfis acessam e que não tem outros links para essas telas.
      */
@@ -608,6 +642,43 @@ class WebPagesTest extends TestCase
             ->assertSee('name="password"', false)
             ->assertSee('autocomplete="new-password"', false)
             ->assertSee('Preencha para criar ou redefinir o acesso do barbeiro');
+    }
+
+    /**
+     * Telas de cadastro (partials/crud), com quem abre cada uma.
+     */
+    public static function crudPages(): array
+    {
+        return [
+            'clientes do admin' => ['makeAdmin', '/clients', 'clients', 'Clientes'],
+            'clientes do barbeiro' => ['makeBarberUser', '/clients', 'clients', 'Clientes'],
+            'barbeiros' => ['makeAdmin', '/barbers', 'barbers', 'Barbeiros'],
+            'serviços' => ['makeAdmin', '/services', 'services', 'Serviços'],
+        ];
+    }
+
+    /**
+     * No celular, os cadastros saem numa lista (um item por cadastro, que o pages.js
+     * monta) no lugar da tabela, que só aparece da largura de tablet para cima: nos
+     * 390px, a tabela partia o nome e o e-mail no meio da palavra. A busca controla
+     * as duas, as duas dizem a página em que estão, e a tabela prende o texto
+     * escondido do leitor de tela (position-relative) para a página não rolar para o lado.
+     */
+    #[DataProvider('crudPages')]
+    public function test_crud_page_has_a_list_for_the_phone_and_the_table_from_the_tablet_up(string $makeUser, string $uri, string $resource, string $title): void
+    {
+        $this->actingAs($this->{$makeUser}())
+            ->get($uri)
+            ->assertOk()
+            ->assertSee('aria-controls="'.$resource.'-list '.$resource.'-table" data-search', false)
+            ->assertSeeInOrder([
+                '<ul class="list-group list-group-flush border-bottom-0 d-md-none" id="'.$resource.'-list"',
+                'aria-label="'.$title.' cadastrados, em ordem de nome" aria-describedby="'.$resource.'-page-status" data-mobile-rows>',
+                '<div class="table-responsive position-relative d-none d-md-block">',
+                'id="'.$resource.'-table"',
+                'aria-label="'.$title.' cadastrados, em ordem de nome" aria-describedby="'.$resource.'-page-status">',
+                'id="'.$resource.'-page-status"',
+            ], false);
     }
 
     public function test_only_the_admin_gets_the_delete_button_on_the_clients_page(): void

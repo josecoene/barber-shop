@@ -1,6 +1,6 @@
 {{--
     Tela de cadastro genérica. Parâmetros: $resource, $title, $singular, $plural, $searchLabel, $columns, $fields
-    e $canDelete (opcional, padrão true: sem permissão, a tabela não mostra o botão Excluir; a API também recusa).
+    e $canDelete (opcional, padrão true: sem permissão, a tabela e a lista do celular ficam sem o botão Excluir; a API também recusa).
 --}}
 <div data-crud data-resource="{{ $resource }}" data-singular="{{ $singular }}" data-plural="{{ $plural }}"
     data-can-delete="{{ ($canDelete ?? true) ? 'true' : 'false' }}">
@@ -15,12 +15,27 @@
         <div class="col-sm-8 col-lg-5">
             <label for="{{ $resource }}-search" class="form-label">{{ $searchLabel }}</label>
             <input type="search" class="form-control" id="{{ $resource }}-search" maxlength="100" autocomplete="off"
-                aria-controls="{{ $resource }}-table" data-search>
+                aria-controls="{{ $resource }}-list {{ $resource }}-table" data-search>
         </div>
     </div>
 
     <div class="card shadow-sm">
-        <div class="table-responsive">
+        {{--
+            No celular: um item por cadastro, com o nome em cima, cada dado embaixo dele com o nome da coluna
+            e os botões no fim. Nos 390px, a tabela só caberia partindo o nome e o e-mail no meio da palavra.
+            A lista vem antes da tabela para ganhar os cantos arredondados do cartão (.card > .list-group:first-child).
+        --}}
+        <ul class="list-group list-group-flush border-bottom-0 d-md-none" id="{{ $resource }}-list"
+            aria-label="{{ $title }} cadastrados, em ordem de nome" aria-describedby="{{ $resource }}-page-status" data-mobile-rows>
+            <li class="list-group-item text-center text-body-secondary py-4">Carregando...</li>
+        </ul>
+
+        {{--
+            Da largura de tablet para cima: a tabela. O position-relative prende nela o texto escondido para o
+            leitor de tela (visually-hidden, que é position: absolute): sem ele, numa tabela que rola para o
+            lado, esse texto ficaria fora da área de rolagem e faria a página inteira rolar.
+        --}}
+        <div class="table-responsive position-relative d-none d-md-block">
             {{-- aria-label em vez de <caption> escondido: o caption ocupa 1px e cria uma barra de rolagem na .table-responsive --}}
             <table class="table table-hover align-middle mb-0" id="{{ $resource }}-table"
                 aria-label="{{ $title }} cadastrados, em ordem de nome" aria-describedby="{{ $resource }}-page-status">

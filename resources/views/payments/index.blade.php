@@ -113,8 +113,12 @@
                     </dl>
                 </div>
 
-                {{-- Da largura de tablet para cima: a tabela. --}}
-                <div class="table-responsive d-none d-md-block">
+                {{--
+                    Da largura de tablet para cima: a tabela. O position-relative prende nela o "Nenhuma ação"
+                    escondido (visually-hidden, position: absolute), para uma tabela que rola para o lado não fazer
+                    a página inteira rolar.
+                --}}
+                <div class="table-responsive position-relative d-none d-md-block">
                     {{-- aria-labelledby em vez de <caption> escondido: o caption ocupa 1px e cria uma barra de rolagem na .table-responsive --}}
                     <table class="table table-hover align-middle mb-0" id="payments-table"
                         aria-labelledby="payments-list-title" aria-describedby="payments-page-status">
