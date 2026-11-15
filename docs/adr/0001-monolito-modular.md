@@ -54,7 +54,7 @@ As fronteiras são de código, não de rede. Os módulos dividem o banco e se ch
 
 **O que ganha:**
 
-- Uma transação garante as regras que importam (sem sobreposição, um pagamento por atendimento, o prêmio usado uma vez só), provadas no SQLite (745 testes), no MySQL (754) e com pedidos simultâneos de verdade no k6.
+- Uma transação garante as regras que importam (sem sobreposição, um pagamento por atendimento, o prêmio usado uma vez só), provadas no SQLite (747 testes), no MySQL (758) e com pedidos simultâneos de verdade no k6.
 - Um deploy só: duas imagens (`app` e `web`), um pipeline (`.github/workflows/ci.yml` e `deploy.yml`), um banco com backup e restore documentados (`docs/nuvem/BACKUP.md`).
 - Os testes de feature rodam a aplicação inteira, de ponta a ponta, sem simular outros serviços.
 
