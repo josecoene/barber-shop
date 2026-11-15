@@ -856,7 +856,7 @@ exit
 - O `read -s` não mostra a senha enquanto ela é digitada, e o que o `read` recebe não entra no histórico do terminal.
 - O `-e ADMIN_PASSWORD`, sem `=valor`, passa o valor que está no ambiente: a senha não aparece na linha do comando.
 - O `run --rm` sobe um container novo e descartável, e não usa o `exec` no `app` que está no ar: o entrypoint de produção congela a configuração (`php artisan optimize`) quando o container sobe, então o `app` que já está rodando não enxerga variáveis novas. O container descartável congela com o `ADMIN_*`, roda o seeder e é apagado. O `RUN_MIGRATIONS=false` evita que ele rode as migrations de novo.
-- Rode uma vez só, numa instância só: o banco é o mesmo para todas. O `AdminUserSeeder` nunca altera um usuário que já existe; sem e-mail ou senha, ele só avisa.
+- Rode uma vez só, numa instância só: o banco é o mesmo para todas. O `AdminUserSeeder` nunca altera um usuário que já existe; sem e-mail, sem senha ou com uma senha de menos de 8 caracteres (a regra das outras senhas do sistema), ele só avisa e não cria nada.
 - Depois, entre com esse e-mail em `/login` e troque a senha em Minha conta, se quiser.
 
 ## Logs no CloudWatch

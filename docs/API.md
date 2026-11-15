@@ -359,7 +359,7 @@ Fora do ambiente local, os links que vão por e-mail (confirmação e "esqueci m
 
 ### Esqueci minha senha
 
-**Pedir o link (`POST /forgot-password`)**, aberto, com o campo `email`. A resposta é sempre a mesma, com e-mail cadastrado ou não, para ninguém usar esta rota para descobrir quem tem conta:
+**Pedir o link (`POST /forgot-password`)**, aberto, com o campo `email`. A resposta é sempre a mesma, com e-mail cadastrado ou não, para ninguém usar esta rota para descobrir quem tem conta. Vale também com o servidor de e-mail fora do ar ou recusando o endereço: a falha, que só acontece com um e-mail cadastrado, vai para o log da aplicação sem o endereço, e a resposta não muda:
 
 ```json
 { "message": "Se o e-mail estiver cadastrado, você vai receber o link para redefinir a senha." }
@@ -1586,6 +1586,8 @@ Período longo demais (`?from=2026-01-01&to=2027-01-02`, 367 dias), `422`:
 - **Agenda por barbeiro:** os horários livres olham só a agenda do barbeiro escolhido. O conflito do cliente com outro barbeiro aparece só ao agendar (`422` em `client_id`).
 - **Concorrência conferida no MySQL:** as travas que impedem dois agendamentos no mesmo horário, dois pagamentos do mesmo atendimento e o mesmo prêmio de fidelidade usado duas vezes só funcionam de verdade no MySQL; no SQLite dos testes, elas não fazem nada. O `composer test:mysql` (veja o README) roda o `AppointmentConcurrencyTest`, o `PaymentConcurrencyTest` e o `LoyaltyConcurrencyTest`, que conferem as travas com duas conexões, em passos de ordem fixa. A reserva do lembrete é um `UPDATE` condicional: o `ReminderCommandTest` e o `ReminderApiTest` mudam a linha logo antes dele (outra rodada, o envio manual, o cancelamento ou a remarcação) e logo antes do `UPDATE` que desfaz a reserva depois de uma falha, nos dois bancos, sem um teste de duas conexões no MySQL. A prova com pedidos simultâneos de verdade fica para o teste de carga `concorrencia.js`.
 - **O cadastro de conta diz se o e-mail já tem conta:** `POST /register` responde `Este e-mail já está cadastrado.`. O login e o "esqueci a senha" não revelam isso.
+- **E-mail repetido em dois pedidos ao mesmo tempo:** dois cadastros com o mesmo e-mail no mesmo instante (`POST /clients`, `POST /barbers`, o `PUT` deles ou o `POST /register`) passam os dois pela validação, e o índice `unique` do banco recusa o segundo com `500`, e não com o `422` de e-mail em uso. Nada fica gravado em dobro.
+- **Servidor de e-mail fora do ar:** o `POST /register` responde `500` com a conta já criada, e o `POST /email/verification-notification` também responde `500`; o cliente entra e pede outro link depois. O `POST /forgot-password` responde o mesmo de sempre. A falha vai para o log sem o endereço.
 - **Sem desfazer exclusão:** a linha fica no banco, mas não há rota para restaurar um registro excluído. No cliente, os dados pessoais já foram apagados.
 - **Página de até 100 itens:** quem precisa de tudo (como a tela Agendar) pede `per_page=100`; com mais de 100 cadastros, os outros ficam nas páginas seguintes. A Agenda e Meus horários leem as páginas seguintes, até 1000 agendamentos.
 - **Um pagamento por atendimento, para sempre:** depois do estorno, o atendimento não recebe outro pagamento. Para cobrar de novo um valor estornado por engano, o admin corrige o pagamento estornado (valor e observações), mas ele continua fora do faturamento.

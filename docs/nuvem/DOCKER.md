@@ -27,7 +27,7 @@ Tudo sai de um Dockerfile só, `docker/php/Dockerfile`, dividido em estágios. C
 ## Antes de começar
 
 - Docker Desktop com Compose 2.24.4 ou mais novo (`docker compose version`). Os arquivos usam o `!override` do Compose e o `start_interval` dos healthchecks, que pede o Docker Engine 25 ou mais novo. Testado no Windows 11 com Docker 29.5.3 e Compose v5.1.4.
-- Internet no primeiro build: as imagens, os pacotes do Composer e do npm e a fonte Instrument Sans, que o `vite.config.js` de hoje baixa no build.
+- Internet no primeiro build: as imagens e os pacotes do Composer e do npm. Desde a `feat/auth`, o `vite.config.js` não baixa mais nenhuma fonte.
 - Não precisa de PHP, Composer, MySQL nem Node no computador.
 - Dev e homolog usam a mesma porta (8080). Suba um de cada vez.
 
@@ -110,6 +110,8 @@ A homolog usa quatro segredos, que nascem aleatórios e ficam no `docker/homolog
 | `HOMOLOG_DB_EXPORTER_PASSWORD` | Senha do usuário `exporter` do MySQL, só de leitura, do monitoramento |
 | `HOMOLOG_GRAFANA_ADMIN_PASSWORD` | Senha do admin do Grafana do monitoramento |
 
+Três linhas opcionais entram depois, para o admin e os logins de demonstração: `HOMOLOG_ADMIN_EMAIL`, `HOMOLOG_ADMIN_PASSWORD` e `HOMOLOG_DEMO_USER_PASSWORD` (seção "Dados de demonstração e administrador"). Nenhum compose lê essas três.
+
 - **O arquivo é gerado uma vez só e guardado enquanto o banco da homolog existir.** O MySQL grava as senhas do app e do exporter só na primeira subida, quando cria o banco: com outra senha, o app não entra mais no banco (veja "Problemas comuns"). Com outra chave, as sessões abertas deixam de valer.
 - O Git ignora o arquivo (`docker/homolog/.gitignore`), e o build das imagens também (`.dockerignore`). O modelo sem valores é o `docker/homolog/homolog.env.example`.
 - Os compose leem o arquivo pelo `--env-file`, que as funções `homolog` (abaixo) e `homologmon` (`docs/nuvem/MONITORAMENTO.md`) já passam.
@@ -171,6 +173,50 @@ Todos com a função `homolog` (passo 4). O compose lê os arquivos inteiros at�
 | Parar e manter os dados | `homolog down` |
 
 O Tinker precisa do `HOME=/tmp` porque o disco do container é só de leitura e ele grava a própria configuração na pasta do usuário.
+
+### Dados de demonstração e administrador
+
+A homolog sobe com o banco vazio. Para entrar nas telas, ela precisa de um admin (`AdminUserSeeder`) e, para a demonstração, dos dados do `DemoSeeder`: 3 barbeiros com login, 15 clientes (4 com conta), os serviços e 30 dias de agenda com pagamentos. Os dois seeders recebem a senha só no ambiente do comando, num container descartável, e nunca de um arquivo versionado.
+
+**1. As senhas, uma vez só.** O e-mail do admin e as duas senhas ficam no mesmo `docker/homolog/homolog.env`, em três linhas a mais. Com a imagem `app` já construída (passo 2 de "Subir"):
+
+```powershell
+docker run --rm --entrypoint php barberflow-app:homolog -r "echo PHP_EOL.'HOMOLOG_ADMIN_EMAIL=admin@demo.barberflow.test'.PHP_EOL.'HOMOLOG_ADMIN_PASSWORD='.bin2hex(random_bytes(16)).PHP_EOL.'HOMOLOG_DEMO_USER_PASSWORD='.bin2hex(random_bytes(16)).PHP_EOL;" | Out-File -Append -Encoding ascii docker\homolog\homolog.env
+```
+
+As senhas saem aleatórias, com 32 letras e números, e nada aparece na tela. O `PHP_EOL` do começo evita grudar a primeira linha nova na última do arquivo (veja "Vindo do jeito antigo"). Rode uma vez só: com a mesma linha duas vezes, o compose e a função abaixo usam a última. Nenhum compose lê essas três linhas, então elas nunca chegam aos containers que ficam no ar; só entram, com `-e`, nos containers descartáveis dos seeders e do k6.
+
+**2. Os seeders.** Com a homolog no ar e a mesma função que subiu a stack (`homolog`, ou `homologmon` com o monitoramento):
+
+```powershell
+function Get-HomologValue([string] $Name) { $l = Get-Content docker\homolog\homolog.env | Where-Object { $_ -like "$Name=*" } | Select-Object -Last 1; if (-not $l) { throw "$Name não está no homolog.env" }; $l.Substring($Name.Length + 1) }
+
+$env:DEMO_USER_PASSWORD = Get-HomologValue 'HOMOLOG_DEMO_USER_PASSWORD'
+homolog run --rm --no-deps -e DEMO_USER_PASSWORD -e RUN_MIGRATIONS=false app php artisan db:seed --class=DemoSeeder --force
+Remove-Item Env:DEMO_USER_PASSWORD
+
+$env:ADMIN_NAME = 'Administrador'
+$env:ADMIN_EMAIL = Get-HomologValue 'HOMOLOG_ADMIN_EMAIL'
+$env:ADMIN_PASSWORD = Get-HomologValue 'HOMOLOG_ADMIN_PASSWORD'
+homolog run --rm --no-deps -e ADMIN_NAME -e ADMIN_EMAIL -e ADMIN_PASSWORD -e RUN_MIGRATIONS=false app php artisan db:seed --class=AdminUserSeeder --force
+Remove-Item Env:ADMIN_NAME, Env:ADMIN_EMAIL, Env:ADMIN_PASSWORD
+```
+
+- A função `Get-HomologValue` lê uma linha do `homolog.env` sem mostrar o valor. O `-e` sem valor repassa a variável do terminal para o container, e o `Remove-Item` tira a senha do terminal logo depois.
+- O `DemoSeeder` responde `Agenda de demonstração criada: N agendamentos e M pagamentos.` (em 15/11/2026: 177 e 95). Rodar de novo não duplica nada: `A agenda de demonstração já existe: nenhum agendamento novo foi criado.`. Ele também não muda o que já existe: um serviço com o preço, a duração ou o status que o admin mudou no ensaio fica assim, um serviço excluído continua excluído (dos 4 de exemplo, ele cria só os que nunca existiram) e nenhuma senha muda. O `AdminUserSeeder` responde `Administrador inicial criado.` e nunca muda um usuário que já existe.
+- Sem a `DEMO_USER_PASSWORD`, ou com menos de 8 caracteres, o `DemoSeeder` avisa e não cria nada. Fora da homolog ele também não roda, porque só a homolog liga o `DEMO_SEED_ENABLED`. O `AdminUserSeeder` segue a mesma regra: sem a `ADMIN_PASSWORD`, ou com menos de 8 caracteres, ele avisa e não cria o admin.
+- **A agenda segue o dia em que o seeder rodou:** os 30 dias ficam em volta daquela data (15 antes, o próprio dia e 14 depois). Como ele não duplica, um banco que já tem a demonstração continua com a agenda do dia em que ela nasceu. Uma agenda em volta de outra data pede um banco novo, o que apaga os dados da homolog.
+- No Git Bash, os mesmos passos com `export` e `unset`, como no `load-tests/README.md`.
+
+Logins que os dois seeders criam (todos com o e-mail já confirmado):
+
+| Perfil | E-mail | Senha |
+|---|---|---|
+| Admin | o `HOMOLOG_ADMIN_EMAIL` (`admin@demo.barberflow.test`) | `HOMOLOG_ADMIN_PASSWORD` |
+| Barbeiro | `carlos.mendes`, `rafael.souza` e `diego.almeida`, todos `@demo.barberflow.test` | `HOMOLOG_DEMO_USER_PASSWORD` |
+| Cliente com conta | `ana.ribeiro` (a que tem o prêmio de fidelidade), `camila.fernandes`, `felipe.gomes` e `joao.nunes`, todos `@demo.barberflow.test` | `HOMOLOG_DEMO_USER_PASSWORD` |
+
+Para entrar pela tela sem mostrar a senha, copie para a área de transferência e cole no campo: `Get-HomologValue 'HOMOLOG_DEMO_USER_PASSWORD' | Set-Clipboard`. Limpe depois com `Set-Clipboard -Value ' '` (o histórico da área de transferência do Windows, o Win+V, também guarda o que foi copiado). O domínio `demo.barberflow.test` é reservado para teste: nenhum e-mail chega a uma pessoa, e o Mailpit guarda tudo.
 
 ### O que conferir
 
@@ -271,7 +317,7 @@ O Dependabot propõe toda segunda as versões novas do Dockerfile e dos compose,
 | MySQL aberto na porta 3306 de todas as interfaces | Porta 3306 só no 127.0.0.1 |
 | Só app, Nginx e MySQL | Mais Redis, agendador (`scheduler`) e o serviço `assets` para o Vite |
 | Sem healthcheck | Healthcheck em todos os serviços, `depends_on` esperando ficar saudável, redes `frontend` e `backend` e `no-new-privileges` |
-| Headers `X-Frame-Options`, `X-XSS-Protection` e `X-Content-Type-Options` no Nginx | Os headers de segurança passam para a aplicação, na branch `feat/auth`; até ela entrar, as páginas e a API saem sem esses headers. Os arquivos estáticos (`/build/`, `favicon.ico`, `robots.txt`) já saem com o `X-Content-Type-Options: nosniff` do Nginx |
+| Headers `X-Frame-Options`, `X-XSS-Protection` e `X-Content-Type-Options` no Nginx | Os headers de segurança ficam na aplicação (`App\Http\Middleware\SecurityHeaders`, desde a `feat/auth`), conferidos na homolog em 15/11/2026 (`docs/nuvem/SEGURANCA.md`). Os arquivos estáticos (`/build/`, `favicon.ico`, `robots.txt`) saem com o `X-Content-Type-Options: nosniff` do Nginx |
 | Pasta do site em `/var/www/public` | `/var/www/html/public` |
 
 O volume do banco antigo não é reaproveitado: o projeto novo (`barberflow-dev`) cria um banco vazio, e o entrypoint do dev roda as migrations.

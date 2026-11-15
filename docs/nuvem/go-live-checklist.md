@@ -7,28 +7,28 @@ São duas partes:
 - **A. Homologação local**, antes de aplicar o Terraform: a homolog roda as mesmas imagens que vão para a AWS (`docs/nuvem/DOCKER.md`).
 - **B. AWS**, depois do primeiro `apply`, com a conta do grupo.
 
-A coluna "Situação" diz como cada item estava em 14/11/2026, na branch `feat/observabilidade`. Essa branch saiu da `fix/menu-e-setup` e não tem o código da aplicação das branches `feat/api-qualidade` a `feat/lembretes-fidelidade` (login, `/api/health`, agenda e pagamentos): o que depende disso está marcado **verificado na F**, a entrega final (`feat/entrega-final`), que junta as duas trilhas e roda a verificação completa.
+A coluna "Situação" diz como cada item estava em 15/11/2026, na entrega final (`feat/entrega-final`), que juntou a trilha da aplicação (login, `/api/health`, agenda e pagamentos) à de nuvem e rodou a verificação completa. Os números estão no `docs/RELATORIO-TECNICO.md`, seção "Evidências da verificação". Em todos os itens menos o A15, o MySQL da homolog ficou num tmpfs, porque o volume `barberflow-homolog_dbdata` deste computador tem uma senha que se perdeu. O A15 e a queda do banco com o volume (no A11) rodaram depois, na revisão final do mesmo dia, com o MySQL num volume novo (`barberflow-homolog_dbdata-r`); o volume antigo ficou intocado.
 
 ## A. Homologação local
 
-| # | Item | Como conferir | Situação em 14/11/2026 |
+| # | Item | Como conferir | Situação em 15/11/2026 |
 |---|---|---|---|
-| A1 | A stack sobe do zero | Banco novo, `homolog up -d --build --wait` (ou `homologmon`, com o monitoramento) | Ok: com o monitoramento, os 13 containers no ar em 20 s, com o MySQL num tmpfs (o volume da homolog deste computador tem uma senha perdida) |
+| A1 | A stack sobe do zero | Banco novo, `homolog up -d --build --wait` (ou `homologmon`, com o monitoramento) | Ok: com o monitoramento, os 13 containers no ar em 18,2 s, com as migrations rodando na subida |
 | A2 | O `/up` responde 200 | `curl.exe -I http://localhost:8080/up` | Ok |
-| A3 | O `/api/health` responde 200, com banco e cache | `curl.exe -i http://localhost:8080/api/health` | Verificado na F (a rota chega com a `feat/api-qualidade`) |
-| A4 | Login e telas de cada perfil (admin, barbeiro e cliente) | Navegador em http://localhost:8080/login, com o `DemoSeeder` | Verificado na F |
-| A5 | Suíte de testes da aplicação | `composer test` e `composer test:mysql` (CI, jobs `PHP` e `MySQL`) | Verificado na F |
+| A3 | O `/api/health` responde 200, com banco e cache | `curl.exe -i http://localhost:8080/api/health` | Ok: `{"status":"ok","checks":{"database":"ok","cache":"ok"}}`, em 9 ms |
+| A4 | Login e telas de cada perfil (admin, barbeiro e cliente) | Navegador em http://localhost:8080/login, com o `DemoSeeder` (`docs/nuvem/DOCKER.md`, "Dados de demonstração e administrador") | Ok: o admin abriu as 8 telas com a API em 200 e o console vazio, com a CSP ligada; os 44 prints das telas dos 3 perfis e do visitante estão em `docs/prints-telas/` |
+| A5 | Suíte de testes da aplicação | `composer test` e `composer test:mysql` (CI, jobs `PHP` e `MySQL`) | Ok: 715 passaram e 7 pulados no SQLite (os de trava, que só valem no MySQL) e 722 no MySQL 8.4, nenhum pulado (depois da revisão final) |
 | A6 | Coleta de métricas | Os 4 alvos `UP` no Prometheus (`docs/nuvem/MONITORAMENTO.md`, "Conferir pela API") | Ok: `prometheus`, `cadvisor`, `nginx` e `mysql`, com `mysql_up` e `nginx_up` em 1 |
-| A7 | Logs centralizados | Os serviços com log no Loki, pela API do Grafana | Ok: os 13 serviços do projeto; o e-mail de uma busca não chegou ao log |
-| A8 | Painel com dados | `GET /api/dashboards/uid/barberflow` no Grafana: 13 painéis | Ok |
-| A9 | Teste de carga com as metas (p95 abaixo de 500 ms e menos de 1% de erro): smoke, carga com 50 VUs e estresse com 200 | `load-tests/README.md` | Verificado na F (o login chega com a `feat/auth`). Os scripts passaram no `k6 inspect` e rodaram contra uma API falsa com o mesmo contrato: um token por VU (200 no estresse), logout de todos e o JSON do resultado sem tokens |
-| A10 | Concorrência da agenda: só 1 de N pedidos simultâneos passa | `load-tests/README.md`, "Concorrência da agenda" | Verificado na F (a agenda chega com a `feat/agendamentos`). Contra a API falsa, o script passou com a trava e acusou o defeito sem ela (20 pedidos criados) |
-| A11 | Resiliência: banco, app e cache caindo e voltando | `load-tests/resiliencia/README.md` | Parcial: app (504 em 2 s parado, volta em 1,7 s), banco e cache medidos pelas telas e pelo `/up`; o `/api/health` em 503 e depois 200 fica para a F |
-| A12 | Portas internas protegidas | `docker ps` mostra só a 8080, a 8025, a 3000 e a 9090, todas no 127.0.0.1; `/nginx_status` na 8080 responde 404 | Ok |
-| A13 | Headers e informação de versão | `curl.exe -I http://localhost:8080/login`: sem `X-Powered-By`, `Server: nginx` sem versão, e os headers de segurança da aplicação | Ok no Nginx; os headers da aplicação são verificados na F (chegam com a `feat/auth`) |
-| A14 | Nenhuma senha nova no código | Busca por `password`, `senha` e `secret` nos arquivos novos | Ok: as senhas novas (homolog, Grafana e exporter) ficam no `homolog.env`, que o Git ignora. As que já existiam ficam como estão (decisão 5) e estão nos riscos aceitos do `docs/nuvem/SEGURANCA.md` |
-| A15 | Subir de novo sem perder nada | `homolog down` (sem `-v`) e `homolog up -d --wait`: login e dados continuam | Verificado na F, com o volume novo do banco da homolog (nesta branch, o banco ficou num tmpfs) |
-| A16 | Terraform válido e testado | `tf fmt -check -recursive`, `tf validate`, `tf test` e `trivy config` (`docs/nuvem/TERRAFORM.md`) | Ok: 69 testes na raiz e 1 no bootstrap, `trivy config` sem alerta |
+| A7 | Logs centralizados | Os serviços com log no Loki, pela API do Grafana | Ok: os 13 serviços do projeto; o erro de banco chegou sem SQL e sem dado pessoal |
+| A8 | Painel com dados | `GET /api/dashboards/uid/barberflow` no Grafana: 13 itens (10 painéis e 3 linhas) | Ok |
+| A9 | Teste de carga com as metas (p95 abaixo de 500 ms e menos de 1% de erro): smoke, carga com 50 VUs e estresse com 200 | `load-tests/README.md` | Ok: p95 de 15,5 ms, 16,8 ms e 17,6 ms, todos com 0% de erro |
+| A10 | Concorrência da agenda: só 1 de N pedidos simultâneos passa | `load-tests/README.md`, "Concorrência da agenda" | Ok: 1 criado em 10 pedidos e 1 em 50, o resto com 422 |
+| A11 | Resiliência: banco, app e cache caindo e voltando | `load-tests/resiliencia/README.md` | Ok: o `/api/health` em 503 (cache em 3 a 4 s, banco em 13,3 s) e de volta em 200; app de volta em 1,7 s. Com o banco num volume de verdade, o `start` bastou: `/api/health` 200 em 1,9 s, com os dados e o token de antes, sem refazer as migrations nem os seeders. Achado: com o banco congelado, a requisição fica presa até o 504 do Nginx, em 60 s |
+| A12 | Portas internas protegidas | `docker ps` mostra só a 8080, a 8025, a 3000 e a 9090, todas no 127.0.0.1; `/nginx_status` na 8080 responde 404 | Ok: as portas conferidas em 15/11/2026; o 404 do `/nginx_status`, em 14/11/2026 (o Nginx não mudou depois) |
+| A13 | Headers e informação de versão | `curl.exe -I http://localhost:8080/login`: sem `X-Powered-By`, `Server: nginx` sem versão, e os headers de segurança da aplicação | Ok: os 6 headers em telas, API, erros e `/up`; sem HSTS em HTTP. O OWASP ZAP baseline deu 0 FAIL (`docs/nuvem/SEGURANCA.md`) |
+| A14 | Nenhuma senha nova no código | Busca por `password`, `senha` e `secret` nos arquivos novos | Ok: as senhas novas (homolog, Grafana, exporter, admin e demonstração) ficam no `homolog.env`, que o Git ignora, ou só no ambiente do comando. As que já existiam ficam como estão (decisão 5) e estão nos riscos aceitos do `docs/nuvem/SEGURANCA.md` |
+| A15 | Subir de novo sem perder nada | `homolog down` (sem `-v`) e `homolog up -d --wait`: login e dados continuam | Ok, com o MySQL num volume novo (`barberflow-homolog_dbdata-r`): `down` em 2,6 s, com os volumes mantidos, e `up` em 11,8 s, com "Nothing to migrate"; o `/api/health` em 200, os mesmos 177 agendamentos e 95 pagamentos do `DemoSeeder`, o token da API de antes do `down` e a sessão do navegador valendo, e o login de novo pela API em 200 |
+| A16 | Terraform válido e testado | `tf fmt -check -recursive`, `tf validate`, `tf test` e `trivy config` (`docs/nuvem/TERRAFORM.md`) | Ok: 69 testes na raiz e 1 no bootstrap, `trivy config` sem alerta, actionlint sem aviso |
 
 ## B. AWS
 
@@ -53,3 +53,6 @@ Tudo desta parte precisa da conta do grupo e fica para depois do primeiro `apply
 
 - Mac e Linux: a homolog e o monitoramento foram conferidos só no Windows 11, com o Docker Desktop.
 - Qualquer item da parte B: nada foi criado na AWS.
+- O volume `barberflow-homolog_dbdata`, com a senha perdida, ficou sem uso: o A15 e a queda do banco usaram um volume novo. Apagar ou trocar o antigo (e apagar o novo, se ele não for mais usado) espera o OK do Leonam.
+- A queda do app e a do cache com o banco num volume: os dois casos não dependem de onde o MySQL guarda os dados, e valem os números do tmpfs.
+- O HSTS ao vivo: a homolog não tem TLS. Ele fica provado pelos testes automáticos e volta a ser conferido no B3.
