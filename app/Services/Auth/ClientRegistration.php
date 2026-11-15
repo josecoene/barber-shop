@@ -43,13 +43,22 @@ class ClientRegistration
      * Regras de validação do cadastro. O domínio barberflow.invalid é reservado
      * para o e-mail de cadastros excluídos e nunca recebe mensagem.
      *
+     * O e-mail não aceita acento nem outro caractere fora do ASCII (regra ascii).
+     * O MySQL compara sem diferenciar acento, e maria@gmáil.com (o domínio
+     * xn--gmil-6na.com, que qualquer um pode registrar) seria, para o banco, o
+     * mesmo e-mail de maria@gmail.com: a conta com o endereço parecido tomaria o
+     * lugar da conta da dona do e-mail de verdade, que receberia "Este e-mail já
+     * está cadastrado.", e o "esqueci minha senha" mandaria o link para o
+     * endereço parecido. A confirmação também nunca liga a conta a um cadastro
+     * de cliente com outro e-mail (App\Listeners\LinkClientToVerifiedUser).
+     *
      * @return array<string, mixed>
      */
     public static function rules(): array
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'not_regex:/@barberflow\.invalid$/i', 'unique:users,email'],
+            'email' => ['required', 'string', 'email', 'ascii', 'max:255', 'not_regex:/@barberflow\.invalid$/i', 'unique:users,email'],
             'phone' => ['nullable', 'string', 'max:20'],
             'password' => ['required', 'string', 'confirmed', Password::defaults()],
         ];

@@ -3,16 +3,22 @@
 namespace Tests\Feature;
 
 use App\Enums\UserRole;
+use App\Listeners\LinkClientToVerifiedUser;
 use App\Models\Client;
 use App\Models\User;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Auth\Notifications\VerifyEmail;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -70,6 +76,45 @@ class RegistrationTest extends TestCase
         });
 
         return $url;
+    }
+
+    /**
+     * Conta de cliente gravada direto no banco, ainda sem o e-mail confirmado e
+     * com o link de confirmação enviado: serve para um e-mail que o cadastro
+     * pela API recusa, como o de uma conta criada antes da regra ascii.
+     */
+    private function unconfirmedAccount(string $email): User
+    {
+        $user = new User(['name' => 'Outra Pessoa', 'email' => $email, 'password' => self::PASSWORD]);
+        $user->forceFill(['role' => UserRole::Client])->save();
+        $user->sendEmailVerificationNotification();
+
+        return $user;
+    }
+
+    /**
+     * Faz o SQLite comparar o clients.email como o MySQL do projeto (collation
+     * utf8mb4_unicode_ci), sem diferenciar maiúsculas nem acento, na busca e no
+     * índice unique. No MySQL (composer test:mysql) a comparação já é essa, e
+     * nada muda. Chame antes de gravar o primeiro cliente: a coluna é trocada
+     * pela recriação da tabela, que o RefreshDatabase desfaz no fim do teste.
+     */
+    private function compareClientEmailsLikeMySql(): void
+    {
+        $connection = DB::connection();
+
+        if ($connection->getDriverName() !== 'sqlite') {
+            return;
+        }
+
+        $registered = $connection->getPdo()->createCollation('barberflow_mysql_ci', static fn (string $a, string $b): int => strcmp(
+            Str::lower(Str::transliterate($a)),
+            Str::lower(Str::transliterate($b)),
+        ));
+
+        $this->assertTrue($registered);
+
+        Schema::table('clients', fn (Blueprint $table) => $table->string('email')->collation('barberflow_mysql_ci')->change());
     }
 
     /**
@@ -170,6 +215,29 @@ class RegistrationTest extends TestCase
             ->assertJsonValidationErrors(['email', 'name', 'phone']);
 
         $this->assertSame(1, User::count());
+    }
+
+    /**
+     * Para o MySQL, cliente.a3@barberflów.test é o mesmo e-mail de
+     * cliente.a3@barberflow.test, mas o link de confirmação iria para outro
+     * domínio (xn--barberflw-d7a.test). Sem a regra ascii, essa conta tomaria o
+     * lugar da conta da dona do e-mail de verdade.
+     */
+    public function test_registration_refuses_an_email_with_an_accent(): void
+    {
+        $message = 'O campo e-mail deve conter apenas letras, números e símbolos simples (sem acento).';
+
+        $this->postJson('/api/register', $this->payload(['email' => 'cliente.a3@barberflów.test']))
+            ->assertUnprocessable()
+            ->assertExactJson(['message' => $message, 'errors' => ['email' => [$message]]]);
+
+        $this->from('/register')
+            ->post('/register', $this->payload(['email' => 'cliente.a3@barberflów.test']))
+            ->assertRedirect('/register')
+            ->assertSessionHasErrors(['email' => $message]);
+
+        $this->assertSame(0, User::count());
+        Notification::assertNothingSent();
     }
 
     /**
@@ -288,6 +356,72 @@ class RegistrationTest extends TestCase
             ->once()
             ->withArgs(fn (string $message, array $context) => $context === ['user_id' => $user->id, 'client_id' => $client->id]
                 && ! str_contains($message, '@'));
+    }
+
+    /**
+     * Pares de e-mails que só o acento separa. Para o MySQL, os dois são o
+     * mesmo e-mail, mas o domínio barberflów.test (xn--barberflw-d7a.test) é
+     * outro, de outro dono.
+     *
+     * @return array<string, array{string, string}>
+     */
+    public static function similarEmails(): array
+    {
+        return [
+            // A conta de antes da regra ascii, com o domínio parecido, e o cadastro da barbearia.
+            'conta com acento e cadastro sem' => ['cliente.a3@barberflów.test', self::EMAIL],
+            // A conta de verdade e um cadastro da barbearia com o domínio parecido.
+            'conta sem acento e cadastro com' => [self::EMAIL, 'cliente.a3@barberflów.test'],
+        ];
+    }
+
+    /**
+     * No MySQL, a busca da confirmação pelo e-mail acha o cadastro com o e-mail
+     * parecido. Ligar a conta a ele daria a quem só provou ser dono de outro
+     * endereço o histórico, o telefone, os pagamentos e a fidelidade de outra
+     * pessoa. A conta fica sem cadastro, nenhum cadastro novo nasce (o índice
+     * unique do banco recusaria o e-mail) e o log leva só os ids.
+     */
+    #[DataProvider('similarEmails')]
+    public function test_confirming_the_email_does_not_take_a_client_with_a_similar_email(string $accountEmail, string $clientEmail): void
+    {
+        Log::spy();
+        $this->compareClientEmailsLikeMySql();
+
+        $client = Client::create(['name' => 'Cliente da Barbearia', 'email' => $clientEmail]);
+        $user = $this->unconfirmedAccount($accountEmail);
+
+        $this->actingAs($user)->get($this->verificationUrl($user))->assertRedirect('/');
+
+        $this->assertTrue($user->fresh()->hasVerifiedEmail());
+        $this->assertNull($client->fresh()->user_id);
+        $this->assertNull($user->fresh()->client);
+        $this->assertSame(1, Client::count());
+
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->withArgs(fn (string $message, array $context) => $message === LinkClientToVerifiedUser::SIMILAR_EMAIL
+                && $context === ['user_id' => $user->id, 'client_id' => $client->id]);
+    }
+
+    /**
+     * Maiúsculas e minúsculas não mudam o e-mail: a conta de
+     * cliente.a3@barberflow.test é ligada ao cadastro que a barbearia gravou
+     * como Cliente.A3@BarberFlow.test, que a busca acha no MySQL.
+     */
+    public function test_confirming_the_email_links_the_client_whose_email_differs_only_in_capital_letters(): void
+    {
+        Log::spy();
+        $this->compareClientEmailsLikeMySql();
+
+        $client = Client::create(['name' => 'Cliente da Barbearia', 'email' => 'Cliente.A3@BarberFlow.test']);
+        $user = $this->register();
+
+        $this->actingAs($user)->get($this->verificationUrl($user))->assertRedirect('/');
+
+        $this->assertTrue($client->fresh()->user()->is($user));
+        $this->assertSame(1, Client::count());
+        Log::shouldNotHaveReceived('warning');
     }
 
     /**
