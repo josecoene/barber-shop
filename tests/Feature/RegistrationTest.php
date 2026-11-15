@@ -293,6 +293,10 @@ class RegistrationTest extends TestCase
 
     public function test_invalid_or_expired_confirmation_links_are_refused(): void
     {
+        // As recusas abrem a página de erro 403, que usa o layout com o Vite: sem isto, o teste
+        // depende do npm run build (o CI roda os testes sem o build).
+        $this->withoutVite();
+
         $user = $this->register();
         $url = $this->verificationUrl($user);
 
