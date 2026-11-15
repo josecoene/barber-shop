@@ -18,7 +18,7 @@
                         <dd class="text-break">{{ $user->name }}</dd>
 
                         <dt>E-mail</dt>
-                        <dd class="text-break">{{ $user->email }}</dd>
+                        <dd class="text-break">@include('partials.email-text', ['email' => $user->email])</dd>
 
                         <dt>Perfil</dt>
                         <dd>{{ $user->role?->label() }}</dd>

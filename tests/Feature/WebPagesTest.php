@@ -752,12 +752,28 @@ class WebPagesTest extends TestCase
         $this->actingAs($client)
             ->get('/account')
             ->assertOk()
-            ->assertSee($client->email)
+            ->assertSeeText($client->email)
             ->assertSee('Cliente')
             ->assertSee('Confirmado')
             ->assertSee('data-password-form', false)
             ->assertSee('name="current_password"', false)
             ->assertSee('name="password_confirmation"', false);
+    }
+
+    /**
+     * No celular, o e-mail da Minha conta quebra linha só depois do @ e antes
+     * de cada ponto, como na tela "Confirme seu e-mail" (o mesmo parcial
+     * partials.email-text, com o escape conferido no teste dela), e não no meio
+     * de uma palavra.
+     */
+    public function test_account_page_breaks_the_email_only_after_the_at_and_before_the_dots(): void
+    {
+        $client = $this->makeClientUser(Client::create(['name' => 'Cliente', 'email' => 'maria.helena.souza@clientes.barberflow.test']));
+
+        $this->actingAs($client)
+            ->get('/account')
+            ->assertOk()
+            ->assertSee('<dd class="text-break">maria<wbr>.helena<wbr>.souza@<wbr>clientes<wbr>.barberflow<wbr>.test</dd>', false);
     }
 
     /**
