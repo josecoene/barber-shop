@@ -38,9 +38,9 @@ O JSON pode trazer os acentos escapados (`"n\u00e3o"` no lugar de `"não"`). É 
 | `405 Method Not Allowed` | Método errado | A rota existe, mas não com esse método (ex.: `DELETE /api/services` ou `DELETE /api/appointments/1`) |
 | `409 Conflict` | Conflito com a agenda | Excluir cliente, barbeiro ou serviço com agendamento futuro ativo, ou remarcar (ou registrar o pagamento de) um agendamento que outra pessoa mudou no mesmo instante. A resposta diz o que fazer |
 | `419` | Sessão expirada | Só nas telas: o token CSRF da sessão do navegador não vale mais |
-| `422 Unprocessable Entity` | Falha de validação | Campo ausente, inválido, duplicado ou fora do limite, filtro de listagem inválido, e-mail ou senha errados no login, horário ocupado ou fora do expediente, mudança de status que não vale, pagamento de atendimento não concluído ou que já tem pagamento, período do dashboard maior que 366 dias |
-| `429 Too Many Requests` | Limite de requisições | Passou do limite por minuto (veja [Limites de requisição](#limites-de-requisição)) |
-| `503 Service Unavailable` | Fora do ar | `/health` quando o banco ou o cache não responde |
+| `422 Unprocessable Entity` | Falha de validação | Campo ausente, inválido, duplicado ou fora do limite, filtro de listagem inválido, e-mail ou senha errados no login, horário ocupado ou fora do expediente, mudança de status que não vale, pagamento de atendimento não concluído ou que já tem pagamento, prêmio de fidelidade sem direito ou com o valor junto, lembrete de agendamento que não recebe lembrete, período do dashboard maior que 366 dias |
+| `429 Too Many Requests` | Limite de requisições | Passou do limite por minuto (veja [Limites de requisição](#limites-de-requisição)), ou pediu o "Enviar lembrete agora" do mesmo agendamento antes de 10 minutos, mesmo depois de remarcar |
+| `503 Service Unavailable` | Fora do ar | `/health` quando o banco ou o cache não responde, ou o e-mail do "Enviar lembrete agora" que não saiu |
 
 ### Sem login (401)
 
@@ -78,7 +78,7 @@ Só acontece nas chamadas feitas pelas telas, que usam a sessão do navegador: o
 { "message": "Muitas requisições. Tente de novo em 42 segundos." }
 ```
 
-A resposta traz o cabeçalho `Retry-After` (segundos até liberar) e os `X-RateLimit-Limit` e `X-RateLimit-Remaining`. O login errado várias vezes tem uma resposta própria, descrita em [Login](#login-post-login).
+A resposta traz o cabeçalho `Retry-After` (segundos até liberar) e os `X-RateLimit-Limit` e `X-RateLimit-Remaining`. O login errado várias vezes tem uma resposta própria, descrita em [Login](#login-post-login), e o "Enviar lembrete agora" também, com o `Retry-After` e a mensagem de quando mandar de novo (veja [Lembretes](#lembretes)).
 
 ### Erro de validação (422)
 
@@ -386,14 +386,16 @@ Cada usuário tem um perfil (`users.role`): `admin`, `barber` (barbeiro) ou `cli
 | Clientes | tudo | ver, cadastrar e editar (não exclui) | ver e editar só o próprio cadastro (nome e telefone). Não lista os outros |
 | Agendamentos | tudo | ver, agendar, remarcar e mudar o status só na própria agenda | agendar para si (até 3 agendamentos ativos), ver os próprios e cancelar até 2 horas antes. Não remarca |
 | Horários livres | sim | sim | sim |
-| Pagamentos | tudo: registrar, corrigir, marcar como pago e estornar | registrar e ver os da própria agenda e marcar como pago um pendente deles. Não corrige nem estorna | ver os próprios |
+| Lembrete ("Enviar lembrete agora") | de qualquer agendamento | só dos agendamentos da própria agenda | não, nem do próprio horário |
+| Pagamentos | tudo: registrar (com ou sem o prêmio da fidelidade), corrigir, marcar como pago e estornar | registrar (com ou sem o prêmio) e ver os da própria agenda e marcar como pago um pendente deles. Não corrige nem estorna | ver os próprios |
+| Fidelidade | ver a de qualquer cliente | ver a de qualquer cliente | ver só a própria |
 | Dashboard | ver | não | não |
 | Conta (`/user`, `/user/password`, `/logout`) | sim | sim | sim |
 
-- Ação fora da tabela dá `403` (ex.: barbeiro em `POST /services`, cliente em `GET /clients`, barbeiro agendando na agenda de outro, cliente agendando para outra pessoa, barbeiro estornando um pagamento ou abrindo o dashboard).
-- Serviços, barbeiros, clientes, agendamentos e pagamentos exigem o e-mail confirmado. A conta de cliente que ainda não confirmou recebe `403` com `Confirme seu e-mail para continuar.` (admin e barbeiro já nascem com o e-mail confirmado).
+- Ação fora da tabela dá `403` (ex.: barbeiro em `POST /services`, cliente em `GET /clients`, barbeiro agendando na agenda de outro, cliente agendando para outra pessoa, barbeiro mandando o lembrete de um agendamento de outro barbeiro, cliente vendo a fidelidade de outro, barbeiro estornando um pagamento ou abrindo o dashboard).
+- Serviços, barbeiros, clientes, agendamentos, lembretes, fidelidade e pagamentos exigem o e-mail confirmado. A conta de cliente que ainda não confirmou recebe `403` com `Confirme seu e-mail para continuar.` (admin e barbeiro já nascem com o e-mail confirmado).
 - O cliente que manda `email` ao editar o próprio cadastro, mesmo vazio ou `null`, recebe `422` com `O campo e-mail não é permitido.`: o e-mail do cadastro fica com a barbearia, porque foi por ele que a conta foi ligada.
-- Os detalhes por perfil estão em [Appointments](#appointments-agendamentos), [Payments](#payments-pagamentos) e [Dashboard](#dashboard). A fidelidade entra na próxima etapa, com as regras por perfil descritas em [`ARQUITETURA.md`](ARQUITETURA.md#perfis-e-permissões).
+- Os detalhes por perfil estão em [Appointments](#appointments-agendamentos), [Lembretes](#lembretes), [Payments](#payments-pagamentos), [Fidelidade](#fidelidade) e [Dashboard](#dashboard).
 
 ---
 
@@ -409,6 +411,8 @@ Os valores ficam em `config/barberflow.php` e os que têm variável podem mudar 
 | Cadastro de conta de cliente | 5 por minuto | IP | (fixo) |
 | Esqueci e redefinir a senha | 5 por minuto | e-mail + IP | (fixo) |
 | Reenvio do e-mail de confirmação | 6 por minuto | usuário | (fixo) |
+| "Enviar lembrete agora" | 1 a cada 10 minutos, contando o lembrete do comando e mesmo depois de remarcar | agendamento | (fixo, `resend_minutes`) |
+| "Enviar lembrete agora" | 10 por minuto | usuário | (fixo) |
 | `GET /health` | sem limite | | |
 
 Atrás de um balanceador de carga, defina `TRUSTED_PROXIES` (ex.: a faixa da rede do ALB). Sem ele, todo visitante parece vir do IP do balanceador e todos dividem a mesma contagem. Com o `APP_URL` em `https`, ele também é preciso para o link de confirmação de e-mail valer: o link é assinado com o endereço `https`, e o app só sabe que a requisição veio por `https` pelo cabeçalho do balanceador.
@@ -562,15 +566,18 @@ Resposta: `204 No Content`.
 
 A resposta traz também `has_login` (`true` quando o cliente tem conta para entrar no sistema). A conta é ligada ao cadastro quando o cliente confirma o e-mail (veja [Conta de cliente](#conta-de-cliente)).
 
+Na listagem (`GET /clients`), cada cliente traz também `loyalty`, o resumo da fidelidade dele (visitas, progresso e prêmios), contado na própria consulta da página, sem uma consulta por cliente. Os campos estão em [Fidelidade](#fidelidade).
+
 ### Endpoints
 
 | Método | Rota | Descrição | Resposta |
 |---|---|---|---|
-| GET | `/clients` | Lista os clientes (filtros: `search`, `per_page`, `page`) | `200` + página |
+| GET | `/clients` | Lista os clientes, cada um com a fidelidade em `loyalty` (filtros: `search`, `per_page`, `page`) | `200` + página |
 | POST | `/clients` | Cadastra um cliente | `201` + cliente criado |
 | GET | `/clients/{id}` | Mostra um cliente | `200` + cliente |
 | PUT/PATCH | `/clients/{id}` | Atualiza um cliente | `200` + cliente atualizado |
 | DELETE | `/clients/{id}` | Exclui o cliente e apaga os dados pessoais dele. Com agendamento futuro ativo, `409` ([veja](#excluir-cadastro-com-agendamento-futuro-409)) | `204` |
+| GET | `/clients/{id}/loyalty` | Fidelidade do cliente: visitas, progresso e prêmios ([veja](#fidelidade)) | `200` + resumo |
 
 ### Exemplos
 
@@ -711,6 +718,7 @@ Horário de um cliente com um barbeiro para um serviço. As regras ficam em `App
 | Remarcar (`PUT`/`PATCH`) | sim | só os dele, sem passar para outro barbeiro | não: cancela e agenda de novo |
 | Mudar o status | qualquer transição válida | qualquer transição válida, nos dele | só cancelar, até `CLIENT_CANCEL_MIN_HOURS` horas antes (padrão 2) |
 | Horários livres | sim | sim | sim |
+| Enviar lembrete agora ([veja](#lembretes)) | sim | só nos dele | não (`403`, mesmo no próprio horário) |
 
 `barber_id` de outro barbeiro (no `POST` do barbeiro) ou `client_id` de outro cliente (no `POST` do cliente) dá `403`. Na listagem, os filtros não abrem a agenda dos outros: `barber_id` de outro barbeiro devolve a lista vazia, e não `403`.
 
@@ -736,6 +744,7 @@ O servidor preenche o resto, e ignora esses campos quando vêm no corpo:
 | `status` e `status_label` | o status (começa em `scheduled`) e o nome dele em português |
 | `client`, `barber` e `service` | só `id` e `name` de cada um, sem e-mail e telefone. Continuam aparecendo depois que o cadastro é excluído (o cliente, anonimizado) |
 | `payment` | o pagamento do atendimento, só com `id`, `status` e `status_label` (ex.: `{"id": 9, "status": "paid", "status_label": "Pago"}`), ou `null` quando ainda não há pagamento. Valor e forma ficam em [Payments](#payments-pagamentos) |
+| `reminder_sent_at` | quando saiu o lembrete por e-mail, em UTC (ISO 8601), ou `null` enquanto não saiu. Só o servidor grava: o comando `appointments:send-reminders` e o "Enviar lembrete agora" (veja [Lembretes](#lembretes)). Remarcar a data ou o horário volta a `null`, para o lembrete do horário novo sair |
 
 ### Regras de horário
 
@@ -790,6 +799,7 @@ A barbearia (admin e barbeiro) cancela a qualquer momento; a janela vale só par
 | GET | `/appointments/{id}` | Mostra um agendamento | `200` + agendamento |
 | PUT/PATCH | `/appointments/{id}` | Remarca (`date`, `start_time`, `barber_id`, `service_id`) e muda as `notes` | `200` + agendamento |
 | PATCH | `/appointments/{id}/status` | Muda o status (`{"status": "confirmed"}`) | `200` + agendamento |
+| POST | `/appointments/{id}/reminder` | Envia o lembrete por e-mail na hora, sem corpo ([veja](#lembretes)) | `200` + agendamento |
 | GET | `/barbers/{id}/available-slots` | Horários livres do barbeiro no dia | `200` + lista |
 
 Não existe `DELETE /appointments/{id}` (`405`): cancelar é mudar o status, e o agendamento fica no histórico.
@@ -798,6 +808,7 @@ Não existe `DELETE /appointments/{id}` (`405`): cancelar é mudar o status, e o
 - só com o status agendado ou confirmado;
 - quando a data, o horário, o barbeiro ou o serviço mudam, as regras de horário rodam de novo, sem contar o próprio agendamento, e o término é recalculado. Mudar só as `notes` não confere o horário;
 - o preço só muda quando o serviço muda;
+- mudar a data ou o horário volta o `reminder_sent_at` a `null`: o lembrete que saiu falava do horário antigo, e o comando manda o do horário novo. Trocar só o barbeiro, o serviço ou as observações não mexe nele;
 - `client_id` e `status` mandados no corpo são ignorados, sem erro: o cliente não muda, e o status tem rota própria;
 - no agendamento de um cliente excluído (um passado que ficou como agendado), `notes` preenchido dá `422` em `notes`: `O cliente foi excluído: deixe as observações em branco.` A exclusão apagou as observações (LGPD), e `notes` vazio ou `null` continua aceito;
 - se outra pessoa trocou o barbeiro ou o serviço do mesmo agendamento no mesmo instante, a resposta é `409` com `O agendamento mudou enquanto você editava. Recarregue e tente de novo.`
@@ -853,6 +864,7 @@ Resposta `201`:
 ```json
 {
   "status": "scheduled",
+  "reminder_sent_at": null,
   "client_id": 1,
   "barber_id": 1,
   "service_id": 1,
@@ -940,6 +952,125 @@ Com só agendamentos passados, cancelados ou com falta, a exclusão segue normal
 
 ---
 
+## Lembretes
+
+Lembrete por e-mail do horário marcado, mandado na hora, sem fila. As regras ficam em `App\Services\ReminderSender`, e o e-mail em `App\Mail\AppointmentReminder` (Markdown, sempre em português).
+
+**Quem recebe:** o cliente de um agendamento agendado ou confirmado que ainda não começou. Nunca o cliente excluído, nem um e-mail do domínio `barberflow.invalid` (o de quem foi excluído).
+
+**O que o e-mail traz:**
+
+- o assunto `Lembrete do seu horário na BarberFlow`, com o nome da barbearia (`BARBERSHOP_NAME`; vazio, vale o `APP_NAME`);
+- a data, o horário, o serviço e o barbeiro;
+- o endereço e o telefone da barbearia (`BARBERSHOP_ADDRESS` e `BARBERSHOP_PHONE`), só quando estão preenchidos;
+- como cancelar: quem tem conta cancela em Meus horários (o botão do e-mail leva ao endereço do `APP_URL`), até `CLIENT_CANCEL_MIN_HOURS` horas antes; quem não tem conta fala com a barbearia, no mesmo prazo.
+
+O corpo do e-mail não leva o nome, o e-mail, o telefone nem as observações do cliente, e o cabeçalho `X-Appointment-Id` leva só o id do agendamento, para achar a mensagem sem abrir o corpo. O que o `ReminderSender` grava no log da aplicação (o aviso de um envio que falhou) também leva só o id.
+
+O `MAIL_MAILER=log` do `.env.example` é outra coisa e só serve no local: em vez de enviar, ele grava a mensagem inteira no fim do `storage/logs/laravel.log`, com o endereço do cliente (`To:`), a data, o horário, o serviço e o barbeiro, como faz com a confirmação de conta e o "esqueci a senha". Fora do local, use um `MAIL_MAILER` que envie de verdade, como o `smtp`, para o log não guardar dado pessoal.
+
+### Envio automático (comando)
+
+O comando `appointments:send-reminders` manda o lembrete dos agendamentos que começam depois de agora e até `REMINDER_HOURS_BEFORE` horas à frente (padrão 24, com o limite incluído) e que ainda não receberam (`reminder_sent_at` nulo). O agendador do Laravel (`routes/console.php`) roda o comando a cada 15 minutos, com `onOneServer()` (com várias instâncias, só uma roda; precisa de cache compartilhado) e `withoutOverlapping(10)` (uma rodada não começa antes de a anterior terminar, e a trava vence em 10 minutos).
+
+```bash
+php artisan appointments:send-reminders
+```
+
+A saída diz quantos lembretes saíram, quantos foram pulados e quantos falharam (ex.: `Enviados: 1. Pulados: 0. Com falha: 0.`):
+
+- **pulados:** o de cliente excluído, o de e-mail do domínio `barberflow.invalid` e o que outro envio pegou antes;
+- **com falha:** o e-mail não saiu. O `reminder_sent_at` volta a nulo, e a rodada seguinte tenta de novo. Com alguma falha, o comando termina com o código 1, para o monitoramento perceber.
+
+Cada lembrete sai uma vez. Antes de enviar, o comando reserva a linha com um `UPDATE ... WHERE reminder_sent_at IS NULL`, que também confere o status, a data, o horário, o barbeiro e o serviço que ele leu: duas rodadas ao mesmo tempo, ou o comando e o "Enviar lembrete agora", não mandam o mesmo lembrete duas vezes, e o e-mail fala do horário que estava na linha. Remarcar a data ou o horário volta o `reminder_sent_at` a nulo, e o lembrete do horário novo sai na rodada dele.
+
+O "agora" é o `now()` do PHP, no fuso do `APP_TIMEZONE`: o banco filtra só pela data (`appointments.date`), e a conta exata do horário é feita em PHP, igual no SQLite e no MySQL.
+
+O agendador precisa estar rodando: no local, `php artisan schedule:work` num terminal à parte; num servidor, o cron chama `php artisan schedule:run` a cada minuto (veja o README). Sem ele, o lembrete automático não sai, e o "Enviar lembrete agora" continua funcionando.
+
+### Enviar lembrete agora
+
+`POST /appointments/{id}/reminder`, sem corpo: manda o lembrete na hora, grava o `reminder_sent_at` e devolve o agendamento, no mesmo formato do `GET /appointments/{id}`. É o botão "Enviar lembrete agora" do detalhe da Agenda.
+
+| Perfil | Pode |
+|---|---|
+| Admin | qualquer agendamento |
+| Barbeiro | só os da própria agenda (o de outro barbeiro dá `403`) |
+| Cliente | não, nem do próprio horário (`403`) |
+
+- Vale a qualquer momento antes do início, mesmo fora da janela do comando, e conta como o lembrete do agendamento: depois dele, o comando não manda outro, a não ser que a data ou o horário sejam remarcados.
+- Um envio a cada 10 minutos por agendamento (`resend_minutes`, fixo em `config/barberflow.php`), contando o lembrete do comando. Antes disso, `429` com o `Retry-After` em segundos. O limite é por agendamento: o de outro agendamento sai na hora.
+- Remarcar não libera outro envio manual antes dos 10 minutos: a remarcação volta o `reminder_sent_at` a nulo (para o comando mandar o lembrete do horário novo na rodada dele), mas o último envio manual também fica guardado no cache, e é ele que vale.
+- Cada usuário manda até 10 lembretes por minuto, somando todos os agendamentos (limitador `reminders`). Depois disso, `429` com `Retry-After`, como nos outros [limites de requisição](#limites-de-requisição).
+- A linha do agendamento fica travada enquanto as regras são conferidas: dois cliques ao mesmo tempo passam um de cada vez, e o segundo já recebe o `429`. O e-mail sai depois de soltar a trava.
+- Se o e-mail não sair, a resposta é `503`, e o `reminder_sent_at` volta ao que era (nulo, ou a hora do envio anterior).
+
+| Situação | Resposta |
+|---|---|
+| Status que não recebe lembrete (em atendimento, concluído, cancelado ou faltou) | `422` em `reminder`: `Só é possível enviar o lembrete de um agendamento com status Agendado ou Confirmado.` |
+| O agendamento já começou | `422` em `reminder`: `Este agendamento já começou: não há lembrete para enviar.` |
+| Cliente excluído | `422` em `reminder`: `O cliente foi excluído: não há para quem enviar o lembrete.` |
+| E-mail do domínio `barberflow.invalid` | `422` em `reminder`: `O cadastro do cliente não tem um e-mail que receba mensagens.` |
+| Outro lembrete do mesmo agendamento há menos de 10 minutos, mesmo com uma remarcação no meio | `429` com `Retry-After`: `Um lembrete deste agendamento saiu há menos de 10 minutos. Tente de novo em 6 minutos.` |
+| Mais de 10 envios no mesmo minuto pelo mesmo usuário | `429` com `Retry-After`: `Muitas requisições. Tente de novo em 60 segundos.` |
+| O e-mail não saiu | `503`: `Não foi possível enviar o lembrete agora. Tente de novo em alguns minutos.` |
+
+### Exemplos
+
+**Enviar agora** (como admin):
+
+```bash
+curl -X POST http://localhost:8000/api/appointments/15/reminder \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Resposta `200`, com o `reminder_sent_at` da hora do envio:
+
+```json
+{
+  "id": 15,
+  "client_id": 2,
+  "barber_id": 1,
+  "service_id": 1,
+  "date": "2026-11-17",
+  "start_time": "10:00:00",
+  "end_time": "10:30:00",
+  "status": "scheduled",
+  "price": "35.00",
+  "notes": null,
+  "created_at": "2026-11-16T11:00:00.000000Z",
+  "updated_at": "2026-11-16T11:00:00.000000Z",
+  "reminder_sent_at": "2026-11-16T11:00:00.000000Z",
+  "status_label": "Agendado",
+  "client": { "id": 2, "name": "Bruno Costa" },
+  "barber": { "id": 1, "name": "João Barbeiro" },
+  "service": { "id": 1, "name": "Corte de cabelo" },
+  "payment": null
+}
+```
+
+O envio não muda o `updated_at`: ele é do agendamento, e o lembrete tem a própria hora.
+
+**De novo, 4 minutos depois** (`429`, com o cabeçalho `Retry-After: 360`):
+
+```json
+{ "message": "Um lembrete deste agendamento saiu há menos de 10 minutos. Tente de novo em 6 minutos." }
+```
+
+**De um atendimento concluído** (`422`):
+
+```json
+{
+  "message": "Só é possível enviar o lembrete de um agendamento com status Agendado ou Confirmado.",
+  "errors": {
+    "reminder": ["Só é possível enviar o lembrete de um agendamento com status Agendado ou Confirmado."]
+  }
+}
+```
+
+---
+
 ## Payments (pagamentos)
 
 Pagamento de um atendimento concluído: no máximo um por agendamento. As regras ficam em `App\Services\PaymentRecorder`, os status em `App\Enums\PaymentStatus` e as formas em `App\Enums\PaymentMethod`.
@@ -949,7 +1080,7 @@ Pagamento de um atendimento concluído: no máximo um por agendamento. As regras
 | Ação | Admin | Barbeiro | Cliente |
 |---|---|---|---|
 | Listar e ver | todos | só os dos agendamentos da agenda dele | só os próprios (inclusive as observações) |
-| Registrar (`POST`) | de qualquer atendimento concluído | só dos atendimentos da agenda dele | não |
+| Registrar (`POST`), com ou sem o prêmio da fidelidade | de qualquer atendimento concluído | só dos atendimentos da agenda dele | não |
 | Corrigir valor, forma e observações (`PUT`/`PATCH`) | sim, em qualquer status | não | não |
 | Mudar o status | marcar como pago e estornar | só marcar como pago um pendente da agenda dele | não |
 
@@ -960,16 +1091,19 @@ Registrar o pagamento de um agendamento de outro barbeiro dá `403`. Conta de ba
 | Campo | Tipo | Obrigatório (POST) | Regras |
 |---|---|---|---|
 | `appointment_id` | integer | sim | agendamento que existe e está com o status `completed` (concluído) e ainda sem pagamento |
-| `amount` | decimal | não | de 0 a 999999.99, com no máximo 2 casas. Sem ele (ou `null`), vale o `price` copiado no agendamento. Na resposta, texto com 2 casas: `"35.00"` |
+| `amount` | decimal | não | de 0 a 999999.99, com no máximo 2 casas. Sem ele (ou `null`), vale o `price` copiado no agendamento. Com o prêmio da fidelidade, não mande: o valor sai do desconto (mandado, mesmo 0, dá `422`). Na resposta, texto com 2 casas: `"35.00"` |
 | `method` | string | sim | `cash` (Dinheiro), `pix` (Pix), `credit_card` (Cartão de crédito) ou `debit_card` (Cartão de débito) |
 | `status` | string | não | `pending` (Pendente) ou `paid` (Pago). Sem ele, o pagamento nasce `paid`. Ninguém registra um pagamento já estornado (`refunded` dá `422`) |
 | `notes` | string | não | até 1000 caracteres. O cliente também vê. Vazio no pagamento de cliente excluído (veja as regras) |
+| `use_loyalty_reward` | boolean | não | `true` paga com um prêmio da fidelidade do cliente: o desconto vem do `LOYALTY_DISCOUNT_PERCENT`, e o `amount` é calculado. Sem prêmio disponível, `422`. Veja [Fidelidade](#fidelidade) |
 
 O servidor preenche o resto, e ignora esses campos quando vêm no corpo:
 
 | Campo da resposta | O que é |
 |---|---|
 | `paid_at` | quando o pagamento virou pago, em UTC (ISO 8601). Vem do relógio do servidor; `null` enquanto está pendente. O estorno mantém a data em que foi pago |
+| `discount` | o desconto do prêmio da fidelidade, em texto com 2 casas. Sem o prêmio, `"0.00"` |
+| `loyalty_reward` | `true` quando o pagamento usou um prêmio da fidelidade |
 | `method_label` e `status_label` | a forma e o status em português |
 | `appointment` | o agendamento resumido: `id`, `date`, `start_time`, `end_time` e `client`, `barber` e `service` só com `id` e `name`. Sem as observações e sem o preço do agendamento |
 
@@ -977,10 +1111,11 @@ O servidor preenche o resto, e ignora esses campos quando vêm no corpo:
 
 - Só atendimento concluído recebe pagamento. Agendado, confirmado, em atendimento, cancelado e faltou dão `422` em `appointment_id`: `Só é possível registrar o pagamento de um atendimento concluído.`
 - Um pagamento por atendimento, para sempre: pendente, pago ou estornado, ele é o único. Um segundo `POST` para o mesmo agendamento, mesmo depois do estorno, dá `422` em `appointment_id`: `Este atendimento já tem pagamento registrado.`
-- Dois registros para o mesmo atendimento ao mesmo tempo passam um de cada vez: o registro trava a linha do agendamento antes de conferir o status e se já existe pagamento, e o segundo já enxerga o primeiro. O índice `unique` de `appointment_id` no banco é a última barreira: se mesmo assim um segundo pagamento chegar a ser gravado, a resposta é o mesmo `422`, nunca um erro 500.
+- Dois registros para o mesmo atendimento ao mesmo tempo passam um de cada vez: o registro trava a linha do cliente e depois a do agendamento (a mesma ordem da agenda) antes de conferir o status, se já existe pagamento e os prêmios da fidelidade, e o segundo já enxerga o primeiro. Dois pagamentos do mesmo cliente com o prêmio também passam um de cada vez, e o segundo já conta o prêmio que o primeiro usou. O índice `unique` de `appointment_id` no banco é a última barreira: se mesmo assim um segundo pagamento chegar a ser gravado, a resposta é o mesmo `422`, nunca um erro 500.
+- Com `use_loyalty_reward: true`, o pagamento usa um prêmio da fidelidade: o desconto é o `LOYALTY_DISCOUNT_PERCENT` do `price` do agendamento, e o `amount` é o que sobra. Sem prêmio disponível, `422` em `use_loyalty_reward`; com o `amount` junto, `422` em `amount` (veja [Fidelidade](#fidelidade)).
 - Se o barbeiro do agendamento mudou entre a conferência da permissão e a trava, a resposta é `409`: `O agendamento mudou enquanto você registrava o pagamento. Recarregue e tente de novo.`
-- Não existe `DELETE /payments/{id}` (`405`): estornar é mudar o status, e o pagamento fica no histórico.
-- A correção pelo admin (`PUT`/`PATCH /payments/{id}`) muda só `amount`, `method` e `notes`, com as mesmas regras do `POST` (o `amount` mandado não pode ser vazio). O agendamento, o status e o `paid_at` não mudam por ela.
+- Não existe `DELETE /payments/{id}` (`405`): estornar é mudar o status, e o pagamento fica no histórico. O estorno de um pagamento com o prêmio devolve o prêmio ao cliente.
+- A correção pelo admin (`PUT`/`PATCH /payments/{id}`) muda só `amount`, `method` e `notes`, com as mesmas regras do `POST` (o `amount` mandado não pode ser vazio). O agendamento, o status, o `paid_at`, o `discount` e o `loyalty_reward` não mudam por ela.
 - Excluir o cliente apaga as observações (`notes`) dos pagamentos dos agendamentos dele, junto com as dos agendamentos (LGPD). O pagamento continua no histórico, e o atendimento concluído dele ainda pode ser pago, mas sem observações: no registro e na correção, `notes` preenchido dá `422` em `notes` (`O cliente foi excluído: deixe as observações em branco.`), porque um texto novo voltaria a ligar dado pessoal ao cadastro. A conferência vem depois da trava, então um registro ou uma correção que esperou a exclusão terminar também é recusado.
 
 ### Status e transições
@@ -1043,6 +1178,8 @@ Resposta `201`:
 
 ```json
 {
+  "discount": "0.00",
+  "loyalty_reward": false,
   "appointment_id": 9,
   "amount": "25.00",
   "method": "pix",
@@ -1071,6 +1208,18 @@ Depois disso, o agendamento traz o pagamento resumido (`GET /appointments/9`):
 ```json
 "payment": { "id": 9, "status": "paid", "status_label": "Pago" }
 ```
+
+**Registrar com o prêmio da fidelidade**, sem o `amount` (o exemplo completo, com a consulta antes e depois, está em [Fidelidade](#fidelidade)):
+
+```bash
+curl -X POST http://localhost:8000/api/payments \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"appointment_id":13,"method":"cash","use_loyalty_reward":true}'
+```
+
+Resposta `201` com `"amount": "0.00"`, `"discount": "35.00"` e `"loyalty_reward": true` (com o desconto padrão de 100%).
 
 **Atendimento que já tem pagamento**, ou não concluído (`422`):
 
@@ -1145,6 +1294,174 @@ Resposta `200` com `"amount": "20.00"` e as observações novas; `status`, `paid
 
 ---
 
+## Fidelidade
+
+A cada `LOYALTY_VISITS` visitas (padrão 10), o cliente ganha um prêmio: `LOYALTY_DISCOUNT_PERCENT` % de desconto (padrão 100, o atendimento grátis) no pagamento de um atendimento. As regras ficam em `App\Services\LoyaltyService`, e os dois números em `config/barberflow.php`, lidos do `.env`.
+
+**Regras:**
+
+- visita é um atendimento concluído do cliente. Cancelado, faltou e o que ainda vai acontecer não contam;
+- o atendimento pago com o prêmio não conta como visita. Na hora de pagar, o próprio atendimento que está sendo pago também fica de fora: ele ainda não ajuda a ganhar o prêmio que o pagaria (a cada 10 atendimentos, é o seguinte que sai com o desconto);
+- prêmios ganhos: visitas ÷ `LOYALTY_VISITS`, sem as casas decimais. Disponíveis: ganhos menos usados, nunca negativo;
+- usado é o pagamento com o prêmio que não foi estornado, pendente ou pago. O estorno devolve o prêmio, e o atendimento continua fora das visitas, para o cliente não ganhar a visita e o prêmio de volta ao mesmo tempo. O estorno de um pagamento comum mantém a visita, porque o atendimento aconteceu;
+- o desconto é o `price` do agendamento × `LOYALTY_DISCOUNT_PERCENT` ÷ 100, arredondado no centavo, e o valor é o que sobra do preço (50% de 35,55 dá desconto 17,78 e valor 17,77). A conta é feita em centavos, sem o erro de arredondamento do número decimal.
+
+As contas são contagens no banco, iguais no SQLite e no MySQL. A listagem de clientes faz as mesmas contas na própria consulta da página, sem uma consulta por cliente.
+
+### Consultar a fidelidade
+
+`GET /clients/{id}/loyalty`. O admin e o barbeiro veem a de qualquer cliente; o cliente, só a própria (a de outro dá `403`). Cliente excluído dá `404`.
+
+| Parâmetro | Regras |
+|---|---|
+| `appointment_id` | opcional: um agendamento deste cliente, que fica fora das visitas. É a conta do pagamento dele com o prêmio, a mesma do `POST /payments`, que o modal de pagamento das telas usa para mostrar se o prêmio vale. O de outro cliente, o que não existe e o de uma agenda que o usuário não vê (o barbeiro, num agendamento de outro barbeiro) dão o mesmo `422` (`O agendamento informado não foi encontrado entre os deste cliente.`), para a resposta não contar quais agendamentos das outras agendas são deste cliente |
+
+| Campo da resposta | O que é |
+|---|---|
+| `client_id` | o cliente |
+| `visits` | as visitas (sem o `appointment_id`, quando ele vem) |
+| `visits_per_reward` | o `LOYALTY_VISITS`, no mínimo 1 |
+| `progress` | visitas desde o último prêmio ganho, de 0 a `visits_per_reward` menos 1 (ex.: 7 de 10) |
+| `rewards_earned` | prêmios ganhos |
+| `rewards_used` | prêmios usados |
+| `available_rewards` | prêmios para usar |
+| `discount_percent` | o `LOYALTY_DISCOUNT_PERCENT`, de 0 a 100 |
+
+A listagem de clientes (`GET /clients`) traz o mesmo resumo, sem o `client_id`, em `loyalty`, em cada cliente da página.
+
+### Usar o prêmio no pagamento
+
+No `POST /payments`, mande `"use_loyalty_reward": true` e deixe o `amount` de fora. A resposta traz `"loyalty_reward": true`, o `discount` e o `amount` que sobrou. Quem pode é quem registra o pagamento: o admin e o barbeiro do agendamento.
+
+| Situação | Resposta |
+|---|---|
+| Sem prêmio disponível | `422` em `use_loyalty_reward`: `O cliente ainda não tem prêmio de fidelidade disponível: 7 de 10 visitas, sem contar este atendimento.` |
+| `amount` mandado junto, mesmo 0 | `422` em `amount`: `Com o prêmio de fidelidade, o valor é calculado pelo desconto: não envie o valor.` |
+
+O registro trava a linha do cliente antes da do agendamento: dois pagamentos do mesmo cliente com o prêmio, ao mesmo tempo, passam um de cada vez, e o segundo já conta o prêmio que o primeiro usou (o `LoyaltyConcurrencyTest` confere no MySQL). A correção do admin (`PUT /payments/{id}`) não mexe no `discount` nem no `loyalty_reward`, e o estorno devolve o prêmio.
+
+No [dashboard](#dashboard), o corte grátis (valor zero) não conta como pagamento: fica fora do `revenue.payments`, do ticket médio e das formas de pagamento, porque não entrou dinheiro, e o atendimento continua contando como concluído. O prêmio com desconto parcial (`LOYALTY_DISCOUNT_PERCENT` menor que 100) tem valor e conta como qualquer pagamento.
+
+### Exemplos
+
+A Ana tem 11 atendimentos concluídos: 10 pagos e o de segunda 16/11 às 09:00, ainda sem pagamento.
+
+**Consultar:**
+
+```bash
+curl http://localhost:8000/api/clients/1/loyalty \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Resposta `200`:
+
+```json
+{
+  "client_id": 1,
+  "visits": 11,
+  "visits_per_reward": 10,
+  "progress": 1,
+  "rewards_earned": 1,
+  "rewards_used": 0,
+  "available_rewards": 1,
+  "discount_percent": 100
+}
+```
+
+**A conta do pagamento do atendimento das 09:00** (`?appointment_id=13`): ele sai das visitas, e o prêmio das 10 anteriores continua valendo para pagá-lo.
+
+```json
+{
+  "client_id": 1,
+  "visits": 10,
+  "visits_per_reward": 10,
+  "progress": 0,
+  "rewards_earned": 1,
+  "rewards_used": 0,
+  "available_rewards": 1,
+  "discount_percent": 100
+}
+```
+
+**Pagar com o prêmio:**
+
+```bash
+curl -X POST http://localhost:8000/api/payments \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"appointment_id":13,"method":"cash","use_loyalty_reward":true}'
+```
+
+Resposta `201`:
+
+```json
+{
+  "discount": "35.00",
+  "loyalty_reward": true,
+  "appointment_id": 13,
+  "amount": "0.00",
+  "method": "cash",
+  "status": "paid",
+  "paid_at": "2026-11-16T12:34:00.000000Z",
+  "notes": null,
+  "updated_at": "2026-11-16T12:34:00.000000Z",
+  "created_at": "2026-11-16T12:34:00.000000Z",
+  "id": 13,
+  "method_label": "Dinheiro",
+  "status_label": "Pago",
+  "appointment": {
+    "id": 13,
+    "date": "2026-11-16",
+    "start_time": "09:00:00",
+    "end_time": "09:30:00",
+    "client": { "id": 1, "name": "Ana Pereira" },
+    "barber": { "id": 1, "name": "João Barbeiro" },
+    "service": { "id": 1, "name": "Corte de cabelo" }
+  }
+}
+```
+
+Depois disso, o `GET /clients/1/loyalty` mostra `"visits": 10`, `"rewards_used": 1` e `"available_rewards": 0`: o atendimento pago com o prêmio não é visita.
+
+**Sem prêmio disponível** (o Bruno, com 2 visitas antes do atendimento que está sendo pago), `422`:
+
+```json
+{
+  "message": "O cliente ainda não tem prêmio de fidelidade disponível: 2 de 10 visitas, sem contar este atendimento.",
+  "errors": {
+    "use_loyalty_reward": ["O cliente ainda não tem prêmio de fidelidade disponível: 2 de 10 visitas, sem contar este atendimento."]
+  }
+}
+```
+
+**Na listagem de clientes** (`GET /clients`), cada item traz o resumo em `loyalty`:
+
+```json
+{
+  "id": 2,
+  "name": "Bruno Costa",
+  "email": "bruno@example.com",
+  "phone": null,
+  "created_at": "2026-11-16T11:00:00.000000Z",
+  "updated_at": "2026-11-16T11:00:00.000000Z",
+  "deleted_at": null,
+  "loyalty": {
+    "visits": 3,
+    "visits_per_reward": 10,
+    "progress": 3,
+    "rewards_earned": 0,
+    "rewards_used": 0,
+    "available_rewards": 0,
+    "discount_percent": 100
+  },
+  "has_login": false
+}
+```
+
+---
+
 ## Dashboard
 
 `GET /dashboard?from=Y-m-d&to=Y-m-d` devolve os números da barbearia num período, só para o admin (Gate `view-dashboard`; barbeiro e cliente recebem `403`). As definições ficam em `App\Services\DashboardMetrics`, e as consultas são agregadas no banco (contagens e somas com `group by`), iguais no SQLite e no MySQL.
@@ -1161,9 +1478,9 @@ Tudo conta pela **data do atendimento** (`appointments.date`): um pagamento regi
 |---|---|
 | `period` | `from`, `to` e `days` (quantos dias o período tem) |
 | `revenue.total` | soma dos pagamentos **pagos** dos atendimentos do período. Pendentes e estornados ficam de fora |
-| `revenue.payments` | quantos pagamentos pagos entram na soma |
-| `revenue.average_ticket` | ticket médio: `total ÷ payments` (`"0.00"` sem pagamento) |
-| `revenue.by_method` | o mesmo faturamento por forma de pagamento, sempre com as 4 formas, mesmo sem valor |
+| `revenue.payments` | quantos pagamentos pagos entram na soma. O de valor zero (o corte grátis da fidelidade ou uma cortesia) fica de fora, porque não entrou dinheiro |
+| `revenue.average_ticket` | ticket médio: `total ÷ payments` (`"0.00"` sem pagamento), sem os de valor zero |
+| `revenue.by_method` | o mesmo faturamento por forma de pagamento, sempre com as 4 formas, mesmo sem valor. O de valor zero não aparece em forma nenhuma |
 | `revenue.by_day` | o mesmo faturamento por dia, com todos os dias do período, mesmo sem valor |
 | `appointments.total` | agendamentos do período, em qualquer status |
 | `appointments.by_status` | quantos agendamentos em cada um dos 6 status, mesmo sem nenhum |
@@ -1267,13 +1584,16 @@ Período longo demais (`?from=2026-01-01&to=2027-01-02`, 367 dias), `422`:
 ## Limitações
 
 - **Agenda por barbeiro:** os horários livres olham só a agenda do barbeiro escolhido. O conflito do cliente com outro barbeiro aparece só ao agendar (`422` em `client_id`).
-- **Concorrência conferida no MySQL:** as travas que impedem dois agendamentos no mesmo horário só funcionam de verdade no MySQL; no SQLite dos testes, elas não fazem nada. O `composer test:mysql` (veja o README) roda o `AppointmentConcurrencyTest`, que confere as travas com duas conexões, em passos de ordem fixa. A prova com pedidos simultâneos de verdade fica para o teste de carga `concorrencia.js`.
+- **Concorrência conferida no MySQL:** as travas que impedem dois agendamentos no mesmo horário, dois pagamentos do mesmo atendimento e o mesmo prêmio de fidelidade usado duas vezes só funcionam de verdade no MySQL; no SQLite dos testes, elas não fazem nada. O `composer test:mysql` (veja o README) roda o `AppointmentConcurrencyTest`, o `PaymentConcurrencyTest` e o `LoyaltyConcurrencyTest`, que conferem as travas com duas conexões, em passos de ordem fixa. A reserva do lembrete é um `UPDATE` condicional: o `ReminderCommandTest` e o `ReminderApiTest` mudam a linha logo antes dele (outra rodada, o envio manual, o cancelamento ou a remarcação) e logo antes do `UPDATE` que desfaz a reserva depois de uma falha, nos dois bancos, sem um teste de duas conexões no MySQL. A prova com pedidos simultâneos de verdade fica para o teste de carga `concorrencia.js`.
 - **O cadastro de conta diz se o e-mail já tem conta:** `POST /register` responde `Este e-mail já está cadastrado.`. O login e o "esqueci a senha" não revelam isso.
 - **Sem desfazer exclusão:** a linha fica no banco, mas não há rota para restaurar um registro excluído. No cliente, os dados pessoais já foram apagados.
 - **Página de até 100 itens:** quem precisa de tudo (como a tela Agendar) pede `per_page=100`; com mais de 100 cadastros, os outros ficam nas páginas seguintes. A Agenda e Meus horários leem as páginas seguintes, até 1000 agendamentos.
 - **Um pagamento por atendimento, para sempre:** depois do estorno, o atendimento não recebe outro pagamento. Para cobrar de novo um valor estornado por engano, o admin corrige o pagamento estornado (valor e observações), mas ele continua fora do faturamento.
 - **Dashboard pela data do atendimento:** o faturamento de um dia é o dos atendimentos daquele dia, mesmo que o pagamento tenha sido registrado depois. Não existe um relatório pela data do pagamento.
 - **Ocupação sem data de contratação:** o barbeiro cadastrado no meio do período conta o período inteiro nos minutos disponíveis, e o excluído no meio do período também (os atendimentos dele entram nos minutos ocupados). Só fica de fora quem foi cadastrado depois do último dia do período ou excluído antes do primeiro.
+- **Lembrete só por e-mail, na hora e sem fila:** o comando manda um e-mail de cada vez, e um servidor de e-mail lento atrasa a rodada (a trava do `withoutOverlapping` vence em 10 minutos). Não há lembrete por SMS ou WhatsApp, nem confirmação de presença pelo e-mail.
+- **O lembrete automático depende do agendador:** sem o `schedule:work` (local) ou o cron com o `schedule:run` (servidor), ele não sai. O "Enviar lembrete agora" funciona sem o agendador.
+- **Um prêmio de fidelidade vale para qualquer serviço:** o desconto é sobre o preço do atendimento pago, seja um corte ou um combo, e o prêmio não vence. Mudar o `LOYALTY_VISITS` muda a conta de todos os clientes, inclusive a dos prêmios que já foram ganhos (os disponíveis nunca ficam negativos).
 
 ## Coleção do Postman
 
@@ -1285,7 +1605,9 @@ Importe o arquivo [`BarberFlow.postman_collection.json`](BarberFlow.postman_coll
 4. Os requests de criar guardam o `id` criado em `serviceId`, `clientId` e `barberId`, que os de mostrar, atualizar e excluir usam. Rode o "Criar" de cada pasta antes dos outros.
 5. A pasta **Agendamentos** cria o próprio cliente, barbeiro e serviço (`appointmentClientId`, `appointmentBarberId` e `appointmentServiceId`), para não depender dos que as outras pastas excluem. Rode na ordem: os três "Preparar", **Horários livres** (escolhe o próximo dia de expediente e guarda o primeiro e o último horário livre), **Criar** (guarda `appointmentId`), e depois listar, mostrar, remarcar, mudar o status e a exclusão que dá `409`.
 6. A pasta **Pagamentos** precisa de um atendimento **concluído** sem pagamento. Ela não consegue criar um: a API só aceita pagamento de atendimento concluído, um atendimento só é concluído depois do horário de início, e ninguém agenda no passado. Por isso o primeiro request (**Atendimento concluído sem pagamento**, com `without_payment=1`) acha um que já existe e guarda o id em `paymentAppointmentId`; se a lista vier vazia, o `pm.test` dele falha e diz para concluir um na Agenda antes. Depois, na ordem: **Registrar** (no Pix, guarda `paymentId`), as duas recusas (`422` do atendimento que já tem pagamento e do não concluído, este com o `appointmentId` da pasta Agendamentos), **Listar com filtro** (período do atendimento, Pix e pago, conferindo os `totals`), **Mostrar**, **Corrigir**, **Estornar** e o estorno repetido que dá `422`. Como cada atendimento tem um pagamento só, o atendimento usado fica com o pagamento estornado.
-7. A pasta **Dashboard** (só o admin) pede o mês atual, um período (`dashboardFrom` e `dashboardTo`, padrão novembro de 2026) e um período de 367 dias, que dá `422`.
+7. A pasta **Lembretes** roda depois de **Agendamentos** e **Pagamentos**: **Enviar lembrete agora** manda o lembrete do agendamento criado (`appointmentId`), **Enviar de novo (429)** confere o limite de um envio a cada 10 minutos e o `Retry-After`, e o último confere o `422` de um atendimento concluído (o `paymentAppointmentId`). No local, o e-mail vai para o `storage/logs/laravel.log`. Rodar a pasta de novo antes de 10 minutos dá `429` já no primeiro request: rode antes a pasta **Agendamentos**, que cria outro agendamento.
+8. A pasta **Fidelidade** também roda depois de **Agendamentos** e **Pagamentos**: a fidelidade do cliente criado (`appointmentClientId`), o resumo em cada cliente da listagem, o `422` da conta com o agendamento de outro cliente, o `422` do prêmio com o valor junto e os campos `discount` e `loyalty_reward` do pagamento da pasta **Pagamentos**. Para pagar com o prêmio, mande `"use_loyalty_reward": true`, sem `amount`, no **Registrar (payments)** de um atendimento cujo cliente tenha prêmio disponível.
+9. A pasta **Dashboard** (só o admin) pede o mês atual, um período (`dashboardFrom` e `dashboardTo`, padrão novembro de 2026) e um período de 367 dias, que dá `422`.
 
 Cada request tem um `pm.test` que confere o status esperado. As listagens trazem `page` e `per_page` ligados e `search` e `status` de exemplo desligados: marque o parâmetro na aba **Params** para usar.
 

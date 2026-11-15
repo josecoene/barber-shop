@@ -4,7 +4,7 @@ Sistema de gestão e agendamento para barbearias, desenvolvido como projeto da d
 
 **Equipe:** Eduardo Romano, Jose Coene, Leonam e Manoel
 
-O objetivo do produto é ajudar a barbearia a reduzir horários vazios e faltas, aumentar a recorrência de clientes e acompanhar o faturamento. Esta primeira versão (MVP em construção) expõe uma **API REST** para os cadastros-base, a agenda, os pagamentos dos atendimentos e o dashboard do admin, com login e permissões por perfil (admin, barbeiro e cliente): a barbearia agenda para quem chega no balcão e o cliente agenda sozinho pela conta dele.
+O objetivo do produto é ajudar a barbearia a reduzir horários vazios e faltas, aumentar a recorrência de clientes e acompanhar o faturamento. Esta primeira versão (MVP em construção) expõe uma **API REST** para os cadastros-base, a agenda, o lembrete por e-mail, os pagamentos dos atendimentos, a fidelidade e o dashboard do admin, com login e permissões por perfil (admin, barbeiro e cliente): a barbearia agenda para quem chega no balcão e o cliente agenda sozinho pela conta dele.
 
 ## Stack
 
@@ -120,8 +120,10 @@ Para parar o servidor, use `docker stop barberflow-app`; para subir de novo, `do
 - Telas: `http://localhost:8000` leva ao login. Depois de entrar, cada perfil cai na tela inicial dele: o admin no Dashboard, o barbeiro na Agenda e o cliente em Meus horários. O menu mostra só as telas do perfil:
   - admin: Dashboard (faturamento, atendimentos, ticket médio, faltas e ocupação do mês, de outro mês ou de um período), Agenda, Agendar, Pagamentos, Clientes, Barbeiros e Serviços;
   - barbeiro: Agenda (só a coluna dele), Agendar (na própria agenda), Pagamentos (só os da agenda dele, sem corrigir nem estornar) e Clientes;
-  - cliente: Agendar, Meus horários (com o "Cancelar" até 2 horas antes e se cada atendimento está pago) e Minha conta.
+  - cliente: Agendar, Meus horários (a fidelidade dele, o "Cancelar" até 2 horas antes e se cada atendimento está pago) e Minha conta.
 - Pagamento: o atendimento concluído ganha o "Registrar pagamento" na tela de Pagamentos e no detalhe da Agenda, com o valor já preenchido pelo preço do agendamento. Corrigir e estornar ficam com o admin.
+- Lembrete: o detalhe da Agenda mostra quando saiu o lembrete por e-mail e tem o "Enviar lembrete agora" (admin e o barbeiro do agendamento). O lembrete automático sai pelo agendador (veja [Lembretes e agendador](#lembretes-e-agendador)).
+- Fidelidade: a cada 10 atendimentos concluídos, o seguinte sai grátis. Clientes tem a coluna Fidelidade (ex.: 7/10, com o selo de prêmio disponível), o modal de pagamento oferece "Usar o prêmio de fidelidade" quando o cliente tem direito, e o cliente vê o próprio progresso em Meus horários.
 - API: `http://localhost:8000/api`. Sem login, só o `/health` responde:
   ```bash
   curl http://localhost:8000/api/health
@@ -152,14 +154,33 @@ O `AdminUserSeeder` nunca altera um usuário que já existe: rodar de novo não 
 > **Atenção:** `clients` e `barbers` começam vazios: o seed cria só os serviços e o usuário de teste.
 > Se você já tinha rodado as migrations antes de atualizar o projeto, recrie o banco com `php artisan migrate:fresh` (isso apaga os dados).
 
+### Lembretes e agendador
+
+O lembrete por e-mail dos agendamentos sai pelo comando `appointments:send-reminders`, que manda o lembrete de quem tem horário (agendado ou confirmado) nas próximas `REMINDER_HOURS_BEFORE` horas (padrão 24) e ainda não recebeu:
+
+```bash
+php artisan appointments:send-reminders
+```
+
+Ele mostra quantos lembretes saíram, quantos foram pulados (cliente excluído, e-mail que não recebe mensagem ou lembrete que outro envio pegou antes) e quantos falharam, por exemplo `Enviados: 1. Pulados: 0. Com falha: 0.`. Os que falharam voltam a ser tentados na rodada seguinte.
+
+Quem roda o comando é o agendador do Laravel, a cada 15 minutos (`routes/console.php`). Ele só funciona se algo chamar o agendador:
+
+- **no local**, deixe num terminal à parte `php artisan schedule:work` (no caminho 2, `docker exec -it -w /app barberflow-app php artisan schedule:work`). Ele fica rodando e chama o agendador a cada minuto; pare com Ctrl+C;
+- **num servidor**, o cron chama o agendador a cada minuto: `* * * * * cd /caminho/do/projeto && php artisan schedule:run >> /dev/null 2>&1`.
+
+Sem o agendador, o lembrete automático não sai, mas o "Enviar lembrete agora" do detalhe da Agenda continua funcionando. No local, com `MAIL_MAILER=log`, os lembretes vão para o fim do `storage/logs/laravel.log`, como os outros e-mails, inteiros e com o endereço do cliente: por isso o `log` só serve no local, e fora dele o `MAIL_MAILER` precisa enviar de verdade (`smtp`). O e-mail mostra o nome da barbearia (`BARBERSHOP_NAME`, ou o `APP_NAME` quando vazio) e, quando preenchidos, o endereço (`BARBERSHOP_ADDRESS`) e o telefone (`BARBERSHOP_PHONE`).
+
+A fidelidade usa `LOYALTY_VISITS` (a cada quantos atendimentos concluídos o cliente ganha um prêmio, padrão 10) e `LOYALTY_DISCOUNT_PERCENT` (o desconto do prêmio, padrão 100, o atendimento grátis). As regras e os exemplos estão em [`docs/API.md`](docs/API.md#fidelidade).
+
 ### Atualizando um ambiente que já existia
 
 Quem já tinha o projeto rodando antes do login precisa de alguns ajustes:
 
-1. Rodar `php artisan migrate` (no caminho 2, `docker exec -w /app barberflow-app php artisan migrate`). Ele só acrescenta colunas (`deleted_at`, `users.role`, `users.phone`, `barbers.user_id` e `clients.user_id`), as tabelas `appointments` e `payments` e índices, e não apaga nada.
+1. Rodar `php artisan migrate` (no caminho 2, `docker exec -w /app barberflow-app php artisan migrate`). Ele só acrescenta colunas (`deleted_at`, `users.role`, `users.phone`, `barbers.user_id`, `clients.user_id`, `appointments.reminder_sent_at`, `payments.discount` e `payments.loyalty_reward`), as tabelas `appointments` e `payments` e índices, e não apaga nada.
 2. Rodar `php artisan db:seed` de novo: ele dá o perfil admin ao `test@example.com` sem mudar a senha. Sem perfil, o usuário não entra.
 3. No `.env`, trocar `APP_LOCALE=en` por `APP_LOCALE=pt_BR` e acrescentar `APP_TIMEZONE=America/Sao_Paulo`. Sem isso, as mensagens da API continuam em inglês.
-4. Copiar do `.env.example` as variáveis novas do login, da segurança e da agenda (`SANCTUM_*`, `API_RATE_LIMIT`, `LOGIN_*`, `ADMIN_*`, `TRUSTED_*`, `SECURITY_CSP`, `CORS_ALLOWED_ORIGINS`, `CLIENT_CANCEL_MIN_HOURS`, `CLIENT_MAX_ACTIVE_APPOINTMENTS`, `BOOKING_DAYS_AHEAD` e o expediente em `BUSINESS_*`). Vazias, valem os padrões descritos ali.
+4. Copiar do `.env.example` as variáveis novas do login, da segurança, da agenda, da fidelidade e do lembrete (`SANCTUM_*`, `API_RATE_LIMIT`, `LOGIN_*`, `ADMIN_*`, `TRUSTED_*`, `SECURITY_CSP`, `CORS_ALLOWED_ORIGINS`, `CLIENT_CANCEL_MIN_HOURS`, `CLIENT_MAX_ACTIVE_APPOINTMENTS`, `BOOKING_DAYS_AHEAD`, o expediente em `BUSINESS_*`, `LOYALTY_*`, `REMINDER_HOURS_BEFORE` e os dados da barbearia em `BARBERSHOP_*`). Vazias, valem os padrões descritos ali.
 5. Rodar `npm install` (o Tailwind saiu do projeto) e reiniciar o servidor (no caminho 2, `docker restart barberflow-app`).
 
 ## Testes
@@ -181,7 +202,12 @@ Os testes de feature em `tests/Feature` cobrem:
 - os pagamentos (`PaymentApiTest`): só atendimento concluído, um pagamento por atendimento (mesmo depois do estorno), valor padrão no preço do agendamento, `paid_at` do servidor, as transições pendente, pago e estornado, a correção pelo admin, os filtros e os totais da listagem, o filtro `without_payment` dos agendamentos e as observações apagadas junto com o cliente, recusadas no registro e na correção depois da exclusão;
 - as permissões dos pagamentos por perfil (`PaymentAuthorizationTest`): o barbeiro registra e vê só os da agenda dele e não corrige nem estorna, o cliente só vê os próprios;
 - a trava do registro de pagamento no MySQL (`PaymentConcurrencyTest`, só no `composer test:mysql`): a linha do agendamento fica travada até o fim, e o segundo pedido enxerga o pagamento do primeiro;
-- o dashboard (`DashboardApiTest`): os números de uma semana conhecida conferidos um a um (faturamento, por forma e por dia, status, ticket médio, faltas, ocupação, top serviços e barbeiros), os barbeiros que contam na ocupação (cadastrados até o fim do período e não excluídos antes do começo), o mês atual no fuso do app como padrão, o limite de 366 dias, o período que termina em 31/12/9999 e só o admin vendo;
+- o lembrete pelo comando (`ReminderCommandTest`, com o relógio fixo): a janela de 24 horas (e a da config), só agendado e confirmado, sem repetir o lembrete, sem cliente excluído nem e-mail `barberflow.invalid`, a reserva da linha (com outra rodada, o envio manual, o cancelamento ou a remarcação chegando entre a leitura e a reserva, o lembrete não sai duas vezes nem fala de um horário que já não vale), a falha que libera o lembrete para a rodada seguinte com só o id no log, sem desfazer o que uma remarcação fez no meio do envio, a remarcação que libera um lembrete novo e o comando agendado a cada 15 minutos, num servidor só e sem rodadas sobrepostas;
+- o "Enviar lembrete agora" (`ReminderApiTest`): o admin e o barbeiro do agendamento, o `403` para o barbeiro de outra agenda e para o cliente, os `422` (status, horário que já começou, cliente excluído e e-mail que não recebe), o limite de um envio a cada 10 minutos por agendamento com o `Retry-After`, contando o do comando e mesmo depois de remarcar, o limite de 10 envios por minuto por usuário, o `503` que devolve o `reminder_sent_at` ao que era (sem desfazer uma remarcação feita no meio do envio) e o `reminder_sent_at` no JSON do agendamento;
+- o e-mail do lembrete (`ReminderMailTest`): o horário e os dados da barbearia, nenhum dado pessoal além do agendamento, o link de Meus horários pelo `APP_URL` para quem tem conta, a janela de cancelamento da config, o português e o cabeçalho `X-Appointment-Id`, sem fila;
+- a fidelidade (`LoyaltyApiTest`, com um prêmio a cada 3 visitas): só concluídos contam, o desconto pela config (com o arredondamento no centavo), a recusa sem prêmio e com o valor junto, o atendimento que está sendo pago fora da conta (com o mesmo `422` para o agendamento de outro cliente, o que não existe e o de uma agenda que o usuário não vê), o pago com o prêmio fora das visitas, o estorno que devolve o prêmio, as permissões por perfil e a listagem de clientes com a fidelidade sem uma consulta por cliente;
+- a trava do prêmio no MySQL (`LoyaltyConcurrencyTest`, só no `composer test:mysql`): dois pagamentos do mesmo cliente com o prêmio passam um de cada vez, e o segundo já conta o prêmio que o primeiro usou;
+- o dashboard (`DashboardApiTest`): os números de uma semana conhecida conferidos um a um (faturamento, por forma e por dia, status, ticket médio, faltas, ocupação, top serviços e barbeiros), o corte grátis da fidelidade fora dos pagamentos e do ticket médio, os barbeiros que contam na ocupação (cadastrados até o fim do período e não excluídos antes do começo), o mês atual no fuso do app como padrão, o limite de 366 dias, o período que termina em 31/12/9999 e só o admin vendo;
 - o CRUD de `services`, `clients` e `barbers`: listagem paginada (`data`, `links` e `meta`), busca, `page` e `per_page` inválidos, criação, limites de cada campo, consulta, atualização, exclusão lógica (com a anonimização do cliente e a troca do e-mail e do telefone do barbeiro, mesmo quando o endereço reservado já está ocupado), recadastro do e-mail de quem foi excluído, 404 e o login do barbeiro criado pelo campo `password`;
 - o login da API e o token (`AuthApiTest`: prefixo, validade de 480 minutos, recusas, limite de tentativas com `Retry-After`, logout, `/api/user` e troca de senha);
 - as permissões (`AuthorizationTest`: 401 sem login em todas as rotas, 403 para cada perfil sem permissão e para a conta de cliente sem o e-mail confirmado, e o cliente sem poder mandar o e-mail do próprio cadastro);
@@ -191,14 +217,14 @@ Os testes de feature em `tests/Feature` cobrem:
 - os erros da API em português (`ApiErrorsTest`: 403 de e-mail não confirmado, 404 de registro e de rota, 405, 419 e 422; o 401 fica no `AuthorizationTest` e o 429 no `RateLimitTest`);
 - o idioma e o fuso (`LocalizationTest`);
 - o `GET /api/health` com tudo no ar (200), com o banco ou o cache fora (503) e fora do limite de requisições (`HealthApiTest`);
-- as telas (`WebPagesTest`: cada tela responde para o perfil que a usa, o layout com o token CSRF e o Sair, o menu de cada perfil, a tela inicial do admin no Dashboard, o expediente e as regras de status que a Agenda recebe do servidor, as regras de status dos pagamentos e as formas de pagamento que Pagamentos e o modal da Agenda recebem, as páginas de erro em português, nenhuma tela com estilo inline e nenhum nome de rota repetido);
+- as telas (`WebPagesTest`: cada tela responde para o perfil que a usa, o layout com o token CSRF e o Sair, o menu de cada perfil, a tela inicial do admin no Dashboard, o expediente, as regras de status (com quem recebe lembrete) e a janela do lembrete que a Agenda recebe do servidor, as regras de status dos pagamentos e as formas de pagamento que Pagamentos e o modal da Agenda recebem, a caixa do prêmio de fidelidade no modal de pagamento, a coluna Fidelidade de Clientes para o admin e o barbeiro, a fidelidade do cliente em Meus horários, as páginas de erro em português, nenhuma tela com estilo inline e nenhum nome de rota repetido);
 - o seed (`DatabaseSeederTest`) e a conexão do SQLite, que espera a vez em vez de dar "database is locked" (`SqliteConnectionTest`).
 
 ### Testes no MySQL (`composer test:mysql`)
 
-O SQLite em memória não trava linha, então as travas da agenda (dois agendamentos no mesmo horário ao mesmo tempo) e do registro de pagamento só valem no MySQL. O `composer test:mysql` roda a suíte inteira com o `phpunit.mysql.xml`, que lê `DB_HOST`, `DB_PORT`, `DB_DATABASE` (padrão `barberflow_testing`), `DB_USERNAME` e `DB_PASSWORD` do ambiente. Só nele rodam o `AppointmentConcurrencyTest` e o `PaymentConcurrencyTest`, que abrem duas conexões como dois pedidos ao mesmo tempo e conferem as travas em passos de ordem fixa. A prova com pedidos simultâneos de verdade (vários processos) fica para o teste de carga `concorrencia.js`.
+O SQLite em memória não trava linha, então as travas da agenda (dois agendamentos no mesmo horário ao mesmo tempo), do registro de pagamento e do prêmio de fidelidade só valem no MySQL. O `composer test:mysql` roda a suíte inteira com o `phpunit.mysql.xml`, que lê `DB_HOST`, `DB_PORT`, `DB_DATABASE` (padrão `barberflow_testing`), `DB_USERNAME` e `DB_PASSWORD` do ambiente. Só nele rodam o `AppointmentConcurrencyTest`, o `PaymentConcurrencyTest` e o `LoyaltyConcurrencyTest`, que abrem duas conexões como dois pedidos ao mesmo tempo e conferem as travas em passos de ordem fixa. A prova com pedidos simultâneos de verdade (vários processos) fica para o teste de carga `concorrencia.js`.
 
-As regras da agenda que os testes supõem (expediente, limites e janela de cancelamento) ficam fixas nos padrões pelo `tests/TestCase.php`, então o `.env` montado junto com o projeto não muda o resultado.
+As regras que os testes supõem (expediente, limites, janela de cancelamento, fidelidade, lembrete e dados da barbearia) ficam fixas nos padrões pelo `tests/TestCase.php`, então o `.env` montado junto com o projeto não muda o resultado.
 
 > **Atenção:** os testes apagam e recriam o banco. Use só um MySQL descartável, nunca o banco de desenvolvimento ou da homologação. O `tests/TestCase.php` recusa banco sem "test" no nome.
 
@@ -240,11 +266,12 @@ Base URL: `http://localhost:8000/api`. Todas as rotas pedem o token Bearer do lo
 | Services | GET | `/services/{id}` | Mostra um serviço |
 | Services | PUT/PATCH | `/services/{id}` | Atualiza um serviço |
 | Services | DELETE | `/services/{id}` | Exclui um serviço (exclusão lógica) |
-| Clients | GET | `/clients` | Lista os clientes, paginado (`search`, `per_page`, `page`) |
+| Clients | GET | `/clients` | Lista os clientes, paginado (`search`, `per_page`, `page`), cada um com a fidelidade em `loyalty` |
 | Clients | POST | `/clients` | Cadastra um cliente |
 | Clients | GET | `/clients/{id}` | Mostra um cliente |
 | Clients | PUT/PATCH | `/clients/{id}` | Atualiza um cliente |
 | Clients | DELETE | `/clients/{id}` | Exclui um cliente e apaga os dados pessoais dele (LGPD) |
+| Clients | GET | `/clients/{id}/loyalty` | Fidelidade do cliente: visitas, progresso e prêmios (`appointment_id` opcional, a conta do pagamento dele) |
 | Barbers | GET | `/barbers` | Lista os barbeiros, paginado (`search`, `per_page`, `page`) |
 | Barbers | POST | `/barbers` | Cadastra um barbeiro |
 | Barbers | GET | `/barbers/{id}` | Mostra um barbeiro |
@@ -256,8 +283,9 @@ Base URL: `http://localhost:8000/api`. Todas as rotas pedem o token Bearer do lo
 | Appointments | GET | `/appointments/{id}` | Mostra um agendamento |
 | Appointments | PUT/PATCH | `/appointments/{id}` | Remarca (data, horário, barbeiro ou serviço) e muda as observações |
 | Appointments | PATCH | `/appointments/{id}/status` | Muda o status (confirmar, iniciar, concluir, cancelar, faltou) |
+| Appointments | POST | `/appointments/{id}/reminder` | Envia o lembrete por e-mail na hora (admin e o barbeiro do agendamento; um a cada 10 minutos por agendamento, mesmo depois de remarcar, e até 10 por minuto por usuário) |
 | Payments | GET | `/payments` | Lista os pagamentos do atendimento mais recente para o mais antigo, com os totais do filtro (`from`, `to`, `method`, `status`, `barber_id`, `client_id`, `per_page`, `page`) |
-| Payments | POST | `/payments` | Registra o pagamento de um atendimento concluído (valor padrão: o preço do agendamento) |
+| Payments | POST | `/payments` | Registra o pagamento de um atendimento concluído (valor padrão: o preço do agendamento; com `use_loyalty_reward`, usa o prêmio da fidelidade) |
 | Payments | GET | `/payments/{id}` | Mostra um pagamento |
 | Payments | PUT/PATCH | `/payments/{id}` | Corrige valor, forma e observações (só o admin) |
 | Payments | PATCH | `/payments/{id}/status` | Marca como pago ou estorna (o estorno é só do admin) |
@@ -271,6 +299,7 @@ Corpos de requisição, regras de validação, códigos de resposta e exemplos c
 
 ```
 app/
+  Console/Commands/   # appointments:send-reminders (lembrete por e-mail, chamado pelo agendador)
   Enums/              # UserRole (perfis), AppointmentStatus (status e transições da agenda),
                       # PaymentStatus (status e transições do pagamento) e PaymentMethod (formas)
   Exceptions/         # 429 do login bloqueado (TooManyLoginAttemptsException)
@@ -280,23 +309,28 @@ app/
     Auth/             # login, cadastro, confirmação de e-mail e senha pelas telas
   Http/Middleware/    # SecurityHeaders e EnsureEmailIsVerified
   Listeners/          # liga a conta ao cadastro de cliente quando o e-mail é confirmado
+  Mail/               # AppointmentReminder (o e-mail do lembrete, em Markdown)
   Models/             # Service, Client, Barber, Appointment, Payment, User
     Concerns/         # ReleasesEmailOnDelete e HasAppointments (409 ao excluir com agendamento futuro)
   Policies/           # quem pode o quê em cada recurso
   Rules/              # regras de validação próprias (NotOnlySpaces)
-  Services/           # AppointmentScheduler (regras da agenda), PaymentRecorder (regras do pagamento),
+  Services/           # AppointmentScheduler (regras da agenda), ReminderSender (lembrete por e-mail),
+                      # PaymentRecorder (regras do pagamento), LoyaltyService (fidelidade),
                       # DashboardMetrics (números do dashboard) e Auth/ (login, cadastro e senha)
-config/barberflow.php # limites, segurança, admin inicial e expediente, lidos do .env
+config/barberflow.php # limites, segurança, admin inicial, expediente, fidelidade, lembrete e dados da
+                      # barbearia, lidos do .env
 database/
   migrations/         # estrutura das tabelas
   seeders/            # DatabaseSeeder (usuário de teste), AdminUserSeeder e ServiceSeeder
 resources/
   views/              # telas em Blade (layouts, auth, account, appointments, payments, dashboard, errors e cadastros)
+    mail/             # o e-mail do lembrete
   js/pages.js         # comportamento das telas e chamadas à API
   css/pages.css       # estilos próprios (a CSP não deixa usar style="")
 routes/
   api.php             # rotas da API (Route::apiResource), com nomes api.*
   web.php             # rotas das telas
+  console.php         # agendador: o lembrete a cada 15 minutos e a limpeza dos tokens vencidos
 tests/
   Feature/            # testes dos endpoints, da agenda, da autenticação, das telas e do seed
 phpunit.xml           # testes no SQLite em memória (composer test)
@@ -326,7 +360,8 @@ docs/
 - [x] Status do atendimento (agendado, confirmado, em atendimento, concluído, cancelado e faltou) e cancelamento pelo cliente até 2 horas antes
 - [x] Pagamentos: um por atendimento concluído, com o valor padrão do agendamento, as formas dinheiro, Pix e cartões, os status pendente, pago e estornado (estorno e correção só pelo admin), a tela de Pagamentos com filtros e totais, o atalho no detalhe da Agenda e o "Pago" em Meus horários
 - [x] Dashboard básico (só o admin, a tela inicial dele): faturamento total, por forma e por dia, atendimentos por status, ticket médio, taxa de faltas, ocupação, top 5 serviços e resumo por barbeiro, no mês atual, no mês passado ou num período de até 366 dias
-- [ ] Lembretes e fidelidade
+- [x] Lembrete por e-mail: o comando `appointments:send-reminders`, a cada 15 minutos pelo agendador, nas 24 horas antes do horário (configurável), sem repetir e sem sair para cliente excluído, e o "Enviar lembrete agora" no detalhe da Agenda (admin e o barbeiro do agendamento, um a cada 10 minutos por agendamento, mesmo depois de remarcar, e até 10 por minuto por usuário)
+- [x] Fidelidade: a cada 10 atendimentos concluídos, o seguinte sai grátis (configurável), com o progresso em Clientes (coluna Fidelidade) e em Meus horários, e o "Usar o prêmio de fidelidade" no modal de pagamento
 
 ## Limitações conhecidas
 
@@ -335,6 +370,8 @@ docs/
 - As listagens devolvem no máximo 100 itens por página. A tela Agendar carrega os 100 primeiros clientes, barbeiros e serviços ativos em ordem de nome. A Agenda e Meus horários leem até 1000 agendamentos.
 - Os horários livres olham só a agenda do barbeiro. Se o cliente já tem horário com outro barbeiro no mesmo período, o Agendar recusa ao salvar, com a mensagem no campo de cliente.
 - Cada atendimento tem um pagamento só: depois do estorno, ele não recebe outro. O dashboard conta tudo pela data do atendimento, não pela do pagamento.
+- O lembrete é só por e-mail e sai na hora, sem fila: o comando manda um de cada vez. Sem o agendador rodando (`schedule:work` no local, cron no servidor), o lembrete automático não sai.
+- O prêmio de fidelidade vale para qualquer serviço (o desconto é sobre o preço do atendimento pago) e não vence.
 - No SQLite local, um pedido grava por vez: o `config/database.php` usa transações `IMMEDIATE` e espera até 5 segundos pela vez (`busy_timeout`), em vez de responder "database is locked" quando as telas fazem várias chamadas ao mesmo tempo.
 
 ## Documentação

@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "BarberFlow API",
-    "description": "Coleção de requisições da API do BarberFlow.\n\n1. Nas variáveis da coleção, confira baseUrl (padrão http://localhost:8000/api) e preencha loginEmail e loginPassword. No local, o usuário de teste é test@example.com, e a senha dele está em database/seeders/DatabaseSeeder.php.\n2. Rode Autenticação > Login: o teste guarda o token na variável token.\n3. A coleção manda Authorization: Bearer {{token}} em todos os requests. Login, cadastro de conta, esqueci a senha, redefinição e health vão sem token.\n4. Os requests de criar guardam o id em serviceId, clientId e barberId, que os de mostrar, atualizar e remover usam.\n5. A pasta Agendamentos cria o próprio cliente, barbeiro e serviço e roda na ordem: Preparar, Horários livres, Criar, Listar, Mostrar, Remarcar, Mudar status e a exclusão que dá 409.\n6. A pasta Pagamentos precisa de um atendimento concluído sem pagamento (conclua um na Agenda) e roda na ordem: acha o atendimento, registra, mostra as recusas, lista com filtro, mostra, corrige e estorna.\n7. A pasta Dashboard mostra os números do mês atual, de um período (dashboardFrom e dashboardTo) e a recusa de um período de mais de 366 dias. Só o admin.\n8. O Logout (pasta Sair) apaga o token: rode por último.\n\nAs listagens são paginadas: page e per_page vêm ligados, e search e status de exemplo vêm desligados na aba Params.",
+    "description": "Coleção de requisições da API do BarberFlow.\n\n1. Nas variáveis da coleção, confira baseUrl (padrão http://localhost:8000/api) e preencha loginEmail e loginPassword. No local, o usuário de teste é test@example.com, e a senha dele está em database/seeders/DatabaseSeeder.php.\n2. Rode Autenticação > Login: o teste guarda o token na variável token.\n3. A coleção manda Authorization: Bearer {{token}} em todos os requests. Login, cadastro de conta, esqueci a senha, redefinição e health vão sem token.\n4. Os requests de criar guardam o id em serviceId, clientId e barberId, que os de mostrar, atualizar e remover usam.\n5. A pasta Agendamentos cria o próprio cliente, barbeiro e serviço e roda na ordem: Preparar, Horários livres, Criar, Listar, Mostrar, Remarcar, Mudar status e a exclusão que dá 409.\n6. A pasta Pagamentos precisa de um atendimento concluído sem pagamento (conclua um na Agenda) e roda na ordem: acha o atendimento, registra, mostra as recusas, lista com filtro, mostra, corrige e estorna.\n7. A pasta Lembretes (depois de Agendamentos e Pagamentos) manda o lembrete por e-mail do agendamento criado, mostra o 429 de um segundo envio antes de 10 minutos e o 422 de um atendimento concluído.\n8. A pasta Fidelidade (depois de Agendamentos e Pagamentos) mostra a fidelidade de um cliente e da listagem, as recusas (agendamento que não é do cliente e valor junto com o prêmio) e os campos discount e loyalty_reward do pagamento.\n9. A pasta Dashboard mostra os números do mês atual, de um período (dashboardFrom e dashboardTo) e a recusa de um período de mais de 366 dias. Só o admin.\n10. O Logout (pasta Sair) apaga o token: rode por último.\n\nAs listagens são paginadas: page e per_page vêm ligados, e search e status de exemplo vêm desligados na aba Params.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -1319,6 +1319,7 @@
                   "    pm.expect(appointment.status).to.eql('scheduled');",
                   "    pm.expect(appointment.start_time).to.eql(pm.collectionVariables.get('appointmentTime') + ':00');",
                   "    pm.expect(appointment.end_time).to.be.a('string');",
+                  "    pm.expect(appointment.reminder_sent_at).to.eql(null);",
                   "    pm.collectionVariables.set('appointmentId', appointment.id);",
                   "});"
                 ]
@@ -1726,6 +1727,8 @@
                   "    pm.expect(payment.status).to.eql('paid');",
                   "    pm.expect(payment.method_label).to.eql('Pix');",
                   "    pm.expect(payment.paid_at).to.be.a('string');",
+                  "    pm.expect(payment.discount).to.eql('0.00');",
+                  "    pm.expect(payment.loyalty_reward).to.eql(false);",
                   "    pm.expect(payment.appointment.client).to.have.all.keys('id', 'name');",
                   "    pm.collectionVariables.set('paymentId', payment.id);",
                   "});"
@@ -2148,6 +2151,399 @@
               }
             },
             "description": "Estornado é final: nenhuma mudança de status vale depois dele."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lembretes",
+      "description": "Rode depois das pastas Agendamentos e Pagamentos. O lembrete por e-mail sai sozinho pelo comando appointments:send-reminders, que o agendador roda a cada 15 minutos, para os agendamentos das próximas REMINDER_HOURS_BEFORE horas (padrão 24). Esta pasta usa o \"Enviar lembrete agora\", do admin e do barbeiro do agendamento: manda o lembrete do agendamento da pasta Agendamentos (appointmentId), mostra o 429 de um segundo envio antes de 10 minutos e o 422 de um atendimento concluído (o da pasta Pagamentos, paymentAppointmentId). No local, com MAIL_MAILER=log, o e-mail vai para o fim do storage/logs/laravel.log. Rodar a pasta de novo antes de 10 minutos dá 429 já no primeiro request; rode antes a pasta Agendamentos, que cria outro agendamento.",
+      "item": [
+        {
+          "name": "Enviar lembrete agora",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Envia o lembrete e devolve o agendamento com o reminder_sent_at', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const appointment = pm.response.json();",
+                  "    pm.expect(appointment.id).to.eql(Number(pm.collectionVariables.get('appointmentId')));",
+                  "    pm.expect(appointment.reminder_sent_at).to.be.a('string');",
+                  "    pm.expect(appointment.client).to.have.all.keys('id', 'name');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/reminder",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "reminder"
+              ]
+            },
+            "description": "Admin, ou o barbeiro do agendamento (o cliente recebe 403, mesmo no próprio horário). Sem corpo. Manda o lembrete por e-mail na hora, grava o reminder_sent_at e devolve o agendamento. Só agendado ou confirmado que ainda não começou, nunca para cliente excluído nem para e-mail do domínio barberflow.invalid (422 em reminder). Um envio a cada 10 minutos por agendamento, contando o do comando e mesmo depois de remarcar, e até 10 por minuto por usuário (429 com Retry-After). Se o e-mail não sair, 503, e o reminder_sent_at volta ao que era."
+          }
+        },
+        {
+          "name": "Enviar de novo (429)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa um segundo envio antes de 10 minutos', function () {",
+                  "    pm.response.to.have.status(429);",
+                  "    pm.expect(pm.response.headers.get('Retry-After')).to.be.a('string');",
+                  "    pm.expect(pm.response.json().message).to.include('menos de 10 minutos');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/reminder",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "reminder"
+              ]
+            },
+            "description": "O mesmo agendamento antes de 10 minutos: 429, com o Retry-After em segundos e a mensagem de quando dá para mandar de novo. Remarcar não libera antes da hora. O limite é por agendamento: outro agendamento sai na hora, até 10 por minuto por usuário."
+          }
+        },
+        {
+          "name": "Lembrete de atendimento concluído (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o lembrete de um atendimento concluído', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.reminder[0]).to.eql('Só é possível enviar o lembrete de um agendamento com status Agendado ou Confirmado.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{paymentAppointmentId}}/reminder",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{paymentAppointmentId}}",
+                "reminder"
+              ]
+            },
+            "description": "Só agendado e confirmado recebem lembrete. Os outros status, o agendamento que já começou, o cliente excluído e o e-mail que não recebe mensagem dão 422 no campo reminder."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fidelidade",
+      "description": "Rode depois das pastas Agendamentos e Pagamentos. A cada LOYALTY_VISITS atendimentos concluídos (padrão 10), o cliente ganha um prêmio: LOYALTY_DISCOUNT_PERCENT % de desconto (padrão 100, o atendimento grátis) no pagamento de um atendimento. A pasta mostra a fidelidade do cliente da pasta Agendamentos (appointmentClientId), o resumo em cada cliente da listagem, a recusa da conta com o agendamento de outro cliente, a recusa do prêmio com o valor junto e os campos discount e loyalty_reward do pagamento da pasta Pagamentos. Para pagar com o prêmio, mande use_loyalty_reward: true, sem amount, no Registrar (payments) de um atendimento cujo cliente tenha prêmio disponível.",
+      "item": [
+        {
+          "name": "Fidelidade do cliente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra as visitas, o progresso e os prêmios do cliente', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const loyalty = pm.response.json();",
+                  "    pm.expect(loyalty).to.have.all.keys('client_id', 'visits', 'visits_per_reward', 'progress', 'rewards_earned', 'rewards_used', 'available_rewards', 'discount_percent');",
+                  "    pm.expect(loyalty.client_id).to.eql(Number(pm.collectionVariables.get('appointmentClientId')));",
+                  "    pm.expect(loyalty.progress).to.be.below(loyalty.visits_per_reward);",
+                  "    pm.expect(loyalty.available_rewards).to.eql(Math.max(0, loyalty.rewards_earned - loyalty.rewards_used));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients/{{appointmentClientId}}/loyalty",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients",
+                "{{appointmentClientId}}",
+                "loyalty"
+              ],
+              "query": [
+                {
+                  "key": "appointment_id",
+                  "value": "{{appointmentId}}",
+                  "description": "Um agendamento deste cliente: ele fica fora das visitas, a conta do pagamento dele com o prêmio. De outro cliente, 422; de uma agenda que o usuário não vê, 403.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Admin e barbeiro veem a de qualquer cliente; o cliente, só a própria (a de outro dá 403). visits: atendimentos concluídos, sem os pagos com o prêmio. progress: visitas desde o último prêmio (ex.: 7 de 10). available_rewards: prêmios ganhos menos os usados (o estorno do pagamento com o prêmio devolve o prêmio). discount_percent: o desconto do prêmio."
+          }
+        },
+        {
+          "name": "Fidelidade na listagem de clientes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cada cliente traz o resumo da fidelidade', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const clients = pm.response.json().data;",
+                  "    pm.expect(clients).to.be.an('array').that.is.not.empty;",
+                  "    clients.forEach(function (client) {",
+                  "        pm.expect(client.loyalty).to.have.all.keys('visits', 'visits_per_reward', 'progress', 'rewards_earned', 'rewards_used', 'available_rewards', 'discount_percent');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients?page=1&per_page=15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                }
+              ]
+            },
+            "description": "Admin e barbeiro. Cada cliente traz em loyalty o mesmo resumo, sem o client_id, contado na própria consulta da página (sem uma consulta por cliente). É o que a coluna Fidelidade da tela de Clientes mostra."
+          }
+        },
+        {
+          "name": "Conta com o agendamento de outro cliente (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o agendamento que não é do cliente', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.appointment_id[0]).to.eql('O agendamento informado não foi encontrado entre os deste cliente.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients/{{appointmentClientId}}/loyalty?appointment_id={{paymentAppointmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients",
+                "{{appointmentClientId}}",
+                "loyalty"
+              ],
+              "query": [
+                {
+                  "key": "appointment_id",
+                  "value": "{{paymentAppointmentId}}",
+                  "description": "O atendimento da pasta Pagamentos, que é de outro cliente."
+                }
+              ]
+            },
+            "description": "O appointment_id precisa ser de um agendamento deste cliente que o usuário pode ver. O de outro cliente, o que não existe e o de uma agenda que o usuário não vê dão o mesmo 422."
+          }
+        },
+        {
+          "name": "Prêmio com o valor junto (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o valor mandado junto com o prêmio', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.amount[0]).to.eql('Com o prêmio de fidelidade, o valor é calculado pelo desconto: não envie o valor.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointment_id\": {{appointmentId}},\n  \"method\": \"cash\",\n  \"use_loyalty_reward\": true,\n  \"amount\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin, ou o barbeiro do agendamento. Com use_loyalty_reward: true, o valor sai do desconto (LOYALTY_DISCOUNT_PERCENT % do price do agendamento), e o amount mandado junto, mesmo 0, dá 422. Sem prêmio disponível, a recusa é 422 em use_loyalty_reward (ex.: O cliente ainda não tem prêmio de fidelidade disponível: 7 de 10 visitas, sem contar este atendimento.). Com o prêmio, a resposta traz loyalty_reward true, o discount e o amount que sobrou."
+          }
+        },
+        {
+          "name": "Pagamento sem o prêmio",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('O pagamento traz o desconto e se usou o prêmio', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const payment = pm.response.json();",
+                  "    pm.expect(payment.discount).to.eql('0.00');",
+                  "    pm.expect(payment.loyalty_reward).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "O pagamento da pasta Pagamentos, registrado sem o prêmio: discount \"0.00\" e loyalty_reward false. Pago com o prêmio, loyalty_reward vem true e discount traz o desconto."
           }
         }
       ]
