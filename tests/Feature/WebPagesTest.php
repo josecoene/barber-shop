@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Client;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Routing\Route as RouteDefinition;
@@ -156,7 +157,7 @@ class WebPagesTest extends TestCase
         $this->actingAs($client)
             ->get('/email/verify')
             ->assertOk()
-            ->assertSee($client->email)
+            ->assertSeeText($client->email)
             ->assertSeeText('Falta confirmar o e-mail')
             ->assertSeeText('Não recebeu o link? Confira a caixa de spam ou peça um novo.')
             ->assertDontSeeText('Enviamos')
@@ -164,6 +165,46 @@ class WebPagesTest extends TestCase
             ->assertDontSee('alert-success')
             ->assertSee('action="'.route('verification.send').'"', false)
             ->assertSee('Reenviar o link');
+    }
+
+    /**
+     * No celular, o e-mail da tela "Confirme seu e-mail" quebra linha só depois
+     * do @ e antes de cada ponto (os <wbr>), como nas listas e tabelas dos
+     * cadastros (o emailText do pages.js), e não no meio de uma palavra. Também
+     * com o aviso amarelo do e-mail que não saiu.
+     */
+    public function test_email_confirmation_notice_breaks_the_email_only_after_the_at_and_before_the_dots(): void
+    {
+        $client = $this->makeClientUser(Client::create(['name' => 'Cliente', 'email' => 'maria.helena.souza@email.exemplo.com.br']), verified: false);
+        $email = '<strong class="text-break">maria<wbr>.helena<wbr>.souza@<wbr>email<wbr>.exemplo<wbr>.com<wbr>.br</strong>';
+
+        $this->actingAs($client)
+            ->get('/email/verify')
+            ->assertOk()
+            ->assertSee($email, false)
+            ->assertSeeText('Falta confirmar o e-mail maria.helena.souza@email.exemplo.com.br.');
+
+        $this->actingAs($client)
+            ->withSession(['warning' => 'O link não saiu.'])
+            ->get('/email/verify')
+            ->assertOk()
+            ->assertSee($email, false);
+    }
+
+    /**
+     * Cada pedaço do e-mail sai escapado, como o resto da tela: um e-mail com &,
+     * aspas ou < (gravado direto no banco, porque a validação não deixaria
+     * passar todos) nunca vira HTML.
+     */
+    public function test_email_confirmation_notice_escapes_each_piece_of_the_email(): void
+    {
+        $client = $this->makeClientUser(Client::create(['name' => 'Cliente', 'email' => 'a&b\'c"d<i>x</i>.e@f.g']), verified: false);
+
+        $this->actingAs($client)
+            ->get('/email/verify')
+            ->assertOk()
+            ->assertSee('<strong class="text-break">a&amp;b&#039;c&quot;d&lt;i&gt;x&lt;/i&gt;<wbr>.e@<wbr>f<wbr>.g</strong>', false)
+            ->assertDontSee('<i>x</i>', false);
     }
 
     public function test_login_page_posts_to_the_server_with_remember_me_and_the_account_links(): void
