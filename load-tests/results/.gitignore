@@ -1,0 +1,5 @@
+# Resultados das rodadas do k6 (handleSummary): um JSON por rodada, <RODADA>-<SCENARIO>.json.
+# O JSON do resumo pode ir para o Git como evidência; o log bruto de cada requisição (--out json),
+# que passa de 100 MB numa rodada de carga, e os logs do terminal ficam de fora.
+*.raw.json
+*.log
