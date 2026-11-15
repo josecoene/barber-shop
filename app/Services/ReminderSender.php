@@ -20,31 +20,32 @@ use Throwable;
  *
  * - recebe o lembrete o agendamento agendado ou confirmado
  *   (AppointmentStatus::remindable()) que ainda não começou;
- * - o comando appointments:send-reminders (sendDue(), a cada 15 minutos) manda
- *   o lembrete dos agendamentos que começam depois de agora e até
+ * - a rodada do agendador (sendDue(), a cada 15 minutos, em routes/console.php)
+ *   e o comando appointments:send-reminders, que faz a mesma rodada na mão,
+ *   mandam o lembrete dos agendamentos que começam depois de agora e até
  *   REMINDER_HOURS_BEFORE horas à frente, com o reminder_sent_at nulo. Cada
  *   lembrete sai uma vez; sai de novo só se o agendamento for remarcado para
  *   outra data ou outro horário (o AppointmentScheduler volta o
  *   reminder_sent_at a nulo);
  * - o "Enviar lembrete agora" da agenda (sendNow()) manda na hora, a qualquer
  *   momento antes do início, e conta como o lembrete do agendamento: depois
- *   dele o comando não manda outro. Entre um envio e outro do mesmo
- *   agendamento (do comando ou manual) passam pelo menos
+ *   dele a rodada não manda outro. Entre um envio e outro do mesmo
+ *   agendamento (da rodada ou manual) passam pelo menos
  *   config('barberflow.reminders.resend_minutes') minutos, mesmo que ele seja
  *   remarcado nesse meio tempo; antes disso, 429 com Retry-After. O limite por
  *   usuário (o limitador reminders do AppServiceProvider) fica na rota;
  * - o e-mail não sai para cliente excluído nem para endereço do domínio
- *   barberflow.invalid, o de quem foi excluído (o comando pula; o envio
+ *   barberflow.invalid, o de quem foi excluído (a rodada pula; o envio
  *   manual responde 422).
  *
  * Hora: o "agora" é o now() do PHP, no fuso do APP_TIMEZONE. O banco filtra só
  * pelo appointments.date (Y-m-d), e a conta exata do horário é feita em PHP,
  * igual no SQLite e no MySQL.
  *
- * Concorrência: o comando reserva a linha antes de enviar, com um UPDATE que só
+ * Concorrência: a rodada reserva a linha antes de enviar, com um UPDATE que só
  * pega se o reminder_sent_at ainda estiver nulo e o agendamento continuar como
  * foi lido (status, data, horário, barbeiro e serviço): duas rodadas ao mesmo
- * tempo, ou o comando e o envio manual, não mandam o mesmo lembrete duas vezes,
+ * tempo, ou a rodada e o envio manual, não mandam o mesmo lembrete duas vezes,
  * e o e-mail fala do horário que estava na linha na hora da reserva. O envio
  * manual trava só a linha do agendamento (a penúltima da ordem global das
  * travas: barbeiro, cliente, serviço, agendamento, pagamento), lê o resto
@@ -74,10 +75,11 @@ class ReminderSender
     private const RELATIONS = ['client', 'barber', 'service'];
 
     /**
-     * Manda os lembretes que venceram (comando appointments:send-reminders) e
-     * devolve quantos saíram, quantos foram pulados (cliente excluído, e-mail
-     * que não recebe mensagem ou lembrete que outro envio pegou antes) e
-     * quantos falharam (esses voltam a ser tentados na próxima rodada).
+     * Manda os lembretes que venceram (a rodada do agendador e o comando
+     * appointments:send-reminders) e devolve quantos saíram, quantos foram
+     * pulados (cliente excluído, e-mail que não recebe mensagem ou lembrete que
+     * outro envio pegou antes) e quantos falharam (esses voltam a ser tentados
+     * na próxima rodada).
      *
      * @return array{sent: int, skipped: int, failed: int}
      */
@@ -158,7 +160,7 @@ class ReminderSender
     }
 
     /**
-     * Um lembrete do comando: confere o destinatário, reserva a linha e manda.
+     * Um lembrete da rodada: confere o destinatário, reserva a linha e manda.
      *
      * @return 'sent'|'skipped'|'failed'
      */
@@ -208,7 +210,7 @@ class ReminderSender
     }
 
     /**
-     * O envio falhou: o reminder_sent_at volta ao que era (nulo, no comando),
+     * O envio falhou: o reminder_sent_at volta ao que era (nulo, na rodada),
      * para o lembrete ser tentado de novo. Só desfaz a própria reserva: a linha
      * precisa continuar com o reminder_sent_at, a data e o horário da reserva.
      * Se uma remarcação mudou a data ou o horário nesse meio tempo, ela já zerou
@@ -259,7 +261,7 @@ class ReminderSender
 
     /**
      * Um envio a cada resend_minutes minutos por agendamento. Contam o
-     * reminder_sent_at da linha (o último lembrete, do comando ou manual) e o
+     * reminder_sent_at da linha (o último lembrete, da rodada ou manual) e o
      * último envio manual, guardado no cache (RateLimiter): a remarcação zera o
      * reminder_sent_at, mas não o cache, então remarcar não libera outro envio
      * antes da hora. Antes disso, 429 com Retry-After em segundos.
@@ -326,7 +328,7 @@ class ReminderSender
     }
 
     /**
-     * Quantas horas antes do início o comando manda o lembrete (no mínimo 1).
+     * Quantas horas antes do início a rodada manda o lembrete (no mínimo 1).
      */
     private function hoursBefore(): int
     {

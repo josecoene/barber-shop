@@ -4,16 +4,20 @@ namespace Tests\Feature;
 
 use Closure;
 use Illuminate\Support\Env;
+use Illuminate\Support\Facades\Mail;
 use PDO;
+use Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport;
+use Symfony\Component\Mailer\Transport\Smtp\Stream\SocketStream;
 use Tests\TestCase;
 
 /**
- * Tempo máximo para abrir a conexão com o MySQL e com o Redis e para esperar a
- * resposta de cada um (config/database.php). Sem ele, com o banco ou o cache fora
- * do ar ou congelados, cada requisição esperaria o padrão do PHP (30 segundos para
- * abrir a conexão com o MySQL, 24 horas por resposta dele e 60 segundos no Redis)
- * antes do erro. O arquivo de configuração é lido de novo com as variáveis de cada
- * teste, sem depender do .env de quem roda.
+ * Tempo máximo para abrir a conexão com o MySQL, com o Redis e com o servidor de
+ * e-mail e para esperar a resposta de cada um (config/database.php e
+ * config/mail.php). Sem ele, com o banco, o cache ou o servidor de e-mail fora do
+ * ar ou congelados, cada requisição esperaria o padrão do PHP (30 segundos para
+ * abrir a conexão com o MySQL, 24 horas por resposta dele e 60 segundos no Redis e
+ * no SMTP) antes do erro. O arquivo de configuração é lido de novo com as
+ * variáveis de cada teste, sem depender do .env de quem roda.
  *
  * A espera pela resposta do MySQL é o mysqlnd.net_read_timeout do PHP, que o
  * AppServiceProvider aplica só nas requisições web. Os testes dele sobem o app de
@@ -47,6 +51,42 @@ class ConnectionTimeoutTest extends TestCase
         $config = $this->databaseConfig(['DB_CONNECT_TIMEOUT' => '5', 'DB_READ_TIMEOUT' => '8', 'REDIS_CONNECT_TIMEOUT' => '1.5', 'REDIS_READ_TIMEOUT' => '2']);
 
         $this->assertTimeouts($config, mysql: 5, mysqlRead: 8, redisConnect: 1.5, redisRead: 2.0);
+    }
+
+    /**
+     * Com o servidor de e-mail de pé e sem responder (congelado), o envio
+     * desiste no limite, e o pedido não fica preso até o 504 do Nginx (60 s).
+     */
+    public function test_smtp_gives_up_after_10_seconds_by_default(): void
+    {
+        $this->assertSame(10.0, $this->smtpConfig(null)['timeout']);
+
+        // Vazia ou 0 no .env vale o padrão, como as outras variáveis do projeto.
+        $this->assertSame(10.0, $this->smtpConfig('')['timeout']);
+        $this->assertSame(10.0, $this->smtpConfig('0')['timeout']);
+
+        // O Laravel entrega o limite ao SMTP do Symfony Mailer, que usa o mesmo valor para abrir a conexão e
+        // para esperar cada resposta. Sem ele, o Symfony esperaria o default_socket_timeout do PHP (60 s).
+        $transport = app('mail.manager')->createSymfonyTransport($this->smtpConfig(null));
+
+        $this->assertInstanceOf(EsmtpTransport::class, $transport);
+        $this->assertInstanceOf(SocketStream::class, $transport->getStream());
+        $this->assertSame(10.0, $transport->getStream()->getTimeout());
+    }
+
+    public function test_the_smtp_timeout_comes_from_the_environment(): void
+    {
+        $config = $this->smtpConfig('4.5');
+
+        $this->assertSame(4.5, $config['timeout']);
+        $this->assertSame(4.5, app('mail.manager')->createSymfonyTransport($config)->getStream()->getTimeout());
+
+        // Com o app subindo de novo, como num pedido, o valor do ambiente vence o MAIL_TIMEOUT do .env (o .env
+        // do CI vem do .env.example, com 10) e chega ao mailer smtp do app.
+        $this->bootWith(['MAIL_TIMEOUT' => '7']);
+
+        $this->assertSame(7.0, config('mail.mailers.smtp.timeout'));
+        $this->assertSame(7.0, Mail::mailer('smtp')->getSymfonyTransport()->getStream()->getTimeout());
     }
 
     /**
@@ -105,6 +145,17 @@ class ConnectionTimeoutTest extends TestCase
         $variables = array_merge(array_fill_keys(self::VARIABLES, null), $values);
 
         return $this->withVariables($variables, fn () => require base_path('config/database.php'));
+    }
+
+    /**
+     * O mailer smtp do config/mail.php lido com este MAIL_TIMEOUT no ambiente
+     * (null tira a variável).
+     *
+     * @return array<string, mixed>
+     */
+    private function smtpConfig(?string $timeout): array
+    {
+        return $this->withVariables(['MAIL_TIMEOUT' => $timeout], fn () => require base_path('config/mail.php'))['mailers']['smtp'];
     }
 
     /**

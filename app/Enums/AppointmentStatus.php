@@ -77,7 +77,8 @@ enum AppointmentStatus: string
 
     /**
      * Agendado e confirmado recebem o lembrete por e-mail antes do horário
-     * (App\Services\ReminderSender), pelo comando ou pelo "Enviar lembrete agora".
+     * (App\Services\ReminderSender), pela rodada do agendador (ou do comando) ou
+     * pelo "Enviar lembrete agora".
      */
     public function getsReminder(): bool
     {

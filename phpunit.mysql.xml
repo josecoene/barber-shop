@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
     A suíte inteira no MySQL (composer test:mysql), para rodar o que o SQLite em memória do
-    phpunit.xml não roda: as travas da agenda (o AppointmentConcurrencyTest, pulado no SQLite,
-    confere com duas conexões) e as consultas no MySQL. Pedidos simultâneos de verdade ficam para o
-    teste de carga concorrencia.js.
+    phpunit.xml não roda: as travas da agenda, do registro de pagamento, do prêmio da fidelidade e
+    da confirmação do e-mail (o AppointmentConcurrencyTest, o PaymentConcurrencyTest, o
+    LoyaltyConcurrencyTest e o EmailVerificationConcurrencyTest, pulados no SQLite, conferem com duas
+    conexões) e as consultas no MySQL. Pedidos simultâneos de verdade ficam para o teste de carga
+    concorrencia.js.
 
     O RefreshDatabase APAGA e recria o banco: rode só num MySQL descartável, nunca no banco da
     homolog nem no de desenvolvimento. O tests/TestCase.php recusa banco sem "test" no nome.

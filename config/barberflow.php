@@ -159,11 +159,12 @@ return [
 
     /*
     | Lembrete por e-mail (App\Services\ReminderSender):
-    | - hours_before: o comando appointments:send-reminders, que roda a cada 15
-    |   minutos, manda o lembrete dos agendamentos que começam nas próximas
+    | - hours_before: a rodada do lembrete, que o agendador roda a cada 15
+    |   minutos (routes/console.php) e o comando appointments:send-reminders
+    |   roda na mão, manda o lembrete dos agendamentos que começam nas próximas
     |   horas. O mínimo é 1;
     | - resend_minutes: o "Enviar lembrete agora" da agenda espera esse tempo
-    |   desde o último lembrete do mesmo agendamento (do comando ou manual),
+    |   desde o último lembrete do mesmo agendamento (automático ou manual),
     |   mesmo que ele tenha sido remarcado. Antes disso, a resposta é 429 com
     |   Retry-After. Valor fixo, sem variável de ambiente. O limite por usuário
     |   fica em rate_limits.reminders.

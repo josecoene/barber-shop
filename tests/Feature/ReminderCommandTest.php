@@ -9,6 +9,7 @@ use App\Models\Client;
 use App\Models\Service;
 use App\Services\ReminderSender;
 use Closure;
+use Illuminate\Console\Scheduling\CallbackEvent;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -20,7 +21,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
- * Comando appointments:send-reminders (App\Services\ReminderSender). O "agora"
+ * Comando appointments:send-reminders e a mesma rodada no agendador
+ * (App\Services\ReminderSender e routes/console.php). O "agora"
  * fica fixo na segunda-feira 16/11/2026 ao meio-dia, no fuso America/Sao_Paulo,
  * e a janela é a padrão, de 24 horas: vai até terça 17/11 ao meio-dia. Os
  * agendamentos são gravados direto no banco, sem passar pelas regras da agenda.
@@ -389,17 +391,70 @@ class ReminderCommandTest extends TestCase
         $this->assertNull($appointment->fresh()->reminder_sent_at);
     }
 
-    public function test_the_command_runs_every_15_minutes_on_one_server_without_overlapping(): void
+    public function test_the_round_runs_every_15_minutes_on_one_server_without_overlapping(): void
     {
         $events = collect(app(Schedule::class)->events())
-            ->filter(fn (Event $event) => str_contains((string) $event->command, self::COMMAND))
+            ->filter(fn (Event $event) => $event->description === self::COMMAND || str_contains((string) $event->command, self::COMMAND))
             ->values();
 
         $this->assertCount(1, $events);
+        // Dentro do processo do agendador, e não como outro processo com a saída no /dev/null.
+        $this->assertInstanceOf(CallbackEvent::class, $events[0]);
+        $this->assertNull($events[0]->command);
         $this->assertSame('*/15 * * * *', $events[0]->expression);
         $this->assertTrue($events[0]->onOneServer);
         $this->assertTrue($events[0]->withoutOverlapping);
         // A trava vence antes da próxima rodada: um servidor que caiu no meio não segura os lembretes.
         $this->assertSame(10, $events[0]->expiresAt);
+    }
+
+    /**
+     * A rodada do agendador (o schedule:run, que o schedule:work do container
+     * scheduler chama a cada minuto) manda os lembretes no próprio processo e,
+     * quando tudo sai, não grava nada no log.
+     */
+    public function test_the_scheduled_round_sends_the_reminders_without_logging(): void
+    {
+        $appointment = $this->appointmentAt(self::TUESDAY, '10:00');
+        Log::spy();
+
+        // Segunda ao meio-dia: a rodada de 15 em 15 minutos está na hora.
+        $this->artisan('schedule:run')->assertSuccessful();
+
+        $this->assertReminderSentFor($appointment);
+        $this->assertSame(self::MONDAY.' 12:00:00', $appointment->fresh()->reminder_sent_at?->toDateTimeString());
+        Log::shouldNotHaveReceived('warning');
+        Log::shouldNotHaveReceived('error');
+    }
+
+    /**
+     * Como a rodada roda no processo do agendador, o log da falha sai junto com
+     * o dele, que o schedule:work repassa para a saída do container. Como outro
+     * processo, com a saída no /dev/null, o log dela não chegaria a este
+     * processo, e o Log::spy() não veria nada. A rodada seguinte manda o
+     * lembrete (test_a_failed_send_frees_the_reminder_for_the_next_round_and_logs_only_the_id):
+     * aqui ela não roda de novo, porque o Laravel guarda o erro da rodada no
+     * evento agendado, e só um schedule:run novo (um processo novo, como o que o
+     * schedule:work abre a cada minuto) começa sem ele.
+     */
+    public function test_the_scheduled_round_logs_the_failed_send_in_the_scheduler_process(): void
+    {
+        $appointment = $this->appointmentAt(self::TUESDAY, '10:00');
+        $this->failMailDelivery();
+        Log::spy();
+
+        $this->artisan('schedule:run')->assertSuccessful();
+
+        $this->assertNull($appointment->fresh()->reminder_sent_at);
+
+        // Só o id: nem o e-mail, nem o nome, nem a mensagem do erro (que traz o endereço).
+        Log::shouldHaveReceived('warning', ['Lembrete por e-mail não enviado.', ['appointment_id' => $appointment->id]])->once();
+        Log::shouldHaveReceived('warning')->once();
+
+        // A rodada termina como falha, e o agendador registra o motivo, só com as contas.
+        Log::shouldHaveReceived('error')
+            ->withArgs(fn (string $message) => $message === 'Lembretes por e-mail com falha nesta rodada: 1. Enviados: 0. Pulados: 0.')
+            ->once();
+        Log::shouldHaveReceived('error')->once();
     }
 }
