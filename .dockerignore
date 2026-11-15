@@ -21,8 +21,10 @@ node_modules
 public/hot
 public/build
 
-# Ambiente local e credenciais (o container de produção recebe tudo por variável de ambiente)
+# Ambiente local e credenciais (o container de produção recebe tudo por variável de ambiente).
+# O .env* só pega a raiz; a chave e as senhas da homolog local ficam em docker/homolog/homolog.env.
 .env*
+docker/homolog
 auth.json
 storage/*.key
 

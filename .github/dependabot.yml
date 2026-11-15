@@ -5,11 +5,12 @@
 # - Versão nova só é proposta 7 dias depois de publicada (cooldown): tempo para a comunidade
 #   achar uma versão adulterada, como a do Trivy em março de 2026. Alertas de segurança não
 #   esperam.
-# - As imagens Docker do docker/php/Dockerfile ficam na linha que o projeto usa: PHP 8.4, Node
-#   24 e Nginx 1.30 (estável). Trocar de linha é decisão do grupo, feita à mão.
+# - As imagens Docker do docker/php/Dockerfile e dos docker-compose*.yml ficam na linha que o
+#   projeto usa: PHP 8.4, Node 24, Nginx 1.30 (estável) e MySQL 8.4 (a do RDS). Trocar de linha é
+#   decisão do grupo, feita à mão.
 # - O que o Dependabot não vê e se atualiza à mão: as imagens do bloco env do ci.yml, o MySQL do
-#   job do CI e dos compose, o Composer do setup-php e o Terraform 1.13.3 (ci.yml e
-#   docs/nuvem/TERRAFORM.md). Como: docs/nuvem/CI-CD.md, "Atualizar versões".
+#   job do CI, o Composer do setup-php e o Terraform 1.13.3 (ci.yml e docs/nuvem/TERRAFORM.md).
+#   Como: docs/nuvem/CI-CD.md, "Atualizar versões".
 
 version: 2
 
@@ -103,6 +104,47 @@ updates:
         update-types:
           - version-update:semver-major
       # Nginx: as versões com o segundo número ímpar (1.31) são a linha de testes (mainline).
+      - dependency-name: nginx
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+    commit-message:
+      prefix: 'chore[Docker]'
+
+  # Imagens dos docker-compose*.yml da raiz: dev, homolog, monitoramento e carga (k6). Troca a
+  # tag e, nas imagens fixadas também pelo digest (Alloy e cAdvisor), o digest junto. O
+  # docker-compose.prod.yml não entra: as imagens dele vêm do ECR, por variável.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: America/Sao_Paulo
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      compose-menores:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Imagens construídas no próprio computador (dev e homolog), que não estão em registro
+      # nenhum.
+      - dependency-name: barberflow-app
+      - dependency-name: barberflow-web
+      # MySQL 8.4 é a linha LTS, a mesma do RDS: só as correções da 8.4 (8.4.x).
+      - dependency-name: mysql
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+      # Node e Nginx na mesma linha do Dockerfile (bloco docker, acima).
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
       - dependency-name: nginx
         update-types:
           - version-update:semver-major

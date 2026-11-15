@@ -1,0 +1,29 @@
+# Prometheus do monitoramento local da homolog (docker-compose.monitoring.yml).
+# Coleta a cada 5 s, como na Sprint 4: os testes de carga duram poucos minutos, e 15 s (o padrão)
+# deixariam poucos pontos em cada degrau.
+# São 4 alvos, e o painel "Alvos de métricas ativos" do Grafana espera os 4 no ar.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # O próprio Prometheus
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # CPU e memória de cada container
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # Requisições e conexões do Nginx (serviço web)
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  # Conexões e consultas do MySQL (serviço db)
+  - job_name: mysql
+    static_configs:
+      - targets: ["mysqld-exporter:9104"]

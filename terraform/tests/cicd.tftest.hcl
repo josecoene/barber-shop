@@ -74,6 +74,14 @@ mock_provider "aws" {
       latest_version = 3
     }
   }
+
+  # Tópico dos alarmes da feat/observabilidade: as ações dos alarmes do CloudWatch precisam de um
+  # ARN no formato certo.
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:us-east-1:123456789012:barberflow-homolog-alarms"
+    }
+  }
 }
 
 # Os runs com a role ligam o create_deploy_role (como o envs/prod.tfvars.example) e usam os nomes

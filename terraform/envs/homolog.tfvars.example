@@ -70,3 +70,9 @@ github_repository           = "josecoene/barber-shop"
 github_environment          = "homolog"
 github_repository_owner_id  = ""
 github_repository_id        = ""
+
+# Alarmes do CloudWatch (monitoring.tf): o tópico SNS e os alarmes existem sempre, e o e-mail
+# entra na assinatura do tópico. Vazio, ninguém é avisado. A AWS manda um e-mail de confirmação,
+# e o aviso só chega depois do clique no link. Os limites de cada alarme têm padrão no
+# variables.tf (docs/nuvem/TERRAFORM.md, "Observabilidade").
+alarm_email = ""

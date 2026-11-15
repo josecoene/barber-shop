@@ -1,0 +1,3 @@
+# Chave do Laravel e senhas da homolog local, geradas uma vez (docs/nuvem/DOCKER.md, "Subir").
+# Ficam só neste computador: nunca vão para o Git. O modelo sem valores é o homolog.env.example.
+homolog.env
