@@ -12,6 +12,8 @@ const HTTP_CONFLICT = 409;
 /* 419: o token CSRF não vale mais (a sessão expirou ou foi encerrada em outra aba). */
 const HTTP_SESSION_EXPIRED = 419;
 const HTTP_UNPROCESSABLE = 422;
+/* 429: passou do limite (ex.: "Enviar lembrete agora" de novo antes de 10 minutos). A mensagem da API diz quando tentar. */
+const HTTP_TOO_MANY_REQUESTS = 429;
 
 const FORBIDDEN_MESSAGE = 'Você não tem permissão para esta ação.';
 const SESSION_PROBLEM_MESSAGE = 'Não foi possível confirmar o seu login. Recarregue a página ou entre de novo.';
@@ -156,10 +158,13 @@ const COLUMNS = {
         /* Acesso: o barbeiro tem login (o admin cria ou redefine pelo campo de senha do formulário). */
         { key: 'has_login', format: (value) => (value ? 'Sim' : 'Não') },
     ],
+    /* Com a coluna Fidelidade, o telefone também quebra linha: um número sem espaço alargaria a tabela no celular. */
     clients: [
         { key: 'name', className: 'text-break' },
         { key: 'email', className: 'text-break' },
-        { key: 'phone', empty: 'Não informado' },
+        { key: 'phone', empty: 'Não informado', className: 'text-break' },
+        /* Fidelidade: visitas desde o último prêmio (ex.: 7/10), vindas da própria listagem, e um selo quando há prêmio. */
+        { key: 'loyalty', render: loyaltyCell },
     ],
     services: [
         { key: 'name', className: 'text-break' },
@@ -732,6 +737,51 @@ function describePaymentAppointment(appointment) {
 }
 
 /*
+ * Valor de um pagamento para os avisos: "R$ 35,00 (Pix)" ou, pago com o prêmio da fidelidade,
+ * "R$ 0,00 (Dinheiro), com o prêmio de fidelidade (desconto de R$ 35,00)".
+ */
+function describePaymentValue(payment) {
+    const value = `${currency.format(Number(payment.amount))} (${payment.method_label ?? payment.method})`;
+
+    return payment.loyalty_reward
+        ? `${value}, com o prêmio de fidelidade (desconto de ${currency.format(Number(payment.discount))})`
+        : value;
+}
+
+/* O que o prêmio da fidelidade vale, para o meio de uma frase: "um atendimento grátis" ou "50% de desconto num atendimento". */
+function rewardBenefit(discountPercent) {
+    return discountPercent >= 100 ? 'um atendimento grátis' : `${discountPercent}% de desconto num atendimento`;
+}
+
+/*
+ * Célula "Fidelidade" da lista de Clientes, com o resumo que vem em cada cliente do GET /api/clients:
+ * "7/10" (visitas desde o último prêmio, por extenso para o leitor de tela) e um selo quando o cliente
+ * tem prêmio para usar.
+ */
+function loyaltyCell(loyalty) {
+    const wrapper = document.createElement('span');
+    wrapper.className = 'd-inline-flex flex-wrap align-items-center gap-2';
+
+    if (!loyalty) {
+        wrapper.append(textElement('span', 'text-body-secondary', 'Sem dados'));
+
+        return wrapper;
+    }
+
+    const progress = textElement('span', 'tabular text-nowrap', `${loyalty.progress}/${loyalty.visits_per_reward}`);
+    progress.setAttribute('aria-hidden', 'true');
+    wrapper.append(progress, textElement('span', 'visually-hidden', `${loyalty.progress} de ${countLabel(loyalty.visits_per_reward, 'visita')}`));
+
+    /* text-wrap: no celular, o selo quebra em duas linhas em vez de alargar a tabela. */
+    if (loyalty.available_rewards > 0) {
+        const label = loyalty.available_rewards === 1 ? 'Prêmio disponível' : `${loyalty.available_rewards} prêmios disponíveis`;
+        wrapper.append(textElement('span', 'badge text-bg-success text-wrap text-start', label));
+    }
+
+    return wrapper;
+}
+
+/*
  * "Página X de Y (N itens)" e os botões Anterior e Próxima de uma lista paginada. Botão desabilitado
  * perde o foco: se o foco estava num deles, passa para o outro.
  */
@@ -804,7 +854,9 @@ function renderBarList(container, items, emptyText, { hideZeros = false } = {}) 
  * Modal de registrar e de corrigir pagamento (partials/payment-modal), da tela de Pagamentos e do
  * detalhe da Agenda:
  * - openRecord(agendamento, returnFocus): registra o pagamento de um atendimento concluído, com o valor
- *   já preenchido pelo preço copiado no agendamento;
+ *   já preenchido pelo preço copiado no agendamento. Confere a fidelidade do cliente sem contar este
+ *   atendimento (a mesma conta do POST /api/payments): com prêmio disponível, mostra o aviso e a caixa
+ *   "Usar o prêmio de fidelidade", que trava o valor no que sobra depois do desconto;
  * - openCorrect(pagamento, returnFocus): só o admin; corrige valor, forma e observações (o status tem
  *   ação própria).
  * Depois de salvar, chama onSaved(pagamento, 'recorded' ou 'corrected'). Quando a API diz que o
@@ -823,6 +875,10 @@ function createPaymentDialog(root, { onSaved, onStale }) {
     const amountInput = form.elements.namedItem('amount');
     const methodSelect = form.elements.namedItem('method');
     const notesInput = form.elements.namedItem('notes');
+    const rewardBox = modalElement.querySelector('[data-loyalty-reward]');
+    const rewardNotice = modalElement.querySelector('[data-loyalty-notice]');
+    const rewardStatus = modalElement.querySelector('[data-loyalty-status]');
+    const rewardCheckbox = form.elements.namedItem('use_loyalty_reward');
 
     /* O agendamento que vai receber o pagamento, ou o pagamento que está sendo corrigido. */
     let appointment = null;
@@ -830,12 +886,24 @@ function createPaymentDialog(root, { onSaved, onStale }) {
     let returnFocus = null;
     let saved = false;
     let saving = false;
+    /* Prêmio que este registro pode usar ({ percent, discount, amount }, valores em texto com 2 casas), ou null. */
+    let reward = null;
+    /* Valor que estava no campo quando a caixa do prêmio foi marcada: volta se ela for desmarcada. */
+    let amountBeforeReward = '';
+    /* Conta as consultas da fidelidade: a resposta que chega depois de o modal fechar ou mudar de atendimento não vale. */
+    let loyaltyCheck = 0;
 
     function prepare(item, focusBack) {
         form.reset();
         clearFormErrors(form, formAlerts);
         returnFocus = focusBack;
         saved = false;
+
+        reward = null;
+        loyaltyCheck += 1;
+        rewardBox.hidden = true;
+        rewardStatus.hidden = true;
+        amountInput.readOnly = false;
 
         summary.replaceChildren(
             summaryLine('Cliente', item.client?.name ?? ''),
@@ -845,6 +913,10 @@ function createPaymentDialog(root, { onSaved, onStale }) {
         );
     }
 
+    function recordHint(item) {
+        return `Já vem com o preço do agendamento (${currency.format(Number(item.price))}). Mude se o cliente pagou outro valor.`;
+    }
+
     function openRecord(item, focusBack) {
         appointment = item;
         payment = null;
@@ -852,8 +924,9 @@ function createPaymentDialog(root, { onSaved, onStale }) {
         title.textContent = 'Registrar pagamento';
         submitButton.textContent = 'Registrar pagamento';
         amountInput.value = Number(item.price).toFixed(2);
-        amountHint.textContent = `Já vem com o preço do agendamento (${currency.format(Number(item.price))}). Mude se o cliente pagou outro valor.`;
+        amountHint.textContent = recordHint(item);
         modal.show();
+        checkLoyalty(item);
     }
 
     function openCorrect(item, focusBack) {
@@ -865,8 +938,98 @@ function createPaymentDialog(root, { onSaved, onStale }) {
         amountInput.value = item.amount;
         methodSelect.value = item.method;
         notesInput.value = item.notes ?? '';
-        amountHint.textContent = `Valor registrado: ${currency.format(Number(item.amount))}. A correção não muda o status nem a data do pagamento.`;
+
+        const withReward = item.loyalty_reward ? `, com o prêmio de fidelidade (desconto de ${currency.format(Number(item.discount))})` : '';
+        amountHint.textContent = `Valor registrado: ${currency.format(Number(item.amount))}${withReward}. A correção não muda o status nem a data do pagamento.`;
         modal.show();
+    }
+
+    /*
+     * Fidelidade do cliente, sem contar o atendimento que está sendo pago. Com prêmio disponível, mostra o
+     * aviso e a caixa. Cliente excluído (404) fica sem a caixa; outra falha só avisa, e o pagamento
+     * continua podendo ser registrado sem o prêmio.
+     */
+    async function checkLoyalty(item) {
+        const check = loyaltyCheck;
+
+        if (!item.client_id) {
+            return;
+        }
+
+        let result = null;
+
+        try {
+            result = await apiRequest('GET', `/api/clients/${item.client_id}/loyalty?appointment_id=${item.id}`);
+        } catch {
+            result = null;
+        }
+
+        if (check !== loyaltyCheck || appointment !== item) {
+            return;
+        }
+
+        if (result?.ok && result.data) {
+            offerReward(item, result.data);
+
+            return;
+        }
+
+        if (result?.status === HTTP_NOT_FOUND) {
+            return;
+        }
+
+        rewardStatus.textContent = 'Não foi possível conferir a fidelidade do cliente. O pagamento pode ser registrado sem o prêmio.';
+        rewardStatus.hidden = false;
+    }
+
+    /*
+     * Desconto e valor do prêmio, na mesma conta da API (LoyaltyService::rewardAmounts): em centavos, com o
+     * desconto arredondado no centavo e o valor sendo o que sobra do preço.
+     */
+    function offerReward(item, loyalty) {
+        if (loyalty.available_rewards < 1) {
+            return;
+        }
+
+        const cents = Math.round(Number(item.price) * 100);
+        const discount = Math.round((cents * loyalty.discount_percent) / 100);
+        reward = {
+            percent: loyalty.discount_percent,
+            discount: (discount / 100).toFixed(2),
+            amount: ((cents - discount) / 100).toFixed(2),
+        };
+
+        const prizes = loyalty.available_rewards === 1
+            ? '1 prêmio de fidelidade disponível'
+            : `${loyalty.available_rewards} prêmios de fidelidade disponíveis`;
+        const benefit = reward.percent >= 100 ? 'este atendimento pode sair grátis' : `${reward.percent}% de desconto neste atendimento`;
+
+        rewardNotice.textContent = `${item.client?.name ?? 'O cliente'} tem ${prizes}: ${benefit}.`;
+        rewardCheckbox.checked = false;
+        rewardBox.hidden = false;
+    }
+
+    /* Caixa do prêmio marcada: o valor fica travado no que sobra depois do desconto. Desmarcada, volta o que estava. */
+    function applyReward() {
+        clearFieldError(form, 'use_loyalty_reward');
+        clearFieldError(form, 'amount');
+
+        if (!appointment || !reward) {
+            return;
+        }
+
+        if (rewardCheckbox.checked) {
+            amountBeforeReward = amountInput.value;
+            amountInput.value = reward.amount;
+            amountInput.readOnly = true;
+            amountHint.textContent = `Com o prêmio, o desconto é de ${currency.format(Number(reward.discount))} (${reward.percent}% do preço de ${currency.format(Number(appointment.price))}): o cliente paga ${currency.format(Number(reward.amount))}.`;
+
+            return;
+        }
+
+        amountInput.readOnly = false;
+        amountInput.value = amountBeforeReward;
+        amountHint.textContent = recordHint(appointment);
     }
 
     async function save(event) {
@@ -882,6 +1045,13 @@ function createPaymentDialog(root, { onSaved, onStale }) {
 
         const values = formValues(form);
         const correcting = payment !== null;
+        delete values.use_loyalty_reward;
+
+        /* Com o prêmio, a API calcula o valor pelo desconto: o amount fica de fora (mandado junto, ela recusa). */
+        if (!correcting && reward && rewardCheckbox.checked) {
+            delete values.amount;
+            values.use_loyalty_reward = true;
+        }
 
         try {
             const result = correcting
@@ -925,6 +1095,7 @@ function createPaymentDialog(root, { onSaved, onStale }) {
     ['amount', 'method', 'notes'].forEach((name) => {
         form.elements.namedItem(name).addEventListener('input', () => clearFieldError(form, name));
     });
+    rewardCheckbox.addEventListener('change', applyReward);
 
     /* Registrar começa pela forma (o valor já vem preenchido); corrigir, pelo valor. */
     modalElement.addEventListener('shown.bs.modal', () => (payment ? amountInput : methodSelect).focus());
@@ -989,6 +1160,13 @@ function initCrud(root) {
             cell.className = column.className;
         }
 
+        /* Coluna com conteúdo próprio (ex.: a fidelidade dos clientes): render devolve o elemento da célula. */
+        if (column.render) {
+            cell.append(column.render(value));
+
+            return cell;
+        }
+
         if (column.badge) {
             const status = STATUS_LABELS[value] ?? { text: value, badge: 'text-bg-light' };
             const badge = document.createElement('span');
@@ -1000,6 +1178,9 @@ function initCrud(root) {
         }
 
         if (column.empty && (value === null || value === '')) {
+            /* O texto de vazio quebra só entre palavras, mesmo numa coluna em que o valor quebra no meio (text-break). */
+            cell.classList.remove('text-break');
+
             const empty = document.createElement('span');
             empty.className = 'text-body-secondary';
             empty.textContent = column.empty;
@@ -1266,7 +1447,8 @@ function describeAppointment(appointment) {
 /*
  * Agenda do dia: uma coluna por barbeiro (o barbeiro vê só a dele), com cada agendamento num bloco da
  * altura da duração. No celular, as colunas viram uma lista por barbeiro. Clicar num agendamento abre o
- * detalhe, com as mudanças de status que valem agora e o atalho para remarcar.
+ * detalhe, com as mudanças de status que valem agora, o atalho para remarcar, quando saiu o lembrete
+ * por e-mail e o "Enviar lembrete agora".
  */
 function initSchedule(root) {
     const opening = toMinutes(root.dataset.opening);
@@ -1274,6 +1456,8 @@ function initSchedule(root) {
     const slotMinutes = Math.max(1, Number(root.dataset.slotMinutes) || 1);
     const statuses = JSON.parse(root.dataset.statuses);
     const createUrl = root.dataset.createUrl;
+    /* Quantas horas antes do horário o lembrete automático sai (REMINDER_HOURS_BEFORE), só para o texto do detalhe. */
+    const reminderHours = Number(root.dataset.reminderHours) || 0;
     /* O barbeiro logado vê só a própria coluna. */
     const ownBarber = root.dataset.ownBarberId
         ? { id: Number(root.dataset.ownBarberId), name: root.dataset.ownBarberName }
@@ -1641,6 +1825,19 @@ function initSchedule(root) {
         return { now, later };
     }
 
+    /* O agendamento ainda recebe o lembrete por e-mail: agendado ou confirmado (catalog().remindable) e antes do início. */
+    function remindableNow(appointment) {
+        return Boolean(statuses[appointment.status]?.remindable) && secondsUntil(appointment.date, appointment.start_time) > 0;
+    }
+
+    /*
+     * "Enviar lembrete agora": o admin, em qualquer agendamento, e o barbeiro, nos da agenda dele (a mesma regra
+     * da AppointmentPolicy::sendReminder). Quem decide é a API: o resto das regras volta como 422 ou 429.
+     */
+    function canSendReminder(appointment) {
+        return remindableNow(appointment) && (!ownBarber || appointment.barber_id === ownBarber.id);
+    }
+
     function detail(term, value) {
         const dt = document.createElement('dt');
         dt.className = 'col-sm-4 fw-normal text-body-secondary';
@@ -1679,6 +1876,16 @@ function initSchedule(root) {
             details.push(...detail('Pagamento', paymentBadge(appointment.payment)));
         } else if (appointment.status === 'completed') {
             details.push(...detail('Pagamento', 'Não registrado'));
+        }
+
+        /* Lembrete por e-mail: quando saiu ou, enquanto ainda pode sair, que não saiu. */
+        if (appointment.reminder_sent_at) {
+            details.push(...detail('Lembrete', `Enviado em ${dateTimeInAppTimezone(appointment.reminder_sent_at)}`));
+        } else if (remindableNow(appointment)) {
+            const automatic = reminderHours > 0
+                ? ` O e-mail automático sai nas ${reminderHours} ${reminderHours === 1 ? 'hora' : 'horas'} antes do horário.`
+                : '';
+            details.push(...detail('Lembrete', `Ainda não enviado.${automatic}`));
         }
 
         if (appointment.notes) {
@@ -1722,6 +1929,16 @@ function initSchedule(root) {
                 modal.hide();
             });
             buttons.push(record);
+        }
+
+        if (canSendReminder(appointment)) {
+            const remind = document.createElement('button');
+            remind.type = 'button';
+            remind.className = 'btn btn-outline-primary';
+            remind.textContent = 'Enviar lembrete agora';
+            remind.dataset.sendReminder = 'true';
+            remind.addEventListener('click', sendReminder);
+            buttons.push(remind);
         }
 
         if (statuses[appointment.status]?.reschedulable) {
@@ -1831,6 +2048,76 @@ function initSchedule(root) {
         }
     }
 
+    /* Depois do lembrete, o foco fica no próprio botão (ele continua lá) ou, se ele sumiu, na próxima ação. */
+    function focusReminderButton() {
+        const button = modalActions.querySelector('[data-send-reminder]');
+
+        if (button) {
+            button.focus();
+        } else {
+            focusFirstAction();
+        }
+    }
+
+    /*
+     * POST /api/appointments/{id}/reminder. Deu certo: o detalhe mostra a hora do envio e avisa. Recusas:
+     * 422 (o status mudou, o horário já começou, cliente excluído ou sem e-mail que receba) e 429 (saiu um
+     * lembrete há menos de 10 minutos), com a mensagem da API; 503 quando o e-mail não saiu.
+     */
+    async function sendReminder() {
+        const appointment = current;
+
+        if (!appointment) {
+            return;
+        }
+
+        setActionsDisabled(true);
+        modalAlerts.replaceChildren();
+
+        try {
+            const result = await apiRequest('POST', `/api/appointments/${appointment.id}/reminder`);
+
+            if (result.ok && result.data?.id) {
+                appointments = appointments.map((item) => (item.id === result.data.id ? result.data : item));
+                render();
+
+                if (current?.id === result.data.id) {
+                    current = result.data;
+                    renderDetails();
+                    focusReminderButton();
+                }
+
+                showAlert(modalAlerts, 'success', `Lembrete enviado por e-mail para ${result.data.client?.name ?? 'o cliente'}.`);
+
+                return;
+            }
+
+            const message = result.data?.errors?.reminder?.[0] ?? result.data?.message ?? 'Não foi possível enviar o lembrete. Tente de novo.';
+            showAlert(modalAlerts, result.status === HTTP_TOO_MANY_REQUESTS ? 'warning' : 'danger', message);
+
+            /* 422 e 404: o agendamento pode ter mudado em outro lugar. A agenda é lida de novo e o detalhe acompanha. */
+            if ([HTTP_UNPROCESSABLE, HTTP_NOT_FOUND].includes(result.status)) {
+                await load();
+                const fresh = appointments.find((item) => item.id === appointment.id);
+
+                if (fresh && current?.id === fresh.id) {
+                    current = fresh;
+                    renderDetails();
+                    focusReminderButton();
+                }
+            }
+        } catch {
+            showAlert(modalAlerts, 'danger', API_UNREACHABLE_MESSAGE);
+        } finally {
+            setActionsDisabled(false);
+
+            /* O botão desabilitado durante o pedido perde o foco: com o detalhe ainda aberto, o foco volta para ele. */
+            if (current && !modalElement.contains(document.activeElement)) {
+                focusReminderButton();
+            }
+        }
+    }
+
     root.querySelector('[data-day-previous]').addEventListener('click', () => setDay(addDays(day, -1)));
     root.querySelector('[data-day-next]').addEventListener('click', () => setDay(addDays(day, 1)));
     root.querySelector('[data-day-today]').addEventListener('click', () => setDay(today()));
@@ -1856,11 +2143,7 @@ function initSchedule(root) {
         const summary = { id: payment.id, status: payment.status, status_label: payment.status_label };
         appointments = appointments.map((item) => (item.id === payment.appointment_id ? { ...item, payment: summary } : item));
         render();
-        showAlert(
-            alerts,
-            'success',
-            `Pagamento de ${payment.appointment?.client?.name ?? 'cliente'} registrado: ${currency.format(Number(payment.amount))} (${payment.method_label}).`,
-        );
+        showAlert(alerts, 'success', `Pagamento de ${payment.appointment?.client?.name ?? 'cliente'} registrado: ${describePaymentValue(payment)}.`);
     }
 
     /*
@@ -2387,9 +2670,9 @@ function initAppointmentForm(root) {
 }
 
 /*
- * Meus horários (cliente): os próximos, com "Cancelar" enquanto ainda dá tempo (até data-cancel-min-hours
- * horas antes do início), e os passados ou cancelados. Quem decide a janela é a API: a tela só esconde o
- * botão quando ela já passou.
+ * Meus horários (cliente): a fidelidade (visitas até o próximo prêmio e os prêmios para usar), os próximos
+ * horários, com "Cancelar" enquanto ainda dá tempo (até data-cancel-min-hours horas antes do início), e os
+ * passados ou cancelados. Quem decide a janela é a API: a tela só esconde o botão quando ela já passou.
  */
 function initMyAppointments(root) {
     const cancelMinHours = Number(root.dataset.cancelMinHours) || 0;
@@ -2401,6 +2684,9 @@ function initMyAppointments(root) {
     const upcomingBox = root.querySelector('[data-upcoming]');
     const pastBox = root.querySelector('[data-past]');
     const upcomingTitle = root.querySelector('#my-upcoming-title');
+    /* Sem cadastro de cliente ligado à conta, a tela fica sem a parte da fidelidade. */
+    const loyaltyBox = root.querySelector('[data-loyalty]');
+    const loyaltyContent = loyaltyBox?.querySelector('[data-loyalty-content]');
 
     const modalElement = root.querySelector('[data-cancel-modal]');
     const modal = new Modal(modalElement);
@@ -2561,6 +2847,89 @@ function initMyAppointments(root) {
         }
     }
 
+    /*
+     * Fidelidade do cliente (GET /api/clients/{id}/loyalty): o prêmio para usar, quando há, as visitas desde
+     * o último prêmio numa barra e quantas faltam para o próximo. O número de visitas e o desconto vêm da API.
+     */
+    function renderLoyalty(loyalty) {
+        const perReward = loyalty.visits_per_reward;
+        const missing = perReward - loyalty.progress;
+        const benefit = rewardBenefit(loyalty.discount_percent);
+        const visits = `${loyalty.progress} de ${countLabel(perReward, 'visita')}`;
+        const nodes = [];
+
+        if (loyalty.available_rewards > 0) {
+            const prizes = loyalty.available_rewards === 1
+                ? `Você tem 1 prêmio disponível: ${benefit}`
+                : `Você tem ${loyalty.available_rewards} prêmios disponíveis: cada um vale ${benefit}`;
+            nodes.push(textElement('p', 'alert alert-success py-2 mb-3', `${prizes}. A barbearia aplica o desconto na hora do pagamento.`));
+        }
+
+        /* A largura da barra vai por el.style, que a CSP permite (ela barra só o style="" escrito no HTML). */
+        const bar = document.createElement('div');
+        bar.className = 'progress mb-2';
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-label', 'Visitas para o próximo prêmio');
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', String(perReward));
+        bar.setAttribute('aria-valuenow', String(loyalty.progress));
+        bar.setAttribute('aria-valuetext', visits);
+
+        const fill = document.createElement('div');
+        fill.className = 'progress-bar bg-success';
+        fill.style.width = `${(loyalty.progress / perReward) * 100}%`;
+        bar.append(fill);
+
+        const rule = loyalty.discount_percent >= 100 ? 'grátis' : `com ${loyalty.discount_percent}% de desconto`;
+        /* Com prêmio na mão, a contagem já é a do próximo. */
+        const goal = loyalty.available_rewards > 0 ? 'o próximo prêmio' : `você ganhar ${benefit}`;
+
+        nodes.push(
+            textElement('p', 'fw-semibold mb-1', visits),
+            bar,
+            textElement('p', 'mb-1', `${missing === 1 ? 'Falta 1 visita' : `Faltam ${missing} visitas`} para ${goal}.`),
+            textElement('p', 'small text-body-secondary mb-0', `A cada ${countLabel(perReward, 'atendimento concluído', 'atendimentos concluídos')}, o seguinte sai ${rule}.`),
+        );
+
+        loyaltyContent.replaceChildren(...nodes);
+    }
+
+    async function loadLoyalty() {
+        if (!loyaltyBox) {
+            return;
+        }
+
+        loyaltyContent.setAttribute('aria-busy', 'true');
+
+        try {
+            const result = await apiRequest('GET', `/api/clients/${loyaltyBox.dataset.clientId}/loyalty`);
+
+            if (result.ok && result.data) {
+                renderLoyalty(result.data);
+
+                return;
+            }
+
+            /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
+            if ([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN, HTTP_SESSION_EXPIRED].includes(result.status)) {
+                loyaltyContent.replaceChildren(emptyMessage(result.data?.message ?? FORBIDDEN_MESSAGE));
+
+                return;
+            }
+
+            throw new Error('Falha ao carregar a fidelidade');
+        } catch {
+            const message = emptyMessage('Não foi possível carregar a sua fidelidade.');
+            const retry = textElement('button', 'btn btn-sm btn-outline-secondary ms-2', 'Tentar de novo');
+            retry.type = 'button';
+            retry.addEventListener('click', loadLoyalty);
+            message.append(retry);
+            loyaltyContent.replaceChildren(message);
+        } finally {
+            loyaltyContent.removeAttribute('aria-busy');
+        }
+    }
+
     function openCancel(appointment, trigger) {
         cancelling = appointment;
         cancelTrigger = trigger;
@@ -2619,6 +2988,7 @@ function initMyAppointments(root) {
         window.history.replaceState(null, '', url);
     }
 
+    loadLoyalty();
     load();
 }
 
@@ -2887,16 +3257,23 @@ function initPayments(root) {
 
         const actions = paymentActions(payment);
 
+        const value = [
+            textElement('span', 'd-block fw-semibold text-nowrap', currency.format(Number(payment.amount))),
+            textElement('span', 'd-block small text-body-secondary', payment.method_label ?? payment.method),
+        ];
+
+        /* Pago com o prêmio da fidelidade: o desconto explica o valor menor que o preço. */
+        if (payment.loyalty_reward) {
+            value.push(textElement('span', 'd-block small text-body-secondary', `Prêmio de fidelidade: desconto de ${currency.format(Number(payment.discount))}`));
+        }
+
         row.append(
             cell([
                 textElement('span', 'd-block fw-semibold text-nowrap', shortDate(appointment.date)),
                 textElement('span', 'd-block small text-body-secondary', `${timeRange(appointment)} · ${appointment.service?.name ?? ''}`),
             ]),
             cell(who, 'text-break'),
-            cell([
-                textElement('span', 'd-block fw-semibold text-nowrap', currency.format(Number(payment.amount))),
-                textElement('span', 'd-block small text-body-secondary', payment.method_label ?? payment.method),
-            ]),
+            cell(value),
             cell(status),
             cell([actions ?? textElement('span', 'visually-hidden', 'Nenhuma ação')], 'text-end'),
         );
@@ -2927,6 +3304,10 @@ function initPayments(root) {
         }
 
         const details = [payment.method_label ?? payment.method];
+
+        if (payment.loyalty_reward) {
+            details.push(`prêmio de fidelidade (desconto de ${currency.format(Number(payment.discount))})`);
+        }
 
         if (payment.paid_at) {
             details.push(`pago em ${dateTimeInAppTimezone(payment.paid_at)}`);
@@ -3057,7 +3438,7 @@ function initPayments(root) {
     /* Depois de registrar, o atendimento sai da lista de sem pagamento e o pagamento entra na tabela. */
     function paymentSaved(payment, mode) {
         const who = payment.appointment?.client?.name ?? 'cliente';
-        const what = `${currency.format(Number(payment.amount))} (${payment.method_label})`;
+        const what = describePaymentValue(payment);
         showAlert(alerts, 'success', mode === 'recorded' ? `Pagamento de ${who} registrado: ${what}.` : `Pagamento de ${who} corrigido: ${what}.`);
         paymentsError = null;
 
@@ -3313,7 +3694,7 @@ function initDashboard(root) {
             revenue.payments === 0 ? 'Nenhum pagamento pago no período.' : `${countLabel(revenue.payments, 'pagamento pago', 'pagamentos pagos')}.`,
         );
         setTile('appointments', INTEGER.format(appointments.total), `Em todos os status; ${countLabel(completed, 'concluído', 'concluídos')}.`);
-        setTile('ticket', currency.format(Number(revenue.average_ticket)), 'Faturamento dividido pelos pagamentos pagos.');
+        setTile('ticket', currency.format(Number(revenue.average_ticket)), 'Faturamento dividido pelos pagamentos pagos (o corte grátis da fidelidade não conta).');
         setTile(
             'no-show',
             appointments.no_show_rate === null ? 'Sem dados' : `${PERCENT.format(appointments.no_show_rate)}%`,

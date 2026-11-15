@@ -22,12 +22,12 @@ class WebPagesTest extends TestCase
      * agenda recebem do AppointmentStatus::catalog().
      */
     private const STATUS_CATALOG = [
-        'scheduled' => ['label' => 'Agendado', 'transitions' => ['confirmed', 'in_progress', 'cancelled', 'no_show'], 'requires_start' => false, 'reschedulable' => true, 'occupies_time' => true, 'active' => true],
-        'confirmed' => ['label' => 'Confirmado', 'transitions' => ['in_progress', 'cancelled', 'no_show'], 'requires_start' => false, 'reschedulable' => true, 'occupies_time' => true, 'active' => true],
-        'in_progress' => ['label' => 'Em atendimento', 'transitions' => ['completed'], 'requires_start' => true, 'reschedulable' => false, 'occupies_time' => true, 'active' => true],
-        'completed' => ['label' => 'Concluído', 'transitions' => [], 'requires_start' => true, 'reschedulable' => false, 'occupies_time' => true, 'active' => false],
-        'cancelled' => ['label' => 'Cancelado', 'transitions' => [], 'requires_start' => false, 'reschedulable' => false, 'occupies_time' => false, 'active' => false],
-        'no_show' => ['label' => 'Faltou', 'transitions' => [], 'requires_start' => true, 'reschedulable' => false, 'occupies_time' => false, 'active' => false],
+        'scheduled' => ['label' => 'Agendado', 'transitions' => ['confirmed', 'in_progress', 'cancelled', 'no_show'], 'requires_start' => false, 'reschedulable' => true, 'remindable' => true, 'occupies_time' => true, 'active' => true],
+        'confirmed' => ['label' => 'Confirmado', 'transitions' => ['in_progress', 'cancelled', 'no_show'], 'requires_start' => false, 'reschedulable' => true, 'remindable' => true, 'occupies_time' => true, 'active' => true],
+        'in_progress' => ['label' => 'Em atendimento', 'transitions' => ['completed'], 'requires_start' => true, 'reschedulable' => false, 'remindable' => false, 'occupies_time' => true, 'active' => true],
+        'completed' => ['label' => 'Concluído', 'transitions' => [], 'requires_start' => true, 'reschedulable' => false, 'remindable' => false, 'occupies_time' => true, 'active' => false],
+        'cancelled' => ['label' => 'Cancelado', 'transitions' => [], 'requires_start' => false, 'reschedulable' => false, 'remindable' => false, 'occupies_time' => false, 'active' => false],
+        'no_show' => ['label' => 'Faltou', 'transitions' => [], 'requires_start' => true, 'reschedulable' => false, 'remindable' => false, 'occupies_time' => false, 'active' => false],
     ];
 
     /**
@@ -84,8 +84,9 @@ class WebPagesTest extends TestCase
     }
 
     /**
-     * Telas abertas por quem usa cada uma: o barbeiro na Agenda, no Agendar e
-     * em Pagamentos; o cliente no Agendar dele e em Meus horários.
+     * Telas abertas por quem usa cada uma: o barbeiro na Agenda, no Agendar, em
+     * Pagamentos e em Clientes (com a fidelidade); o cliente no Agendar dele e
+     * em Meus horários.
      */
     public static function pagesByProfile(): array
     {
@@ -93,6 +94,7 @@ class WebPagesTest extends TestCase
             'agenda do barbeiro' => ['makeBarberUser', '/appointments', 'Agenda'],
             'agendar do barbeiro' => ['makeBarberUser', '/appointments/create', 'Agendar'],
             'pagamentos do barbeiro' => ['makeBarberUser', '/payments', 'Pagamentos'],
+            'clientes do barbeiro' => ['makeBarberUser', '/clients', 'Clientes'],
             'agendar do cliente' => ['makeClientUser', '/booking', 'Agendar'],
             'meus horários do cliente' => ['makeClientUser', '/my-appointments', 'Meus horários'],
         ];
@@ -349,6 +351,21 @@ class WebPagesTest extends TestCase
         $this->assertNull($this->dataAttribute($html, 'data-own-barber-id'));
     }
 
+    /**
+     * O detalhe da Agenda diz quantas horas antes sai o lembrete automático, com
+     * o mínimo de 1 hora do App\Services\ReminderSender.
+     */
+    public function test_agenda_gets_the_reminder_window_from_the_config(): void
+    {
+        $this->actingAs($this->makeBarberUser());
+
+        config(['barberflow.reminders.hours_before' => 48]);
+        $this->assertSame('48', $this->dataAttribute($this->get('/appointments')->assertOk()->getContent(), 'data-reminder-hours'));
+
+        config(['barberflow.reminders.hours_before' => 0]);
+        $this->assertSame('1', $this->dataAttribute($this->get('/appointments')->assertOk()->getContent(), 'data-reminder-hours'));
+    }
+
     public function test_barber_sees_the_own_agenda_and_books_only_in_it(): void
     {
         $barberUser = $this->makeBarberUser();
@@ -417,6 +434,84 @@ class WebPagesTest extends TestCase
         config(['barberflow.client_cancel_min_hours' => 1]);
 
         $this->get('/my-appointments')->assertSee('até 1 hora antes do horário');
+    }
+
+    /**
+     * Meus horários mostra a fidelidade do cadastro ligado à conta, que o
+     * pages.js lê no GET /api/clients/{id}/loyalty. Sem cadastro ligado, a tela
+     * fica sem essa parte.
+     */
+    public function test_my_appointments_shows_the_loyalty_of_the_own_client(): void
+    {
+        $user = $this->makeClientUser();
+        $this->actingAs($user);
+
+        $html = $this->get('/my-appointments')
+            ->assertOk()
+            ->assertSee('id="my-loyalty-title">Fidelidade</h2>', false)
+            ->assertSeeInOrder(['data-loyalty', 'my-upcoming-title'], false)
+            ->getContent();
+
+        $this->assertSame((string) $user->client->id, $this->dataAttribute($html, 'data-client-id'));
+
+        // O actingAs guarda o mesmo usuário entre os pedidos: a relação já lida sai, como num pedido novo.
+        $user->client->user()->dissociate()->save();
+        $user->unsetRelation('client');
+
+        $this->get('/my-appointments')
+            ->assertOk()
+            ->assertDontSee('data-loyalty', false)
+            ->assertDontSee('data-client-id', false);
+    }
+
+    /**
+     * A coluna Fidelidade (ex.: 7/10) vem da própria listagem de clientes, que o
+     * admin e o barbeiro abrem.
+     */
+    public function test_clients_page_has_the_loyalty_column_for_the_staff(): void
+    {
+        $columns = ['>Nome</th>', '>E-mail</th>', '>Telefone</th>', '>Fidelidade</th>', '>Ações</th>'];
+
+        $this->actingAs($this->makeAdmin())
+            ->get('/clients')
+            ->assertOk()
+            ->assertSeeInOrder($columns, false);
+
+        $this->flushSession();
+
+        $this->actingAs($this->makeBarberUser())
+            ->get('/clients')
+            ->assertOk()
+            ->assertSeeInOrder($columns, false);
+    }
+
+    /**
+     * O modal de pagamento traz, escondida, a caixa do prêmio de fidelidade: o
+     * pages.js só a mostra quando o cliente do atendimento tem prêmio disponível.
+     * Vale na tela de Pagamentos e no detalhe da Agenda, para o admin e o barbeiro.
+     */
+    public function test_payment_modal_offers_the_loyalty_reward(): void
+    {
+        $pages = [
+            ['makeAdmin', '/payments'],
+            ['makeAdmin', '/appointments'],
+            ['makeBarberUser', '/payments'],
+            ['makeBarberUser', '/appointments'],
+        ];
+
+        foreach ($pages as [$makeUser, $uri]) {
+            $this->flushSession();
+            $this->actingAs($this->{$makeUser}());
+
+            $this->get($uri)
+                ->assertOk()
+                ->assertSee('<div class="mb-3" data-loyalty-reward hidden>', false)
+                ->assertSee('name="use_loyalty_reward"', false)
+                ->assertSee('Usar o prêmio de fidelidade')
+                ->assertSee('data-error-for="use_loyalty_reward"', false)
+                // A caixa vem antes do valor, que ela trava.
+                ->assertSeeInOrder(['name="use_loyalty_reward"', 'name="amount"'], false);
+        }
     }
 
     public function test_payments_page_gets_the_status_rules_and_the_admin_actions(): void

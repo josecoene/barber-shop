@@ -1,7 +1,9 @@
 {{--
     Modal de registrar e de corrigir pagamento, ligado à API pelo pages.js (createPaymentDialog).
     Fica na tela de Pagamentos e no detalhe da Agenda, dentro do elemento que o pages.js inicia:
-    - registrar parte de um atendimento concluído sem pagamento, com o valor já preenchido pelo preço dele;
+    - registrar parte de um atendimento concluído sem pagamento, com o valor já preenchido pelo preço dele.
+      Quando o cliente tem prêmio de fidelidade disponível, aparecem o aviso e a caixa "Usar o prêmio de
+      fidelidade", que trava o valor no que sobra depois do desconto;
     - corrigir (só o admin) muda o valor, a forma e as observações de um pagamento.
     As formas de pagamento vêm do PaymentMethod::catalog(). Quem decide as regras é a API.
 --}}
@@ -21,6 +23,21 @@
                 <dl class="mb-3" data-payment-summary></dl>
 
                 <p class="small text-body-secondary">Campos com <span class="text-danger">*</span> são obrigatórios.</p>
+
+                {{--
+                    Fidelidade: ao abrir o registro, o pages.js confere a do cliente sem contar este atendimento
+                    (GET /api/clients/{id}/loyalty?appointment_id=) e só mostra esta parte com prêmio disponível.
+                --}}
+                <div class="mb-3" data-loyalty-reward hidden>
+                    <p class="alert alert-success py-2 mb-2" id="payment-reward-notice" data-loyalty-notice></p>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="payment-use-reward" name="use_loyalty_reward" value="1"
+                            aria-describedby="payment-reward-notice">
+                        <label class="form-check-label" for="payment-use-reward">Usar o prêmio de fidelidade</label>
+                        <div class="invalid-feedback" id="payment-use-reward-error" data-error-for="use_loyalty_reward"></div>
+                    </div>
+                </div>
+                <p class="small text-body-secondary" data-loyalty-status hidden></p>
 
                 <div class="mb-3">
                     <label for="payment-amount" class="form-label">Valor (R$)<span class="text-danger" aria-hidden="true"> *</span></label>

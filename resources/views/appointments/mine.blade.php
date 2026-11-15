@@ -5,11 +5,15 @@
 @section('title', 'Meus horários')
 
 @section('content')
-    @php($cancelHours = (int) config('barberflow.client_cancel_min_hours'))
+    @php
+        $cancelHours = (int) config('barberflow.client_cancel_min_hours');
+        // Cadastro de cliente ligado à conta (nasce na confirmação do e-mail): a fidelidade é a dele.
+        $client = auth()->user()->client;
+    @endphp
 
     {{--
-        O pages.js (initMyAppointments) lista os horários do cliente pela API. A janela de cancelamento
-        vem da config só para a tela esconder o botão a tempo: quem decide é a API.
+        O pages.js (initMyAppointments) lista os horários do cliente e mostra a fidelidade dele pela API. A
+        janela de cancelamento vem da config só para a tela esconder o botão a tempo: quem decide é a API.
     --}}
     <div data-my-appointments
         data-cancel-min-hours="{{ $cancelHours }}"
@@ -22,6 +26,18 @@
 
         <div data-alerts></div>
         <p class="visually-hidden" role="status" aria-live="polite" data-live></p>
+
+        @if ($client)
+            {{-- Fidelidade (GET /api/clients/{id}/loyalty): visitas até o próximo prêmio e os prêmios para usar. --}}
+            <section class="card shadow-sm mb-4" aria-labelledby="my-loyalty-title" data-loyalty data-client-id="{{ $client->id }}">
+                <div class="card-body">
+                    <h2 class="h5 mb-2" id="my-loyalty-title">Fidelidade</h2>
+                    <div data-loyalty-content>
+                        <p class="text-body-secondary mb-0">Carregando...</p>
+                    </div>
+                </div>
+            </section>
+        @endif
 
         <section class="mb-4" aria-labelledby="my-upcoming-title">
             <h2 class="h5" id="my-upcoming-title" tabindex="-1">Próximos</h2>

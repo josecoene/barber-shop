@@ -13,14 +13,16 @@
 
     {{--
         O pages.js (initSchedule) monta a agenda com a API. Daqui ele lê o expediente
-        (config/barberflow.php) e as regras de cada status (AppointmentStatus::catalog()),
-        para não repetir nenhum dos dois no JS.
+        (config/barberflow.php), as regras de cada status (AppointmentStatus::catalog(), com quem
+        recebe lembrete) e quantas horas antes sai o lembrete automático (só para o texto do detalhe),
+        para não repetir nada disso no JS.
     --}}
     <div data-schedule
         data-opening="{{ config('barberflow.business.opening') }}"
         data-closing="{{ config('barberflow.business.closing') }}"
         data-slot-minutes="{{ config('barberflow.business.slot_minutes') }}"
         data-statuses="{{ json_encode(AppointmentStatus::catalog()) }}"
+        data-reminder-hours="{{ max(1, (int) config('barberflow.reminders.hours_before')) }}"
         data-create-url="{{ route('appointments.create') }}"
         @if ($ownBarber) data-own-barber-id="{{ $ownBarber->id }}" data-own-barber-name="{{ $ownBarber->name }}" @endif>
         <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
