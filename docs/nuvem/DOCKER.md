@@ -18,7 +18,11 @@ Tudo sai de um Dockerfile só, `docker/php/Dockerfile`, dividido em estágios. C
 | `docker-compose.yml` | Desenvolvimento, projeto `barberflow-dev` |
 | `docker-compose.prod.yml` | Produção na EC2: `app`, `web` e `scheduler` |
 | `docker-compose.homolog.yml` | Homologação local, sempre junto com o `docker-compose.prod.yml` |
-| `.dockerignore` | O que não entra no build (vendor, node_modules, `.env`, caches do dev, testes) |
+| `docker/homolog/homolog.env.example` | Modelo do `docker/homolog/homolog.env`, que guarda a chave e as senhas da homolog local (o Git e o build ignoram o arquivo de verdade) |
+| `docker/mysql/init/01-exporter-user.sh` | Cria o usuário `exporter` do monitoramento quando o banco da homolog nasce |
+| `docker-compose.monitoring.yml` | Monitoramento da homolog: Prometheus, Grafana, Loki e Alloy (`docs/nuvem/MONITORAMENTO.md`) |
+| `docker-compose.carga.yml` | Homolog de carga, com os limites levantados e o k6 (`load-tests/README.md`) |
+| `.dockerignore` | O que não entra no build (vendor, node_modules, `.env`, o `homolog.env`, caches do dev, testes) |
 
 ## Antes de começar
 
@@ -34,8 +38,10 @@ Tudo sai de um Dockerfile só, `docker/php/Dockerfile`, dividido em estágios. C
 | 8080 | dev e homolog | `web` (Nginx) | Só este computador (127.0.0.1) |
 | 3306 | dev | `db` (MySQL) | Só este computador, para DBeaver ou MySQL Workbench |
 | 8025 | homolog | `mailpit` (tela dos e-mails) | Só este computador |
+| 3000 e 9090 | homolog com monitoramento | Grafana e Prometheus (`docs/nuvem/MONITORAMENTO.md`) | Só este computador |
 | 80 | produção | `web` (Nginx) | O ALB da AWS |
 | 9000, 6379, 1025 e 8081 | todos | PHP-FPM, Redis, SMTP do Mailpit e métricas do Nginx | Só a rede interna do Docker |
+| 3100, 9104 e 9113 | homolog com monitoramento | Loki e os exporters do MySQL e do Nginx | Só a rede interna do Docker |
 
 ## Desenvolvimento (projeto `barberflow-dev`)
 
@@ -93,44 +99,76 @@ A homolog sobe as imagens de produção (alvos `app` e `web`) construídas no se
 
 O ambiente do Laravel parte do `.env.example` (todas as chaves do projeto, com valor de exemplo) e recebe por cima o bloco de produção do `docker-compose.prod.yml` e as linhas da homolog: `APP_URL=http://localhost:8080`, `RUN_MIGRATIONS=true`, e-mail pelo Mailpit e `DEMO_SEED_ENABLED=true`.
 
+### A chave e as senhas da homolog (`docker/homolog/homolog.env`)
+
+A homolog usa quatro segredos, que nascem aleatórios e ficam no `docker/homolog/homolog.env`, só neste computador:
+
+| Variável | Para que serve |
+|---|---|
+| `HOMOLOG_APP_KEY` | Chave do Laravel (`APP_KEY`) |
+| `HOMOLOG_DB_PASSWORD` | Senha do usuário `barberflow` do MySQL, que o app usa |
+| `HOMOLOG_DB_EXPORTER_PASSWORD` | Senha do usuário `exporter` do MySQL, só de leitura, do monitoramento |
+| `HOMOLOG_GRAFANA_ADMIN_PASSWORD` | Senha do admin do Grafana do monitoramento |
+
+- **O arquivo é gerado uma vez só e guardado enquanto o banco da homolog existir.** O MySQL grava as senhas do app e do exporter só na primeira subida, quando cria o banco: com outra senha, o app não entra mais no banco (veja "Problemas comuns"). Com outra chave, as sessões abertas deixam de valer.
+- O Git ignora o arquivo (`docker/homolog/.gitignore`), e o build das imagens também (`.dockerignore`). O modelo sem valores é o `docker/homolog/homolog.env.example`.
+- Os compose leem o arquivo pelo `--env-file`, que as funções `homolog` (abaixo) e `homologmon` (`docs/nuvem/MONITORAMENTO.md`) já passam.
+- Uma variável `HOMOLOG_*` definida na janela do terminal vale mais que o arquivo. Se você usou o jeito antigo (as variáveis no terminal, ou no `.env` da raiz), abra um terminal novo ou limpe as variáveis: `Remove-Item Env:HOMOLOG_*` no PowerShell, `unset HOMOLOG_APP_KEY HOMOLOG_DB_PASSWORD` no Git Bash.
+- Os valores servem só para este computador: nunca vão para a AWS, que tem a própria chave e a própria senha no SSM (`docs/nuvem/TERRAFORM.md`).
+
 ### Subir
 
 No PowerShell, na raiz do repositório:
 
-```
+```powershell
 docker compose down
 docker build -f docker/php/Dockerfile --target app -t barberflow-app:homolog .
-$env:HOMOLOG_APP_KEY = (docker run --rm --entrypoint php barberflow-app:homolog artisan key:generate --show --no-ansi)
-$env:HOMOLOG_DB_PASSWORD = (docker run --rm --entrypoint php barberflow-app:homolog -r "echo bin2hex(random_bytes(24));")
-docker compose -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog up -d --build --wait
+docker run --rm --entrypoint php barberflow-app:homolog -r "echo 'HOMOLOG_APP_KEY=base64:'.base64_encode(random_bytes(32)).PHP_EOL.'HOMOLOG_DB_PASSWORD='.bin2hex(random_bytes(24)).PHP_EOL.'HOMOLOG_DB_EXPORTER_PASSWORD='.bin2hex(random_bytes(24)).PHP_EOL.'HOMOLOG_GRAFANA_ADMIN_PASSWORD='.bin2hex(random_bytes(16)).PHP_EOL;" | Out-File -NoClobber -Encoding ascii docker\homolog\homolog.env
+function homolog { docker compose --env-file docker/homolog/homolog.env -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog @args }
+homolog up -d --build --wait
 ```
 
 1. Derruba o dev, se estiver no ar (os dois usam a porta 8080).
-2. Faz o build da imagem `app`, que é onde o `artisan` mora.
-3. Gera uma chave nova e uma senha nova para o usuário do app no MySQL e guarda nas variáveis `HOMOLOG_APP_KEY` e `HOMOLOG_DB_PASSWORD`, sem mostrar na tela. As variáveis valem só nessa janela do terminal. No Git Bash, os mesmos passos são `export HOMOLOG_APP_KEY="$(docker run --rm --entrypoint php barberflow-app:homolog artisan key:generate --show --no-ansi)"` e `export HOMOLOG_DB_PASSWORD="$(docker run --rm --entrypoint php barberflow-app:homolog -r 'echo bin2hex(random_bytes(24));')"`.
-4. Sobe a stack: o `app` roda o `php artisan optimize` e as migrations (`migrate --force --isolated`). Nunca roda seed.
+2. Faz o build da imagem `app`, que é onde o `php` mora.
+3. **Só na primeira vez:** gera o `docker/homolog/homolog.env`. O `php` da imagem escreve as quatro linhas com valores aleatórios (a chave tem o mesmo formato do `php artisan key:generate --show`), e o `Out-File -NoClobber` grava o arquivo e **se recusa a sobrescrever um que já existe** (`The file ... already exists`): é isso que guarda as senhas da primeira subida. Nada aparece na tela. O `-Encoding ascii` evita o formato UTF-16 que o Windows PowerShell 5.1 usaria e que o compose não lê.
+4. Cria a função `homolog`, que junta o `--env-file`, os dois arquivos e o nome do projeto. Ela vale só nessa janela do terminal: numa janela nova, crie de novo (o passo 3 não se repete).
+5. Sobe a stack: o `app` roda o `php artisan optimize` e as migrations (`migrate --force --isolated`). Nunca roda seed.
 
-Depois abra http://localhost:8080/login. Os e-mails que a aplicação mandar aparecem em http://localhost:8025.
+No Git Bash, os passos 3 e 4 ficam assim (o `noclobber` faz a mesma recusa do `-NoClobber`):
 
-**Enquanto o banco da homolog existir, reaproveite os dois valores.** O MySQL grava a senha do usuário do app só na primeira subida, quando cria o banco: com outra `HOMOLOG_DB_PASSWORD`, o app não entra mais no banco (veja "Problemas comuns"). Com outra chave, as sessões abertas deixam de valer.
-
-Para não depender da janela do terminal, guarde os dois valores no `.env` da raiz do repositório logo depois do passo 3. O Git ignora esse arquivo, e o compose lê dele os valores dos `${...}`. Nas próximas vezes, pule o passo 3:
-
+```bash
+(set -o noclobber; docker run --rm --entrypoint php barberflow-app:homolog -r "echo 'HOMOLOG_APP_KEY=base64:'.base64_encode(random_bytes(32)).PHP_EOL.'HOMOLOG_DB_PASSWORD='.bin2hex(random_bytes(24)).PHP_EOL.'HOMOLOG_DB_EXPORTER_PASSWORD='.bin2hex(random_bytes(24)).PHP_EOL.'HOMOLOG_GRAFANA_ADMIN_PASSWORD='.bin2hex(random_bytes(16)).PHP_EOL;" > docker/homolog/homolog.env)
+homolog() { MSYS_NO_PATHCONV=1 docker compose --env-file docker/homolog/homolog.env -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog "$@"; }
 ```
-Add-Content .env "`nHOMOLOG_APP_KEY=$env:HOMOLOG_APP_KEY`nHOMOLOG_DB_PASSWORD=$env:HOMOLOG_DB_PASSWORD"
+
+O `MSYS_NO_PATHCONV=1` impede o Git Bash de trocar os caminhos que vão para dentro do container (como o `HOME=/tmp` do Tinker, abaixo) por caminhos do Windows, como na função `tf` do `docs/nuvem/TERRAFORM.md`. Os caminhos do `--env-file` e do `-f` são relativos e não mudam.
+
+Depois abra http://localhost:8080/login. Os e-mails que a aplicação mandar aparecem em http://localhost:8025. Com o monitoramento (Prometheus, Grafana e Loki), use a função `homologmon` do `docs/nuvem/MONITORAMENTO.md` no lugar da `homolog`.
+
+Nas próximas vezes, só os passos 1, 2 (se o código mudou), 4 e 5. Se o passo 3 falhou no meio e deixou um `homolog.env` vazio ou pela metade, e o banco da homolog ainda não existe, apague o arquivo e repita o passo 3.
+
+**Vindo do jeito antigo**, com a `HOMOLOG_APP_KEY` e a `HOMOLOG_DB_PASSWORD` guardadas no `.env` da raiz: passe as duas linhas para o `docker/homolog/homolog.env`, tire as duas do `.env` da raiz e acrescente as do monitoramento:
+
+```powershell
+docker run --rm --entrypoint php barberflow-app:homolog -r "echo PHP_EOL.'HOMOLOG_DB_EXPORTER_PASSWORD='.bin2hex(random_bytes(24)).PHP_EOL.'HOMOLOG_GRAFANA_ADMIN_PASSWORD='.bin2hex(random_bytes(16)).PHP_EOL;" | Out-File -Append -Encoding ascii docker\homolog\homolog.env
 ```
+
+- O `PHP_EOL` do começo põe uma quebra de linha antes das linhas novas. Um arquivo escrito à mão costuma terminar sem ela (o padrão do VS Code), e o `-Append` grudaria a primeira linha nova no fim da `HOMOLOG_DB_PASSWORD`: a senha do banco mudaria e a do exporter sumiria. Se o arquivo já terminava com a quebra, sobra uma linha vazia, que o compose ignora.
+- Se só uma das duas falta, tire do comando a parte da que já está no arquivo. Com o mesmo nome duas vezes, o compose usa a última linha, e a senha da primeira deixa de valer.
+
+O banco criado pelo jeito antigo não tem o usuário `exporter`: crie com o roteiro "Banco que já existe" do `docs/nuvem/MONITORAMENTO.md`.
 
 ### Comandos
 
-Todos os comandos da homolog levam os dois arquivos e o nome do projeto. O compose lê o arquivo inteiro até para derrubar, então a `HOMOLOG_APP_KEY` e a `HOMOLOG_DB_PASSWORD` precisam estar definidas (na mesma janela do terminal, ou no `.env` da raiz, elas já estão).
+Todos com a função `homolog` (passo 4). O compose lê os arquivos inteiros até para derrubar, então o `homolog.env` precisa estar no lugar.
 
 | O que fazer | Comando |
 |---|---|
-| Ver o estado | `docker compose -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog ps` |
-| Logs do app | `docker compose -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog logs -f app` |
-| Situação das migrations | `docker compose -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog exec app php artisan migrate:status` |
-| Abrir o Tinker | `docker compose -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog exec -e HOME=/tmp app php artisan tinker` |
-| Parar e manter os dados | `docker compose -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog down` |
+| Ver o estado | `homolog ps` |
+| Logs do app | `homolog logs -f app` |
+| Situação das migrations | `homolog exec app php artisan migrate:status` |
+| Abrir o Tinker | `homolog exec -e HOME=/tmp app php artisan tinker` |
+| Parar e manter os dados | `homolog down` |
 
 O Tinker precisa do `HOME=/tmp` porque o disco do container é só de leitura e ele grava a própria configuração na pasta do usuário.
 
@@ -191,7 +229,7 @@ O CI (job `Docker` do `.github/workflows/ci.yml`) faz o build dos alvos `app` e 
 | Extensão redis do PECL | 6.3.0, conferida por SHA-256 |
 | Bundle de CA do RDS | conferido por SHA-256 |
 
-Para atualizar, troque a versão no arquivo e rode o build de novo. A extensão redis e o bundle do RDS também têm o SHA-256 no Dockerfile (`PHPREDIS_SHA256` e `RDS_CA_BUNDLE_SHA256`). Quando a AWS publicar um bundle novo, o build para na conferência: baixe o arquivo, confira de onde veio e calcule o hash novo (`Get-FileHash -Algorithm SHA256 arquivo` no PowerShell, `sha256sum arquivo` no Git Bash).
+O Dependabot propõe toda segunda as versões novas do Dockerfile e dos compose, 7 dias depois de publicadas (`docs/nuvem/CI-CD.md`, "Dependabot"). Para atualizar à mão, troque a versão no arquivo e rode o build de novo. A extensão redis e o bundle do RDS também têm o SHA-256 no Dockerfile (`PHPREDIS_SHA256` e `RDS_CA_BUNDLE_SHA256`). Quando a AWS publicar um bundle novo, o build para na conferência: baixe o arquivo, confira de onde veio e calcule o hash novo (`Get-FileHash -Algorithm SHA256 arquivo` no PowerShell, `sha256sum arquivo` no Git Bash).
 
 ### PHP e PHP-FPM
 
@@ -212,8 +250,9 @@ Para atualizar, troque a versão no arquivo e rode o build de novo. A extensão 
 
 - Log com o mesmo começo da Sprint 4 (o painel do Grafana lê o `$request_time` nessa posição), mais o `X-Forwarded-For` e o tempo de resposta do PHP no fim da linha.
 - O log de acesso grava o caminho sem a query string e troca por `[oculto]` o resto do caminho dos links de redefinição de senha (`/reset-password/...`) e de confirmação de e-mail (`/email/verify/...`). Assim a busca por nome ou e-mail, o e-mail e a assinatura dos links e os tokens não vão para o CloudWatch nem para o Loki.
-- O log de erro do Nginx não tem formato configurável: em toda falha de uma requisição ele grava a requisição inteira (query string e token) e o Referer, que pode ser o próprio link de nova senha, com o token. Por isso o `default.conf` deixa nele só as falhas graves (`error_log stderr crit`). As comuns, como o PHP-FPM fora do ar ou lento (502 e 504), não são gravadas ali; o status e o `$upstream_response_time` delas continuam no log de acesso, e a causa se investiga no log do `app`. Numa falha grave (falta de memória, de arquivos abertos ou de portas, ou a pasta `public/` sumindo da imagem), a requisição inteira ainda pode sair nesse log. É raro, e o risco fica registrado no `docs/nuvem/SEGURANCA.md` (branch `feat/observabilidade`). As mensagens de subida e parada do Nginx não mudam.
+- O log de erro do Nginx não tem formato configurável: em toda falha de uma requisição ele grava a requisição inteira (query string e token) e o Referer, que pode ser o próprio link de nova senha, com o token. Por isso o `default.conf` deixa nele só as falhas graves (`error_log stderr crit`). As comuns, como o PHP-FPM fora do ar ou lento (502 e 504), não são gravadas ali; o status e o `$upstream_response_time` delas continuam no log de acesso, e a causa se investiga no log do `app`. Numa falha grave (falta de memória, de arquivos abertos ou de portas, ou a pasta `public/` sumindo da imagem), a requisição inteira ainda pode sair nesse log. É raro, e o risco fica registrado no `docs/nuvem/SEGURANCA.md`, "Riscos aceitos". Os erros que esse log deixou de gravar aparecem nos alarmes de 5xx do ALB e das instâncias (`terraform/monitoring.tf`) e no painel de status do Grafana local. As mensagens de subida e parada do Nginx não mudam.
 - `server_tokens off`, gzip para HTML, texto, CSS, JS e JSON e `client_max_body_size 8m` (igual ao `post_max_size` do PHP).
+- `fastcgi_connect_timeout 2s` (branch `feat/observabilidade`): com o container `app` parado, o endereço dele some da rede e abrir a conexão fica esperando. Com o padrão de 60 s, cada requisição ficava presa até o 504; com 2 s, o Nginx responde 504 em 2 s (e 502 na hora, enquanto o container ainda existe e só o PHP-FPM caiu). Com o app no ar, a conexão abre na hora, mesmo com todos os processos ocupados, e a espera pela resposta continua sendo o `fastcgi_read_timeout` de 60 s. Medição em `load-tests/resiliencia/README.md`.
 - `/build/` com cache de um ano e `immutable`: o nome de cada arquivo do Vite muda quando o conteúdo muda.
 - Só o `index.php` vai para o PHP-FPM; outros `.php` respondem 404 e arquivos ocultos (`.env`, `.htaccess`) respondem 403. O `fastcgi_hide_header X-Powered-By` garante que o header não passa.
 - Métricas (`stub_status`) na porta 8081, que não é publicada.
@@ -240,8 +279,8 @@ O volume do banco antigo não é reaproveitado: o projeto novo (`barberflow-dev`
 ## Credenciais de teste do MySQL
 
 - O compose de dev continua com o mesmo banco, o mesmo usuário e as mesmas senhas do compose antigo, nas mesmas variáveis (`MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD` e `MYSQL_ROOT_PASSWORD`). Foi decisão do Leonam em 13/11: nenhuma senha muda. Elas estão em `docker-compose.yml:16-19`, no bloco `x-mysql-credentials`, e o app conecta com esses mesmos valores.
-- Elas valem só para o MySQL deste computador: a porta fica presa no 127.0.0.1. O risco de uma senha conhecida no repositório fica registrado no `docs/nuvem/SEGURANCA.md` (branch `feat/observabilidade`).
-- A homolog não guarda senha no repositório. A do usuário do app vem da `HOMOLOG_DB_PASSWORD` (passo 3 da homolog). O root ganha uma senha aleatória quando o banco é criado (o MySQL mostra essa senha uma vez no log) e só entra de dentro do container do banco; nada na homolog usa o root.
+- Elas valem só para o MySQL deste computador: a porta fica presa no 127.0.0.1. O risco de uma senha conhecida no repositório fica registrado no `docs/nuvem/SEGURANCA.md`, "Riscos aceitos".
+- A homolog não guarda senha no repositório. As do usuário do app e do usuário `exporter` vêm do `docker/homolog/homolog.env` (seção "A chave e as senhas da homolog"), que o Git ignora. O root ganha uma senha aleatória quando o banco é criado (o MySQL mostra essa senha uma vez no log) e só entra de dentro do container do banco; nada na homolog usa o root.
 - Na AWS a senha do banco é outra e chega à EC2 pelo SSM, nunca por estes arquivos.
 
 ## Problemas comuns
@@ -249,8 +288,9 @@ O volume do banco antigo não é reaproveitado: o projeto novo (`barberflow-dev`
 - **`port is already allocated` na 8080**: outra stack está no ar (dev, homolog ou outro projeto). Confira com `docker ps` e derrube a outra.
 - **502 Bad Gateway**: o Nginx está no ar, mas o PHP-FPM do `app` caiu ou está reiniciando. Veja o motivo em `docker compose logs app`. Na subida isso não acontece, porque o `web` só sobe depois que o `app` fica saudável (`ready to handle connections` no log).
 - **Erro 500 com "Vite manifest not found"**: falta o `public/build`. Rode `docker compose run --rm assets`.
-- **`required variable HOMOLOG_APP_KEY is missing a value`** (ou `HOMOLOG_DB_PASSWORD`): a variável não está definida nessa janela do terminal nem no `.env` da raiz. Se o banco da homolog ainda não existe, refaça o passo 3. Se já existe, use a mesma `HOMOLOG_DB_PASSWORD` da primeira subida.
-- **`Access denied for user 'barberflow'` no log do `app` da homolog**: a `HOMOLOG_DB_PASSWORD` não é a mesma da primeira subida, quando o MySQL criou o banco. Use a senha da primeira subida. Se ela se perdeu, apague o banco da homolog (só tem dados de teste) e suba de novo: derrube a stack com o `down` da tabela acima, rode `docker volume rm barberflow-homolog_dbdata` e refaça o passo 3.
+- **`required variable HOMOLOG_APP_KEY is missing a value`** (ou outra `HOMOLOG_*`): o comando rodou sem o `--env-file` (use a função `homolog`) ou o `docker/homolog/homolog.env` não tem a linha. Se o banco da homolog ainda não existe, gere o arquivo (passo 3). Se já existe, as senhas precisam ser as da primeira subida; a linha que falta, se for do monitoramento, se acrescenta como em "Vindo do jeito antigo".
+- **`The file ... homolog.env already exists`** no passo 3 (no Git Bash, `cannot overwrite existing file`): o arquivo já existe e guarda as senhas do banco da homolog. Não gere outro: pule o passo 3.
+- **`Access denied for user 'barberflow'` no log do `app` da homolog**: a `HOMOLOG_DB_PASSWORD` não é a mesma da primeira subida, quando o MySQL criou o banco (um `homolog.env` gerado de novo, ou uma variável `HOMOLOG_DB_PASSWORD` velha na janela do terminal, que vale mais que o arquivo). Use a senha da primeira subida. Se ela se perdeu, apague o banco da homolog (só tem dados de teste) e suba de novo: derrube a stack com `homolog down`, rode `docker volume rm barberflow-homolog_dbdata`, apague o `docker/homolog/homolog.env` e refaça o passo 3.
 - **`service "web" has neither an image nor a build context specified`** (ou `"app"`): o `docker-compose.prod.yml` foi usado sem `APP_IMAGE` e `WEB_IMAGE`.
 - **`failed to initialize logging driver` no `web`**: o `docker-compose.prod.yml` subiu sozinho fora da EC2, e o `web` tentou mandar os logs para o CloudWatch (driver `awslogs`) sem região, grupo ou credencial da AWS. No computador, use sempre a homolog (os dois arquivos juntos), que troca o driver pelo `json-file`.
 - **`APP_KEY inválido` no log do `app`**: a chave não tem 32 bytes. Gere outra com `php artisan key:generate --show` (passo 3 da homolog). Na AWS, veja "Preencher o APP_KEY" no `docs/nuvem/TERRAFORM.md`.

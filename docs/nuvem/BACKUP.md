@@ -14,6 +14,7 @@ Este guia explica como o banco MySQL da AWS (RDS) do BarberFlow é protegido con
 | Multi-AZ | Na prod, uma réplica de espera em outra zona recebe cada gravação na hora e assume sozinha se a zona do banco cair, em 1 a 2 minutos, sem perder dado | variável `db_multi_az` |
 | Criptografia | Disco, backups e snapshots criptografados com a chave padrão do RDS | `storage_encrypted` |
 | Tags | Os snapshots levam as tags do banco (projeto e ambiente) | `copy_tags_to_snapshot` |
+| Alarmes | E-mail quando o espaço livre no disco fica abaixo de 2 GB (sem espaço, o MySQL para de gravar) e quando a CPU, a memória livre ou as conexões saem do normal | `terraform/monitoring.tf`, alarmes `db-*` (`docs/nuvem/TERRAFORM.md`, "Observabilidade") |
 
 O backup automático e o snapshot final são do próprio RDS. O plano cortou o AWS Backup como excesso: para este projeto, ele repetiria o que o RDS já faz.
 
@@ -244,4 +245,4 @@ Rode uma vez em cada ambiente, antes de abrir para os clientes, e anote o result
 
 - O backup automático não cobra até o tamanho do banco; acima disso, e para todo snapshot que ficar guardado (o final, inclusive), a AWS cobra o armazenamento por GB por mês.
 - Um banco restaurado cobra por hora como o original até ser apagado. Não esqueça o banco antigo e o de teste ligados.
-- A estimativa do projeto fica no `docs/nuvem/CUSTOS.md` (branch `feat/observabilidade`).
+- A estimativa do projeto fica no `docs/nuvem/CUSTOS.md`. O armazenamento de backup e de snapshot que passa do tamanho do banco custa US$ 0,095 por GB por mês em us-east-1 (Price List da AWS, consultado em 14/11/2026).

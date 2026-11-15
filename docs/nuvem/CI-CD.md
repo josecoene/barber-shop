@@ -350,12 +350,14 @@ E uma regra para as tags de versão, em New ruleset, New tag ruleset: alvo `v*`,
 | `npm` | `/` | 5 | `package.json` e `package-lock.json` |
 | `github-actions` | `/` | 3 | SHA e comentário da versão das actions dos workflows |
 | `docker` | `/docker/php` | 3 | Imagens do `Dockerfile` (`php`, `composer`, `node` e `nginx`) |
+| `docker-compose` | `/` | 3 | Imagens dos `docker-compose*.yml` da raiz: dev, homolog (MySQL, Redis e Mailpit), monitoramento e k6. Nas fixadas também pelo digest (Alloy e cAdvisor), troca o digest junto |
 | `terraform` | `/terraform` e `/terraform/bootstrap` | 3 | Provider AWS e os `.terraform.lock.hcl` |
 
 - Roda toda segunda, às 06:00 de Brasília.
 - As atualizações menores (minor e patch) de cada ecossistema vêm juntas num pull request; as maiores (major), uma por pull request.
 - Versão nova só é proposta 7 dias depois de publicada (`cooldown`): tempo para a comunidade achar uma versão adulterada, como a do Trivy em março de 2026. Os alertas de segurança não esperam.
-- No Dockerfile, o PHP fica na 8.4 (só correções 8.4.x), o Node na 24 e o Nginx na 1.30 (estável; as versões com o segundo número ímpar, como a 1.31, são a linha de testes). Trocar de linha é decisão do grupo, feita à mão.
+- No Dockerfile, o PHP fica na 8.4 (só correções 8.4.x), o Node na 24 e o Nginx na 1.30 (estável; as versões com o segundo número ímpar, como a 1.31, são a linha de testes). Nos compose, o Node e o Nginx do dev seguem a mesma regra, e o MySQL fica na 8.4 (só correções 8.4.x), a linha do RDS. Trocar de linha é decisão do grupo, feita à mão.
+- O bloco `docker-compose` lê os arquivos da raiz cujo nome casa com a regra do Dependabot (`(docker-)?compose(-\w+)?(\.[\w-]+)?\.ya?ml`, conferida no código do `dependabot-core` em 14/11/2026), o que inclui o `docker-compose.monitoring.yml` e o `docker-compose.carga.yml`. As imagens construídas no computador (`barberflow-app` e `barberflow-web`) ficam de fora pelo `ignore`, e o `docker-compose.prod.yml` não tem imagem fixa (as dele vêm do ECR, por variável). Validado só no código: a primeira rodada no GitHub mostra os pull requests.
 - Os commits saem como `chore[Deps]: ...`, `chore[CI]: ...`, `chore[Docker]: ...` e `chore[Terraform]: ...`, no formato do repositório.
 - Cada pull request do Dependabot passa pelo CI inteiro antes do merge, como qualquer outro.
 - Depois de um pull request do `terraform`, confira os hashes das quatro plataformas no lock (`docs/nuvem/TERRAFORM.md`, "Atualizar versões").
@@ -368,7 +370,7 @@ O Dependabot não vê estas, que se atualizam à mão:
 |---|---|---|
 | Imagens do Trivy, ShellCheck, Amazon Linux e actionlint | Bloco `env` do `ci.yml` (o Trivy também no do `deploy.yml`, e os comandos do `docs/nuvem/TERRAFORM.md`) | `docker buildx imagetools inspect <imagem>:<tag>` mostra o digest; troque a tag e o digest juntos |
 | BuildKit (`BUILDKIT_IMAGE`) | Bloco `env` do `ci.yml` e do `deploy.yml`, o mesmo valor nos dois | `docker buildx imagetools inspect moby/buildkit:buildx-stable-1` mostra o digest da versão que o Buildx usa como estável; ache a tag `v*` com o mesmo digest e troque a tag e o digest juntos, com 7 dias de publicada, como o `cooldown` do Dependabot |
-| MySQL do job `MySQL` | `services.mysql.image` do `ci.yml` (e os compose do `docs/nuvem/DOCKER.md`) | O mesmo `imagetools inspect` |
+| MySQL do job `MySQL` | `services.mysql.image` do `ci.yml`, na mesma versão dos compose (que o Dependabot atualiza) | O mesmo `imagetools inspect` |
 | Composer do CI | `tools` do setup-php, nos jobs `PHP` e `MySQL` | A mesma versão do Dockerfile; o SHA-256 está em `https://getcomposer.org/download/<versão>/composer.phar.sha256sum` |
 | Terraform 1.13.3 | `terraform_version` do `ci.yml` e as funções do `docs/nuvem/TERRAFORM.md` | Notas da versão nova |
 
@@ -410,7 +412,7 @@ O que rodou no computador, em containers, sem GitHub e sem AWS:
 | actionlint 1.7.12 nos dois workflows | Nenhum erro |
 | Scripts dos passos do `deploy.yml`, com um `aws`, um `curl`, um `sleep` e um `docker` falsos, num container do Amazon Linux 2023 (o roteiro do teste não ficou no repositório) | 61 cenários conferidos: tag do commit e recusa de `image_tag` com comando, maiúsculas, prefixo `manual-`, commit fora da `main` ou que não é commit; commit fora da `main`; compose diferente ou sem a tag; Auto Scaling inexistente; refresh em andamento; imagem faltando no rollback; erro da AWS; Trivy nas imagens do build, com os parâmetros do CI, e o deploy parando antes do push com CRITICAL; push só da imagem que o Trivy leu; `put-parameter` sem `--type`; refresh em `Failed`, `Cancelled` e rollback; `/api/health` com 503 até o fim; o resumo do primeiro deploy, do deploy repetido e com a versão anterior feita à mão; o mesmo Trivy e o mesmo BuildKit nos dois workflows |
 | BuildKit `moby/buildkit:v0.34.2` com digest | O digest é o mesmo da `buildx-stable-1`, e o `buildkitd --version` da imagem mostra a v0.34.2 |
-| `.github/dependabot.yml` contra o JSON Schema do SchemaStore | Válido |
+| `.github/dependabot.yml` contra o JSON Schema do SchemaStore | Válido; de novo com o bloco `docker-compose` (`check-jsonschema` 0.39.0), que recusa um nome de ecossistema errado |
 | `terraform fmt -check`, `validate` e `test` | Sem diferença de formatação; configuração válida; `57 passed` na raiz (12 do CI/CD) e `1 passed` no bootstrap |
 | 35 defeitos de propósito no `cicd.tf`, no `variables.tf`, no `outputs.tf` e em arquivos novos, numa cópia da pasta (seção "O que os testes conferem") | O teste falhou em todos; sem defeito, passou |
 | `trivy config` com o `.trivyignore.yaml` | Nenhum alerta |
