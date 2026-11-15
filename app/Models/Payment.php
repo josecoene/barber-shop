@@ -16,7 +16,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * App\Services\PaymentRecorder.
  *
  * amount sai como texto com 2 casas ("35.00"), igual ao price do agendamento,
- * e paid_at é preenchido pelo servidor quando o pagamento vira pago.
+ * e paid_at é preenchido pelo servidor quando o pagamento vira pago. Com o
+ * prêmio da fidelidade (App\Services\LoyaltyService), loyalty_reward fica true
+ * e discount guarda o desconto, também com 2 casas; no registro, amount é o que
+ * sobra do price depois do desconto. Sem o prêmio, discount é "0.00" e
+ * loyalty_reward é false. Os dois só mudam no registro: a correção do admin
+ * muda o valor, a forma e as observações.
  */
 class Payment extends Model
 {
@@ -34,10 +39,22 @@ class Payment extends Model
     protected $fillable = [
         'appointment_id',
         'amount',
+        'discount',
+        'loyalty_reward',
         'method',
         'status',
         'paid_at',
         'notes',
+    ];
+
+    /**
+     * Padrões do banco repetidos aqui para o JSON do POST já sair com eles.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'discount' => '0.00',
+        'loyalty_reward' => false,
     ];
 
     /**
@@ -55,6 +72,8 @@ class Payment extends Model
         return [
             'appointment_id' => 'integer',
             'amount' => 'decimal:2',
+            'discount' => 'decimal:2',
+            'loyalty_reward' => 'boolean',
             'method' => PaymentMethod::class,
             'status' => PaymentStatus::class,
             'paid_at' => 'datetime',

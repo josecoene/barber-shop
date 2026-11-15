@@ -78,6 +78,12 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(config('barberflow.rate_limits.password_reset'))
                 ->by((is_string($email) ? Str::lower($email) : '').'|'.$request->ip());
         });
+
+        // "Enviar lembrete agora", por usuário (a rota fica dentro do auth:sanctum): cada envio manda um
+        // e-mail ao cliente, então uma conta não dispara lembretes em série para vários agendamentos. O
+        // limite de um envio a cada 10 minutos por agendamento fica no App\Services\ReminderSender.
+        RateLimiter::for('reminders', fn (Request $request) => Limit::perMinute(config('barberflow.rate_limits.reminders'))
+            ->by('user:'.$request->user()?->getAuthIdentifier()));
     }
 
     /**

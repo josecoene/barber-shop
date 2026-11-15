@@ -17,7 +17,10 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * transições de status) ficam no App\Services\AppointmentScheduler.
  *
  * date sai como Y-m-d, start_time e end_time como H:i:s, e price é a cópia do
- * preço do serviço no momento do agendamento.
+ * preço do serviço no momento do agendamento. reminder_sent_at é quando saiu o
+ * lembrete por e-mail (nulo enquanto não saiu), gravado só pelo servidor
+ * (App\Services\ReminderSender), por isso fica fora do $fillable. Remarcar a
+ * data ou o horário volta o reminder_sent_at a nulo (AppointmentScheduler).
  */
 class Appointment extends Model
 {
@@ -41,12 +44,14 @@ class Appointment extends Model
     ];
 
     /**
-     * Padrão do banco repetido aqui para o JSON do POST já sair com o status.
+     * Padrões do banco repetidos aqui para o JSON do POST já sair com o status
+     * e com o reminder_sent_at (nulo: o lembrete ainda não saiu).
      *
      * @var array<string, mixed>
      */
     protected $attributes = [
         'status' => 'scheduled',
+        'reminder_sent_at' => null,
     ];
 
     /**
@@ -71,6 +76,7 @@ class Appointment extends Model
             'date' => 'date:Y-m-d',
             'price' => 'decimal:2',
             'status' => AppointmentStatus::class,
+            'reminder_sent_at' => 'datetime',
         ];
     }
 

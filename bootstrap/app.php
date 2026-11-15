@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\ThrottleRequestsException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -93,7 +94,9 @@ return Application::configure(basePath: dirname(__DIR__))
             return response()->json(['message' => 'Método não permitido para esta rota.'], 405, $e->getHeaders());
         });
 
-        // 429 mantém Retry-After e X-RateLimit-*, que dizem ao cliente quando tentar de novo.
+        // 429 mantém Retry-After e X-RateLimit-*, que dizem ao cliente quando tentar de novo. O do
+        // middleware throttle vem com a mensagem em inglês e ganha a de baixo; um 429 lançado pelo
+        // próprio app com mensagem (como o limite do "Enviar lembrete agora", no ReminderSender) fica com ela.
         $exceptions->render(function (TooManyRequestsHttpException $e, Request $request) use ($wantsJson) {
             if (! $wantsJson($request)) {
                 return null;
@@ -101,11 +104,11 @@ return Application::configure(basePath: dirname(__DIR__))
 
             $seconds = (int) ($e->getHeaders()['Retry-After'] ?? 60);
 
-            return response()->json(
-                ['message' => "Muitas requisições. Tente de novo em {$seconds} segundos."],
-                429,
-                $e->getHeaders(),
-            );
+            $message = $e instanceof ThrottleRequestsException || $e->getMessage() === ''
+                ? "Muitas requisições. Tente de novo em {$seconds} segundos."
+                : $e->getMessage();
+
+            return response()->json(['message' => $message], 429, $e->getHeaders());
         });
 
         // 429 do login bloqueado depois de muitas senhas erradas (App\Services\Auth\LoginAttempt). O corpo

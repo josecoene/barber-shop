@@ -6,11 +6,19 @@ use App\Enums\UserRole;
 use App\Models\Barber;
 use App\Models\Client;
 use App\Models\User;
+use Closure;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Mail\MailManager;
 use Illuminate\Support\ConfigurationUrlParser;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use RuntimeException;
+use Symfony\Component\Mailer\Exception\TransportException;
+use Symfony\Component\Mailer\SentMessage;
+use Symfony\Component\Mailer\Transport\AbstractTransport;
+use Symfony\Component\Mime\Address;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -20,12 +28,12 @@ abstract class TestCase extends BaseTestCase
     protected const PASSWORD = 'senha-de-teste-123';
 
     /**
-     * Regras da agenda que os testes supõem: os padrões do config/barberflow.php.
-     * Ficam fixas aqui para nem o .env local nem uma variável de ambiente (do
-     * container ou do CI) mudarem o resultado da suíte. O teste que precisa de
-     * outro valor muda com config([...]).
+     * Regras da agenda, da fidelidade e dos lembretes que os testes supõem: os
+     * padrões do config/barberflow.php. Ficam fixas aqui para nem o .env local
+     * nem uma variável de ambiente (do container ou do CI) mudarem o resultado
+     * da suíte. O teste que precisa de outro valor muda com config([...]).
      */
-    private const AGENDA_CONFIG = [
+    private const BARBERFLOW_CONFIG = [
         'barberflow.business' => [
             'opening' => '09:00',
             'closing' => '19:00',
@@ -35,13 +43,26 @@ abstract class TestCase extends BaseTestCase
         'barberflow.booking_days_ahead' => 60,
         'barberflow.client_cancel_min_hours' => 2,
         'barberflow.client_max_active_appointments' => 3,
+        'barberflow.loyalty' => [
+            'visits' => 10,
+            'discount_percent' => 100,
+        ],
+        'barberflow.reminders' => [
+            'hours_before' => 24,
+            'resend_minutes' => 10,
+        ],
+        'barberflow.barbershop' => [
+            'name' => 'BarberFlow',
+            'address' => '',
+            'phone' => '',
+        ],
     ];
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        config(self::AGENDA_CONFIG);
+        config(self::BARBERFLOW_CONFIG);
     }
 
     /**
@@ -129,6 +150,58 @@ abstract class TestCase extends BaseTestCase
     protected function actingAsClient(?Client $client = null, bool $verified = true): User
     {
         return Sanctum::actingAs($this->makeClientUser($client, $verified));
+    }
+
+    /**
+     * Troca o envio de e-mail por um que sempre falha, como um servidor de e-mail
+     * fora do ar: a mensagem é montada de verdade (o template renderiza) e o
+     * envio lança TransportException com o endereço no texto do erro, como os
+     * servidores de verdade costumam fazer. Desfaz um Mail::fake() anterior; para
+     * voltar a contar os envios, chame Mail::fake() de novo.
+     */
+    protected function failMailDelivery(): void
+    {
+        Mail::swap(new MailManager($this->app));
+
+        Mail::extend('failing', fn () => new class extends AbstractTransport
+        {
+            protected function doSend(SentMessage $message): void
+            {
+                $recipients = array_map(fn (Address $address) => $address->getAddress(), $message->getEnvelope()->getRecipients());
+
+                throw new TransportException('Conexão recusada ao enviar para '.implode(', ', $recipients).'.');
+            }
+
+            public function __toString(): string
+            {
+                return 'failing://';
+            }
+        });
+
+        config(['mail.mailers.failing' => ['transport' => 'failing'], 'mail.default' => 'failing']);
+    }
+
+    /**
+     * Roda $callback uma vez, logo antes da consulta número $occurrence (a
+     * primeira, por padrão) da conexão padrão cujo SQL casa com $pattern
+     * (expressão regular sobre o SQL sem aspas nem crases, para valer igual no
+     * SQLite e no MySQL). Simula outro pedido que chega no meio de um fluxo,
+     * entre a leitura e a escrita, sem precisar de duas conexões. As consultas
+     * do próprio $callback não contam nem disparam de novo.
+     */
+    protected function beforeQuery(string $pattern, Closure $callback, int $occurrence = 1): void
+    {
+        $seen = 0;
+
+        DB::connection()->beforeExecuting(function (string $sql) use (&$seen, $pattern, $callback, $occurrence) {
+            if ($seen >= $occurrence || preg_match($pattern, str_replace(['"', '`'], '', $sql)) !== 1) {
+                return;
+            }
+
+            if (++$seen === $occurrence) {
+                $callback();
+            }
+        });
     }
 
     /**

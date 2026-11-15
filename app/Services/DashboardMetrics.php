@@ -57,8 +57,14 @@ class DashboardMetrics
 
     /**
      * Faturamento: soma dos pagamentos com status pago (paid) dos atendimentos
-     * do período. Pendentes e estornados ficam de fora. Sai:
-     * - total e payments: a soma e a quantidade de pagamentos pagos;
+     * do período. Pendentes e estornados ficam de fora, e o pagamento de valor
+     * zero também (o corte grátis da fidelidade, com 100% de desconto, ou uma
+     * cortesia): não entrou dinheiro, então ele não conta como pagamento, não
+     * baixa o ticket médio nem aparece como recebido na forma escolhida. O
+     * atendimento dele continua contando como concluído (por status, nos top
+     * serviços e nos barbeiros). O prêmio com desconto parcial tem valor e
+     * conta como qualquer pagamento. Sai:
+     * - total e payments: a soma e a quantidade de pagamentos pagos com valor;
      * - average_ticket (ticket médio): total ÷ payments, 0 quando não há pagamento;
      * - by_method: as quatro formas de pagamento, mesmo sem valor;
      * - by_day: todos os dias do período, mesmo sem valor.
@@ -281,13 +287,15 @@ class DashboardMetrics
     }
 
     /**
-     * Pagamentos pagos dos atendimentos do período.
+     * Pagamentos pagos e com valor dos atendimentos do período (o de valor
+     * zero não entrou dinheiro: ver revenue()).
      */
     private function paidPayments(string $from, string $to): Builder
     {
         return DB::table('payments')
             ->join('appointments', 'appointments.id', '=', 'payments.appointment_id')
             ->where('payments.status', PaymentStatus::Paid)
+            ->where('payments.amount', '>', 0)
             ->whereBetween('appointments.date', [$from, $to]);
     }
 

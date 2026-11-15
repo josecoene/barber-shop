@@ -189,6 +189,45 @@ class DashboardApiTest extends TestCase
         ]);
     }
 
+    public function test_the_free_cut_of_the_loyalty_is_not_a_payment(): void
+    {
+        $this->actingAsAdmin();
+
+        // Segunda 09/11, três cortes concluídos do Pedro: um pago no Pix pelo preço cheio, o corte grátis da
+        // fidelidade (100% de desconto, valor zero, registrado em dinheiro) e um prêmio com metade do
+        // desconto (de quando o LOYALTY_DISCOUNT_PERCENT era 50), pago no Pix.
+        $this->payment($this->appointment($this->pedro, $this->ana, $this->corte, '2026-11-09', '10:00', 'completed'), 'pix', 'paid', 35);
+
+        foreach (['11:00' => ['cash', 0, 35], '12:00' => ['pix', 17.5, 17.5]] as $time => [$method, $amount, $discount]) {
+            Payment::create([
+                'appointment_id' => $this->appointment($this->pedro, $this->ana, $this->corte, '2026-11-09', $time, 'completed')->id,
+                'amount' => $amount,
+                'discount' => $discount,
+                'loyalty_reward' => true,
+                'method' => $method,
+                'status' => 'paid',
+                'paid_at' => now(),
+            ]);
+        }
+
+        // Entraram 35 + 17,50 = 52,50 em 2 pagamentos: o corte grátis não trouxe dinheiro e fica fora da
+        // contagem, do ticket médio (52,50 ÷ 2, e não ÷ 3) e do Dinheiro.
+        $this->getJson('/api/dashboard?'.self::WEEK)
+            ->assertOk()
+            ->assertJsonPath('revenue.total', '52.50')
+            ->assertJsonPath('revenue.payments', 2)
+            ->assertJsonPath('revenue.average_ticket', '26.25')
+            ->assertJsonPath('revenue.by_method.0', ['method' => 'cash', 'label' => 'Dinheiro', 'payments' => 0, 'total' => '0.00'])
+            ->assertJsonPath('revenue.by_method.1', ['method' => 'pix', 'label' => 'Pix', 'payments' => 2, 'total' => '52.50'])
+            ->assertJsonPath('revenue.by_day.0', ['date' => '2026-11-09', 'payments' => 2, 'total' => '52.50'])
+            // O atendimento grátis aconteceu: conta como concluído no status, no serviço e no barbeiro.
+            ->assertJsonPath('appointments.by_status.3', ['status' => 'completed', 'label' => 'Concluído', 'count' => 3])
+            ->assertJsonPath('top_services', [
+                ['id' => $this->corte->id, 'name' => 'Corte', 'completed' => 3, 'revenue' => '52.50'],
+            ])
+            ->assertJsonPath('barbers.0', ['id' => $this->pedro->id, 'name' => 'Pedro', 'completed' => 3, 'no_show' => 0, 'revenue' => '52.50']);
+    }
+
     public function test_defaults_to_the_current_month_in_the_app_timezone(): void
     {
         // 01:30 do dia 1º de dezembro em UTC ainda é 30 de novembro, 22:30, em São Paulo.

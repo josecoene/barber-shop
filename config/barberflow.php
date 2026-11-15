@@ -61,6 +61,10 @@ return [
 
         // Pedidos de "esqueci a senha" e redefinições, por e-mail + IP.
         'password_reset' => 5,
+
+        // "Enviar lembrete agora", por usuário: cada envio manda um e-mail ao cliente. O limite por
+        // agendamento (um envio a cada reminders.resend_minutes minutos) fica no ReminderSender.
+        'reminders' => 10,
     ],
 
     'security' => [
@@ -137,6 +141,47 @@ return [
         'closing' => $text('BUSINESS_CLOSING', '19:00'),
         'slot_minutes' => $integer('BUSINESS_SLOT_MINUTES', 30),
         'days' => $integers('BUSINESS_DAYS', '1,2,3,4,5,6'),
+    ],
+
+    /*
+    | Programa de fidelidade (App\Services\LoyaltyService):
+    | - visits: a cada quantas visitas (atendimentos concluídos) o cliente
+    |   ganha um prêmio. O mínimo é 1;
+    | - discount_percent: desconto do prêmio no pagamento de um atendimento,
+    |   de 0 a 100 (100 é o atendimento grátis).
+    */
+
+    'loyalty' => [
+        'visits' => $integer('LOYALTY_VISITS', 10),
+        'discount_percent' => $integer('LOYALTY_DISCOUNT_PERCENT', 100),
+    ],
+
+    /*
+    | Lembrete por e-mail (App\Services\ReminderSender):
+    | - hours_before: o comando appointments:send-reminders, que roda a cada 15
+    |   minutos, manda o lembrete dos agendamentos que começam nas próximas
+    |   horas. O mínimo é 1;
+    | - resend_minutes: o "Enviar lembrete agora" da agenda espera esse tempo
+    |   desde o último lembrete do mesmo agendamento (do comando ou manual),
+    |   mesmo que ele tenha sido remarcado. Antes disso, a resposta é 429 com
+    |   Retry-After. Valor fixo, sem variável de ambiente. O limite por usuário
+    |   fica em rate_limits.reminders.
+    */
+
+    'reminders' => [
+        'hours_before' => $integer('REMINDER_HOURS_BEFORE', 24),
+        'resend_minutes' => 10,
+    ],
+
+    /*
+    | Dados da barbearia que o lembrete por e-mail mostra. Sem nome, vale o
+    | APP_NAME; endereço e telefone vazios não aparecem no e-mail.
+    */
+
+    'barbershop' => [
+        'name' => $text('BARBERSHOP_NAME', $text('APP_NAME', 'BarberFlow')),
+        'address' => $text('BARBERSHOP_ADDRESS', ''),
+        'phone' => $text('BARBERSHOP_PHONE', ''),
     ],
 
 ];

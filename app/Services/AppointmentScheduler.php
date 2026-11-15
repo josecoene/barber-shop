@@ -96,7 +96,9 @@ class AppointmentScheduler
      * com o status agendado ou confirmado. Se a data, o horário, o barbeiro ou
      * o serviço mudam, as regras rodam de novo sem contar o próprio agendamento
      * e o término é recalculado. Trocar o serviço também troca o preço; sem
-     * troca de serviço, o preço copiado no agendamento continua. Agendamento de
+     * troca de serviço, o preço copiado no agendamento continua. Mudar a data ou
+     * o horário volta o reminder_sent_at a nulo, para o lembrete por e-mail do
+     * horário novo sair (App\Services\ReminderSender). Agendamento de
      * cliente excluído não recebe observação nova (Client::NOTES_AFTER_DELETION).
      *
      * @param  array{barber_id?: int|string, service_id?: int|string, date?: string, start_time?: string, notes?: string|null}  $changes
@@ -131,11 +133,9 @@ class AppointmentScheduler
             $date = $changes['date'] ?? $current->date->format('Y-m-d');
             $startTime = isset($changes['start_time']) ? Appointment::normalizeTime($changes['start_time']) : $current->start_time;
             $serviceChanged = $service->id !== $current->service_id;
+            $timeChanged = $date !== $current->date->format('Y-m-d') || $startTime !== $current->start_time;
 
-            $moved = $serviceChanged
-                || $barber->id !== $current->barber_id
-                || $date !== $current->date->format('Y-m-d')
-                || $startTime !== $current->start_time;
+            $moved = $serviceChanged || $barber->id !== $current->barber_id || $timeChanged;
 
             if ($moved) {
                 $current->fill([
@@ -148,6 +148,11 @@ class AppointmentScheduler
 
                 if ($serviceChanged) {
                     $current->price = $service->price;
+                }
+
+                // O lembrete que já saiu falava da data e do horário antigos: nulo, o comando manda o novo.
+                if ($timeChanged) {
+                    $current->reminder_sent_at = null;
                 }
             }
 

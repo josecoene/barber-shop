@@ -35,10 +35,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::apiResource('services', ServiceController::class);
         Route::apiResource('barbers', BarberController::class);
         Route::apiResource('clients', ClientController::class);
+        Route::get('/clients/{client}/loyalty', [ClientController::class, 'loyalty'])->name('clients.loyalty');
 
         // Agenda, sem destroy: cancelar é mudar o status.
         Route::apiResource('appointments', AppointmentController::class)->except('destroy');
         Route::patch('/appointments/{appointment}/status', [AppointmentController::class, 'updateStatus'])->name('appointments.status');
+        Route::post('/appointments/{appointment}/reminder', [AppointmentController::class, 'sendReminder'])->middleware('throttle:reminders')->name('appointments.reminder');
         Route::get('/barbers/{barber}/available-slots', AvailableSlotController::class)->name('barbers.available-slots');
 
         // Pagamentos, sem destroy: estornar é mudar o status.

@@ -38,4 +38,14 @@ trait ReleasesEmailOnDelete
 
         return 'removido+'.$this->getKey().'.'.Str::lower(Str::random(12)).'@barberflow.invalid';
     }
+
+    /**
+     * true quando o e-mail é do domínio barberflow.invalid, o de quem foi
+     * excluído (releasedEmail()), que nunca recebe mensagem. O lembrete por
+     * e-mail (App\Services\ReminderSender) não sai para esse endereço.
+     */
+    public function hasReleasedEmail(): bool
+    {
+        return str_ends_with(Str::lower(trim((string) $this->email)), '@barberflow.invalid');
+    }
 }

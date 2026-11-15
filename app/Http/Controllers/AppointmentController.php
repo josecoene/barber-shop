@@ -6,6 +6,7 @@ use App\Enums\AppointmentStatus;
 use App\Models\Appointment;
 use App\Models\Service;
 use App\Services\AppointmentScheduler;
+use App\Services\ReminderSender;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Gate;
@@ -18,11 +19,15 @@ use Illuminate\Validation\Rules\Exists;
  * cancela. As regras de horário ficam no AppointmentScheduler.
  *
  * Sem destroy: cancelar é mudar o status (PATCH /api/appointments/{id}/status).
- * Cada agendamento sai com o cliente, o barbeiro e o serviço resumidos (id e nome).
+ * Cada agendamento sai com o cliente, o barbeiro e o serviço resumidos (id e
+ * nome) e com o reminder_sent_at (quando saiu o lembrete por e-mail, ou null).
  */
 class AppointmentController extends Controller
 {
-    public function __construct(private readonly AppointmentScheduler $scheduler) {}
+    public function __construct(
+        private readonly AppointmentScheduler $scheduler,
+        private readonly ReminderSender $reminders,
+    ) {}
 
     /**
      * Lista paginada em ordem de data e horário. Filtros opcionais: ?date=,
@@ -150,6 +155,26 @@ class AppointmentController extends Controller
         Gate::authorize('changeStatus', [$appointment, $status]);
 
         return $this->scheduler->changeStatus($appointment, $status, byClient: $request->user()->isClient())
+            ->load(Appointment::SUMMARY_RELATIONS)
+            ->summarizeRelations();
+    }
+
+    /**
+     * POST /api/appointments/{appointment}/reminder: "Enviar lembrete agora".
+     * Manda o lembrete por e-mail na hora e devolve o agendamento com o
+     * reminder_sent_at novo. Só o admin e o barbeiro do agendamento; o cliente
+     * recebe 403. As regras ficam no ReminderSender: só agendado ou confirmado
+     * que ainda não começou, nunca para cliente excluído nem para e-mail do
+     * domínio barberflow.invalid (422), um envio a cada 10 minutos por
+     * agendamento, mesmo depois de uma remarcação (429 com Retry-After), e 503
+     * se o e-mail não sair. A rota também limita cada usuário a 10 envios por
+     * minuto (throttle:reminders, no AppServiceProvider).
+     */
+    public function sendReminder(Appointment $appointment)
+    {
+        Gate::authorize('sendReminder', $appointment);
+
+        return $this->reminders->sendNow($appointment)
             ->load(Appointment::SUMMARY_RELATIONS)
             ->summarizeRelations();
     }

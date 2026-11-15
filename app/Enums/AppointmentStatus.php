@@ -76,6 +76,25 @@ enum AppointmentStatus: string
     }
 
     /**
+     * Agendado e confirmado recebem o lembrete por e-mail antes do horário
+     * (App\Services\ReminderSender), pelo comando ou pelo "Enviar lembrete agora".
+     */
+    public function getsReminder(): bool
+    {
+        return in_array($this, self::remindable(), true);
+    }
+
+    /**
+     * Status que recebem o lembrete por e-mail (ver getsReminder()).
+     *
+     * @return list<self>
+     */
+    public static function remindable(): array
+    {
+        return [self::Scheduled, self::Confirmed];
+    }
+
+    /**
      * Status que ocupam o horário na agenda do barbeiro e na do cliente: todos,
      * menos cancelado e faltou.
      *
@@ -103,10 +122,12 @@ enum AppointmentStatus: string
      * - transitions: para quais status pode ir;
      * - requires_start: só vale depois do horário de início;
      * - reschedulable: ainda pode ser remarcado;
+     * - remindable: recebe o lembrete por e-mail (o "Enviar lembrete agora" vale
+     *   até o horário de início);
      * - occupies_time: ocupa o horário na agenda;
      * - active: ainda vai ser atendido ou está sendo atendido.
      *
-     * @return array<string, array{label: string, transitions: list<string>, requires_start: bool, reschedulable: bool, occupies_time: bool, active: bool}>
+     * @return array<string, array{label: string, transitions: list<string>, requires_start: bool, reschedulable: bool, remindable: bool, occupies_time: bool, active: bool}>
      */
     public static function catalog(): array
     {
@@ -118,6 +139,7 @@ enum AppointmentStatus: string
                 'transitions' => array_map(fn (self $next): string => $next->value, $status->transitions()),
                 'requires_start' => $status->requiresStartedAppointment(),
                 'reschedulable' => $status->canBeRescheduled(),
+                'remindable' => $status->getsReminder(),
                 'occupies_time' => in_array($status, self::occupying(), true),
                 'active' => in_array($status, self::active(), true),
             ];

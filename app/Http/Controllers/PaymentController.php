@@ -94,6 +94,10 @@ class PaymentController extends Controller
      * Registra o pagamento de um atendimento concluído. Sem amount, vale o price
      * do agendamento; sem status, pago (o paid_at é do servidor). O barbeiro
      * registra só nos agendamentos dele; com o de outro, 403.
+     *
+     * Com use_loyalty_reward true, o pagamento usa um prêmio da fidelidade do
+     * cliente: o desconto vem da config e o amount é calculado (enviado junto,
+     * 422). Sem prêmio disponível, 422 em use_loyalty_reward.
      */
     public function store(Request $request)
     {
@@ -101,10 +105,14 @@ class PaymentController extends Controller
 
         $validated = $request->validate([
             'appointment_id' => 'required|integer|exists:appointments,id',
-            'amount' => 'nullable|numeric|decimal:0,2|min:0|max:999999.99', // cabe no decimal(8,2)
+            // Cabe no decimal(8,2). Com o prêmio, o valor sai do desconto.
+            'amount' => 'prohibited_if_accepted:use_loyalty_reward|nullable|numeric|decimal:0,2|min:0|max:999999.99',
             'method' => ['required', Rule::enum(PaymentMethod::class)],
             'status' => ['nullable', Rule::enum(PaymentStatus::class)->only(PaymentStatus::initial())],
             'notes' => 'nullable|string|max:1000',
+            'use_loyalty_reward' => 'nullable|boolean',
+        ], [
+            'amount.prohibited_if_accepted' => PaymentRecorder::AMOUNT_WITH_REWARD,
         ]);
 
         $appointment = Appointment::findOrFail($validated['appointment_id']);

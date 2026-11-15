@@ -231,6 +231,7 @@ return [
         'method' => 'forma de pagamento',
         'notes' => 'observações',
         'without_payment' => 'sem pagamento',
+        'use_loyalty_reward' => 'prêmio de fidelidade',
         'page' => 'página',
         'per_page' => 'itens por página',
         'search' => 'busca',

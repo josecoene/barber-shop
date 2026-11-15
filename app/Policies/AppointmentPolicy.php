@@ -8,10 +8,10 @@ use App\Models\User;
 
 /**
  * Agenda: o admin faz tudo; o barbeiro vê e mexe só nos agendamentos da agenda
- * dele; o cliente agenda para si, vê os próprios e só cancela (até
- * CLIENT_CANCEL_MIN_HOURS horas antes, regra do AppointmentScheduler, que
- * responde 422). O index filtra pela mesma regra do view
- * (Appointment::scopeVisibleTo()).
+ * dele (inclusive o "Enviar lembrete agora"); o cliente agenda para si, vê os
+ * próprios e só cancela (até CLIENT_CANCEL_MIN_HOURS horas antes, regra do
+ * AppointmentScheduler, que responde 422). O index filtra pela mesma regra do
+ * view (Appointment::scopeVisibleTo()).
  */
 class AppointmentPolicy
 {
@@ -77,6 +77,15 @@ class AppointmentPolicy
             return $status === AppointmentStatus::Cancelled && $this->owns($user, $appointment);
         }
 
+        return $user->isBarber() && $this->owns($user, $appointment);
+    }
+
+    /**
+     * "Enviar lembrete agora": o barbeiro, nos próprios. O cliente não manda
+     * lembrete, nem do próprio horário.
+     */
+    public function sendReminder(User $user, Appointment $appointment): bool
+    {
         return $user->isBarber() && $this->owns($user, $appointment);
     }
 
