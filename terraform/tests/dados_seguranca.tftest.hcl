@@ -27,6 +27,27 @@ mock_provider "aws" {
       target_key_arn = "arn:aws:kms:us-east-1:123456789012:key/11111111-2222-3333-4444-555555555555"
     }
   }
+
+  # Recursos da feat/infra-computacao cujo ID ou ARN outro recurso recebe: o provider confere o
+  # formato (ARN do ALB e do target group, lt- no launch template), e o texto que o mock inventa
+  # não passaria.
+  mock_resource "aws_lb" {
+    defaults = {
+      arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/barberflow-homolog-alb/0123456789abcdef"
+    }
+  }
+
+  mock_resource "aws_lb_target_group" {
+    defaults = {
+      arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/barberflow-homolog-app/0123456789abcdef"
+    }
+  }
+
+  mock_resource "aws_launch_template" {
+    defaults = {
+      id = "lt-0123456789abcdef0"
+    }
+  }
 }
 
 # Só o ambiente: cada run põe os valores do .tfvars.example de que precisa, e o
@@ -427,15 +448,18 @@ run "cache" {
   }
 }
 
-# Com domínio no app_url e provedor de e-mail no mail_host e no mail_port: o APP_URL e o
-# MAIL_HOST passam a existir, e o MAIL_PORT e a saída SMTP do app seguem a variável.
+# Com domínio no app_url e provedor de e-mail no mail_host e no mail_port: o APP_URL fica com o
+# domínio, o MAIL_HOST passa a existir, e o MAIL_PORT e a saída SMTP do app seguem a variável.
+# O domínio em https vai com o certificado (a feat/infra-computacao recusa um sem o outro), e
+# por isso o cookie de sessão fica só por HTTPS.
 run "ssm_parameters" {
   command = apply
 
   variables {
-    app_url   = "https://homolog.barberflow.example.com"
-    mail_host = "email-smtp.us-east-1.amazonaws.com"
-    mail_port = 465
+    app_url         = "https://homolog.barberflow.example.com"
+    certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+    mail_host       = "email-smtp.us-east-1.amazonaws.com"
+    mail_port       = 465
   }
 
   assert {
@@ -443,7 +467,7 @@ run "ssm_parameters" {
       "APP_DEBUG", "APP_ENV", "APP_KEY", "APP_MAINTENANCE_DRIVER", "APP_MAINTENANCE_STORE", "APP_NAME", "APP_URL",
       "CACHE_STORE", "DB_CONNECTION", "DB_DATABASE", "DB_HOST", "DB_PASSWORD", "DB_PORT", "DB_USERNAME",
       "LOG_CHANNEL", "LOG_LEVEL", "MAIL_FROM_ADDRESS", "MAIL_HOST", "MAIL_MAILER", "MAIL_PORT", "MYSQL_ATTR_SSL_CA",
-      "REDIS_HOST", "REDIS_PORT", "RUN_MIGRATIONS", "SESSION_DRIVER", "SESSION_SECURE_COOKIE", "image_tag",
+      "REDIS_HOST", "REDIS_PORT", "RUN_MIGRATIONS", "SESSION_DRIVER", "SESSION_SECURE_COOKIE", "TRUSTED_PROXIES", "image_tag",
     ] : "/barberflow/homolog/${name}"])
     error_message = "Os parâmetros do SSM devem ser exatamente os esperados, todos em /barberflow/homolog/."
   }
@@ -512,7 +536,7 @@ run "ssm_parameters" {
       aws_ssm_parameter.terraform_managed["APP_NAME"].insecure_value == "BarberFlow",
       aws_ssm_parameter.terraform_managed["APP_URL"].insecure_value == "https://homolog.barberflow.example.com",
       aws_ssm_parameter.terraform_managed["RUN_MIGRATIONS"].insecure_value == "true",
-      aws_ssm_parameter.terraform_managed["SESSION_SECURE_COOKIE"].insecure_value == "false",
+      aws_ssm_parameter.terraform_managed["SESSION_SECURE_COOKIE"].insecure_value == "true",
       aws_ssm_parameter.terraform_managed["MAIL_MAILER"].insecure_value == "smtp",
       aws_ssm_parameter.terraform_managed["MAIL_FROM_ADDRESS"].insecure_value == "nao-responda@example.com",
       aws_ssm_parameter.terraform_managed["MAIL_HOST"].insecure_value == "email-smtp.us-east-1.amazonaws.com",
@@ -611,7 +635,8 @@ run "prod" {
   }
 }
 
-# Sem nada além do ambiente: os padrões das variáveis são os seguros, e sem domínio não há APP_URL.
+# Sem nada além do ambiente: os padrões das variáveis são os seguros, e sem domínio o APP_URL é
+# o DNS do ALB.
 run "defaults_without_domain" {
   command = apply
 
@@ -625,11 +650,12 @@ run "defaults_without_domain" {
     error_message = "Por padrão, o cache tem um nó só, sem failover."
   }
 
-  # Sem domínio, o APP_URL fica para a feat/infra-computacao, com o DNS do ALB. Sem provedor de
-  # e-mail, o MAIL_HOST não existe.
+  # Sem domínio, o APP_URL é o DNS do ALB, em HTTP (feat/infra-computacao). Sem provedor de
+  # e-mail, o MAIL_HOST não existe. São 24 parâmetros: os 22 da feat/infra-dados-seguranca, o
+  # APP_URL e o TRUSTED_PROXIES.
   assert {
-    condition     = !contains(keys(aws_ssm_parameter.terraform_managed), "APP_URL") && !contains(keys(aws_ssm_parameter.terraform_managed), "MAIL_HOST") && length(aws_ssm_parameter.terraform_managed) == 22
-    error_message = "Com app_url e mail_host vazios, os parâmetros APP_URL e MAIL_HOST não são criados (o SSM não aceita valor vazio)."
+    condition     = aws_ssm_parameter.terraform_managed["APP_URL"].insecure_value == "http://${aws_lb.main.dns_name}" && !contains(keys(aws_ssm_parameter.terraform_managed), "MAIL_HOST") && length(aws_ssm_parameter.terraform_managed) == 24
+    error_message = "Com app_url vazio, o APP_URL é http:// com o DNS do ALB; com mail_host vazio, o MAIL_HOST não é criado (o SSM não aceita valor vazio)."
   }
 
   assert {

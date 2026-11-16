@@ -6,17 +6,9 @@
 # Quando o motivo deixar de valer, apague o item junto com a correção.
 
 misconfigurations:
-  # EC2 solta da Sprint 1 (aws_instance.barbershop_server). A feat/infra-computacao troca
-  # essa EC2 pelo Auto Scaling, com IMDSv2 obrigatório e disco criptografado no launch
-  # template, e apaga estes dois itens.
-  - id: AWS-0028
-    paths:
-      - main.tf
-    statement: A EC2 solta do main.tf não exige IMDSv2. Sai na feat/infra-computacao.
-  - id: AWS-0131
-    paths:
-      - main.tf
-    statement: Disco da EC2 solta do main.tf sem criptografia. Sai na feat/infra-computacao.
+  # A EC2 solta da Sprint 1 saiu na feat/infra-computacao, trocada pelo Auto Scaling (compute.tf),
+  # com IMDSv2 obrigatório e disco criptografado no launch template. Os itens AWS-0028 (sem
+  # IMDSv2) e AWS-0131 (disco sem criptografia) saíram junto.
 
   # RDS (aws_db_instance.barbershop_db). A feat/infra-dados-seguranca ligou backup de 7 dias,
   # criptografia e proteção contra exclusão por variável e apagou os itens AWS-0077, AWS-0080
@@ -37,6 +29,19 @@ misconfigurations:
     paths:
       - sg.tf
     statement: Saída do app para a internet só na 443 (HTTPS) e na porta do SMTP do provedor de e-mail. Sem NAT Gateway e sem VPC endpoints (custo por hora), a instância alcança ECR, S3, SSM, CloudWatch Logs, os repositórios do dnf, o GitHub e o provedor de e-mail pelo IP público. Banco e cache ficam na mesma VPC, e a saída para eles vai só ao security group de cada um.
+
+  # ALB (aws_lb.main e aws_lb_listener.http). Os access logs do ALB ficam desligados porque
+  # pediriam um bucket S3 só para eles, com política para o serviço do ELB; o Trivy 0.76.2 não
+  # tem regra para isso, então não há item. Se uma versão nova acusar, o item entra aqui, preso
+  # ao alb.tf, com esse motivo.
+  - id: AWS-0053
+    paths:
+      - alb.tf
+    statement: O ALB é a porta de entrada pública da aplicação, internet-facing de propósito. Só ele recebe da internet (80 e 443, sg.tf); as instâncias só aceitam a 80 vinda do ALB, e banco e cache só aceitam o app. O tests/computacao.tftest.hcl e o tests/dados_seguranca.tftest.hcl conferem as regras.
+  - id: AWS-0054
+    paths:
+      - alb.tf
+    statement: Sem domínio e certificado (certificate_arn vazio, o padrão enquanto o grupo não compra um domínio), a porta 80 encaminha em HTTP para o app. Com o certificate_arn, a 80 só redireciona (301) para a 443, com TLS 1.3 ou 1.2, e o cookie de sessão passa a exigir HTTPS. O tests/computacao.tftest.hcl confere os dois casos.
 
   # Repositórios do ECR (aws_ecr_repository.image).
   - id: AWS-0033

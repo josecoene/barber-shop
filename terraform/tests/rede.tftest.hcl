@@ -11,6 +11,27 @@ mock_provider "aws" {
       names = ["us-east-1a", "us-east-1b", "us-east-1c"]
     }
   }
+
+  # Recursos da feat/infra-computacao cujo ID ou ARN outro recurso recebe: o provider confere o
+  # formato (ARN do ALB e do target group, lt- no launch template), e o texto que o mock inventa
+  # não passaria.
+  mock_resource "aws_lb" {
+    defaults = {
+      arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/barberflow-homolog-alb/0123456789abcdef"
+    }
+  }
+
+  mock_resource "aws_lb_target_group" {
+    defaults = {
+      arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/barberflow-homolog-app/0123456789abcdef"
+    }
+  }
+
+  mock_resource "aws_launch_template" {
+    defaults = {
+      id = "lt-0123456789abcdef0"
+    }
+  }
 }
 
 variables {

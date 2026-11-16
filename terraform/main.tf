@@ -1,16 +1,16 @@
-# Recursos da Sprint 1 (o provider aws está em providers.tf): a EC2 solta, trocada pelo Auto Scaling
-# na feat/infra-computacao, e o RDS, levado às subnets privadas na feat/infra-dados-seguranca.
+# Recurso da Sprint 1 (o provider aws está em providers.tf): o RDS, levado às subnets privadas na
+# feat/infra-dados-seguranca. A EC2 solta saiu na feat/infra-computacao, trocada pelo Auto Scaling.
 # A senha da linha 23 não muda (decisão de 13/11); o ssm.tf passa o mesmo valor ao SSM por referência.
 
-# Criação de uma instância EC2 simulada para hospedar o Docker da Barbearia
-resource "aws_instance" "barbershop_server" {
-  ami           = "ami-0c7217cdde317cfec" # Exemplo Amazon Linux 2023
-  instance_type = "t3.micro"
-
-  tags = {
-    Name = "BarberShop-Cloud-Instance"
-  }
-}
+# A EC2 solta da Sprint 1 (aws_instance.barbershop_server) ficava aqui. Na feat/infra-computacao
+# ela deu lugar às instâncias do Auto Scaling, atrás do ALB:
+#   - alb.tf: ALB, target group com health check no /up e as portas 80 e 443;
+#   - compute.tf: launch template (Amazon Linux 2023, IMDSv2 e disco criptografado), Auto
+#     Scaling em 2 zonas e a escala pela CPU;
+#   - templates/user_data.sh.tftpl: instala o Docker, monta o .env com o SSM e sobe o compose.
+# Este bloco ocupa as linhas da EC2 para a senha do RDS continuar na linha 23, a que o plano e
+# o docs/nuvem/TERRAFORM.md ("Senha do RDS") citam. Recurso novo vai para outro arquivo, e
+# atributo novo do RDS entra depois da senha.
 
 # Banco de dados gerenciado RDS MySQL na Nuvem
 resource "aws_db_instance" "barbershop_db" {

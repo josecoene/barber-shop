@@ -84,6 +84,10 @@ services:
     # Troca a porta 80 da produção pela 8080, só neste computador
     ports: !override
       - "127.0.0.1:8080:80"
+    # Troca o awslogs da produção pelo driver padrão do Docker: os logs do Nginx ficam no
+    # Docker Desktop (docker compose logs web), sem credencial da AWS.
+    logging: !override
+      driver: json-file
 
   db:
     image: mysql:8.4.13
