@@ -1,21 +1,170 @@
 {
   "info": {
     "name": "BarberFlow API",
-    "description": "Coleção de requisições da API do BarberFlow. Defina a variável baseUrl (padrão http://localhost:8000/api).",
+    "description": "Coleção de requisições da API do BarberFlow.\n\n1. Nas variáveis da coleção, confira baseUrl (padrão http://localhost:8000/api) e preencha loginEmail e loginPassword. No local, o usuário de teste é test@example.com, e a senha dele está em database/seeders/DatabaseSeeder.php.\n2. Rode Autenticação > Login: o teste guarda o token na variável token.\n3. A coleção manda Authorization: Bearer {{token}} em todos os requests. Login, cadastro de conta, esqueci a senha, redefinição e health vão sem token.\n4. Os requests de criar guardam o id em serviceId, clientId e barberId, que os de mostrar, atualizar e remover usam.\n5. A pasta Agendamentos cria o próprio cliente, barbeiro e serviço e roda na ordem: Preparar, Horários livres, Criar, Listar, Mostrar, Remarcar, Mudar status e a exclusão que dá 409.\n6. A pasta Pagamentos precisa de um atendimento concluído sem pagamento (conclua um na Agenda) e roda na ordem: acha o atendimento, registra, mostra as recusas, lista com filtro, mostra, corrige e estorna.\n7. A pasta Lembretes (depois de Agendamentos e Pagamentos) manda o lembrete por e-mail do agendamento criado, mostra o 429 de um segundo envio antes de 10 minutos e o 422 de um atendimento concluído.\n8. A pasta Fidelidade (depois de Agendamentos e Pagamentos) mostra a fidelidade de um cliente e da listagem, as recusas (agendamento que não é do cliente e valor junto com o prêmio) e os campos discount e loyalty_reward do pagamento.\n9. A pasta Dashboard mostra os números do mês atual, de um período (dashboardFrom e dashboardTo) e a recusa de um período de mais de 366 dias. Só o admin.\n10. O Logout (pasta Sair) apaga o token: rode por último.\n\nAs listagens são paginadas: page e per_page vêm ligados, e search e status de exemplo vêm desligados na aba Params.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
   },
   "variable": [
     {
       "key": "baseUrl",
       "value": "http://localhost:8000/api"
+    },
+    {
+      "key": "loginEmail",
+      "value": "test@example.com",
+      "description": "E-mail do login. No local, o usuário de teste com perfil admin."
+    },
+    {
+      "key": "loginPassword",
+      "value": "",
+      "description": "Senha do login. A do usuário de teste está em database/seeders/DatabaseSeeder.php."
+    },
+    {
+      "key": "token",
+      "value": "",
+      "description": "Preenchido pelo request Login e apagado pelo Logout."
+    },
+    {
+      "key": "serviceId",
+      "value": "",
+      "description": "Preenchido pelo Criar (services)."
+    },
+    {
+      "key": "clientId",
+      "value": "",
+      "description": "Preenchido pelo Criar (clients)."
+    },
+    {
+      "key": "barberId",
+      "value": "",
+      "description": "Preenchido pelo Criar (barbers)."
+    },
+    {
+      "key": "barberPassword",
+      "value": "",
+      "description": "Opcional: com uma senha de 8 caracteres ou mais, o Criar (barbers) dá login ao barbeiro."
+    },
+    {
+      "key": "clientPassword",
+      "value": "",
+      "description": "Senha da conta criada em Conta de cliente > Criar conta (mínimo 8 caracteres)."
+    },
+    {
+      "key": "currentPassword",
+      "value": "",
+      "description": "Senha atual, para Trocar a senha."
+    },
+    {
+      "key": "newPassword",
+      "value": "",
+      "description": "Senha nova, para Trocar a senha e Redefinir a senha (mínimo 8 caracteres)."
+    },
+    {
+      "key": "resetEmail",
+      "value": "",
+      "description": "E-mail que recebeu o link de redefinição."
+    },
+    {
+      "key": "resetToken",
+      "value": "",
+      "description": "Token do link de redefinição (/reset-password/{token}?email=...)."
+    },
+    {
+      "key": "appointmentClientId",
+      "value": "",
+      "description": "Preenchido pelo Preparar cliente (agendamentos)."
+    },
+    {
+      "key": "appointmentBarberId",
+      "value": "",
+      "description": "Preenchido pelo Preparar barbeiro (agendamentos)."
+    },
+    {
+      "key": "appointmentServiceId",
+      "value": "",
+      "description": "Preenchido pelo Preparar serviço (agendamentos)."
+    },
+    {
+      "key": "appointmentDate",
+      "value": "",
+      "description": "Dia do agendamento (Y-m-d). Vazio, o Horários livres escolhe o próximo dia de segunda a sábado."
+    },
+    {
+      "key": "appointmentTime",
+      "value": "",
+      "description": "Primeiro horário livre, preenchido pelo Horários livres."
+    },
+    {
+      "key": "appointmentNewTime",
+      "value": "",
+      "description": "Último horário livre, preenchido pelo Horários livres e usado no Remarcar."
+    },
+    {
+      "key": "appointmentId",
+      "value": "",
+      "description": "Preenchido pelo Criar (appointments)."
+    },
+    {
+      "key": "paymentAppointmentId",
+      "value": "",
+      "description": "Atendimento concluído sem pagamento, preenchido pelo primeiro request da pasta Pagamentos."
+    },
+    {
+      "key": "paymentAmount",
+      "value": "",
+      "description": "Preço desse atendimento (o valor padrão do pagamento)."
+    },
+    {
+      "key": "paymentDate",
+      "value": "",
+      "description": "Data desse atendimento (Y-m-d), usada no filtro da listagem."
+    },
+    {
+      "key": "paymentId",
+      "value": "",
+      "description": "Preenchido pelo Registrar (payments)."
+    },
+    {
+      "key": "dashboardFrom",
+      "value": "2026-11-01",
+      "description": "Início do período do Dashboard de um período (Y-m-d)."
+    },
+    {
+      "key": "dashboardTo",
+      "value": "2026-11-30",
+      "description": "Fim do período do Dashboard de um período (Y-m-d)."
     }
   ],
   "item": [
     {
-      "name": "Services",
+      "name": "Health",
       "item": [
         {
-          "name": "Listar services",
+          "name": "Saúde da aplicação",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Banco e cache no ar', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -29,18 +178,256 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/services",
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "200 com {\"status\":\"ok\"} quando banco e cache respondem; 503 com o que falhou (\"falhou\") quando não. É aberta e fica fora do limite de requisições da API."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Autenticação",
+      "description": "Rode o Login primeiro. O Logout fica na pasta Sair, no fim da coleção.",
+      "item": [
+        {
+          "name": "Login (guarda o token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login devolve o token e guarda na coleção', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.token).to.be.a('string');",
+                  "    pm.expect(body.token_type).to.eql('Bearer');",
+                  "    pm.collectionVariables.set('token', body.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{loginEmail}}\",\n  \"password\": \"{{loginPassword}}\",\n  \"device_name\": \"postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Devolve um token Bearer que vale 480 minutos (SANCTUM_EXPIRATION) e guarda na variável token. E-mail ou senha errados dão 422; 5 recusas no mesmo minuto bloqueiam o login (429, com o cabeçalho Retry-After dizendo em quantos segundos libera)."
+          }
+        },
+        {
+          "name": "Usuário logado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra o usuário com o perfil', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().role).to.be.oneOf(['admin', 'barber', 'client']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user"
+              ]
+            },
+            "description": "Usuário do token, com o perfil (role) e o cadastro ligado (barber_id ou client_id)."
+          }
+        },
+        {
+          "name": "Trocar a senha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Senha trocada', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "password"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"{{currentPassword}}\",\n  \"password\": \"{{newPassword}}\",\n  \"password_confirmation\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Preencha currentPassword e newPassword nas variáveis (vazias, a resposta é 422 e nada muda). Os outros tokens da conta param de valer; o desta chamada continua. Não troque a senha do usuário de teste."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Services",
+      "description": "Rode o \"Criar (services)\" antes dos outros: ele guarda o id criado em serviceId.",
+      "item": [
+        {
+          "name": "Listar services",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista services paginada', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/services?page=1&per_page=15",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "services"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "search",
+                  "value": "corte",
+                  "description": "Procura no nome (até 100 caracteres).",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "active",
+                  "description": "active ou inactive.",
+                  "disabled": true
+                }
               ]
-            }
+            },
+            "description": "Lista paginada em ordem de nome. Os itens vêm em data; meta traz current_page, last_page, per_page e total, e links traz first, last, prev e next."
           }
         },
         {
           "name": "Criar (services)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria serviço e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('serviceId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -64,17 +451,31 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Corte de cabelo\",\n  \"duration\": 30,\n  \"price\": 40.0,\n  \"status\": \"active\"\n}",
+              "raw": "{\n  \"name\": \"Corte de cabelo\",\n  \"duration\": 30,\n  \"price\": 40\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Só o admin. status é opcional: sem ele, o serviço nasce active. duration de 5 a 480 minutos e price de 0 a 999999.99."
           }
         },
         {
           "name": "Mostrar (services)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra serviço', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -88,19 +489,32 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/services/1",
+              "raw": "{{baseUrl}}/services/{{serviceId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "services",
-                "1"
+                "{{serviceId}}"
               ]
             }
           }
         },
         {
           "name": "Atualizar parcialmente (services)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Atualiza serviço', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "PATCH",
             "header": [
@@ -114,18 +528,18 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/services/1",
+              "raw": "{{baseUrl}}/services/{{serviceId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "services",
-                "1"
+                "{{serviceId}}"
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"price\": 45.0\n}",
+              "raw": "{\n  \"price\": 45\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -136,6 +550,19 @@
         },
         {
           "name": "Remover (services)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remove serviço', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "DELETE",
             "header": [
@@ -149,24 +576,40 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/services/1",
+              "raw": "{{baseUrl}}/services/{{serviceId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "services",
-                "1"
+                "{{serviceId}}"
               ]
-            }
+            },
+            "description": "Só o admin. Exclusão lógica: o serviço sai das listas, mas a linha continua no banco."
           }
         }
       ]
     },
     {
       "name": "Clients",
+      "description": "Rode o \"Criar (clients)\" antes dos outros: ele guarda o id criado em clientId.",
       "item": [
         {
           "name": "Listar clients",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista clients paginada', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -180,18 +623,51 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/clients",
+              "raw": "{{baseUrl}}/clients?page=1&per_page=15",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "clients"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "search",
+                  "value": "silva",
+                  "description": "Procura no nome e no e-mail (até 100 caracteres).",
+                  "disabled": true
+                }
               ]
-            }
+            },
+            "description": "Lista paginada em ordem de nome. Os itens vêm em data; meta traz current_page, last_page, per_page e total, e links traz first, last, prev e next."
           }
         },
         {
           "name": "Criar (clients)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria cliente e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('clientId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -221,11 +697,25 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Admin e barbeiro. A resposta traz has_login (true quando o cliente tem conta)."
           }
         },
         {
           "name": "Mostrar (clients)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra cliente', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -239,19 +729,32 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/clients/1",
+              "raw": "{{baseUrl}}/clients/{{clientId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "clients",
-                "1"
+                "{{clientId}}"
               ]
             }
           }
         },
         {
           "name": "Atualizar parcialmente (clients)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Atualiza cliente', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "PATCH",
             "header": [
@@ -265,13 +768,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/clients/1",
+              "raw": "{{baseUrl}}/clients/{{clientId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "clients",
-                "1"
+                "{{clientId}}"
               ]
             },
             "body": {
@@ -287,6 +790,19 @@
         },
         {
           "name": "Remover (clients)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remove cliente', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "DELETE",
             "header": [
@@ -300,24 +816,40 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/clients/1",
+              "raw": "{{baseUrl}}/clients/{{clientId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "clients",
-                "1"
+                "{{clientId}}"
               ]
-            }
+            },
+            "description": "Só o admin. Exclusão lógica com anonimização (LGPD): nome vira \"Cliente removido\", e-mail vira removido+{id}@barberflow.invalid e o telefone fica vazio. A conta do cliente, se existir, é apagada."
           }
         }
       ]
     },
     {
       "name": "Barbers",
+      "description": "Rode o \"Criar (barbers)\" antes dos outros: ele guarda o id criado em barberId.",
       "item": [
         {
           "name": "Listar barbers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista barbers paginada', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -331,18 +863,51 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/barbers",
+              "raw": "{{baseUrl}}/barbers?page=1&per_page=15",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "barbers"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "search",
+                  "value": "silva",
+                  "description": "Procura no nome e no e-mail (até 100 caracteres).",
+                  "disabled": true
+                }
               ]
-            }
+            },
+            "description": "Lista paginada em ordem de nome. Os itens vêm em data; meta traz current_page, last_page, per_page e total, e links traz first, last, prev e next."
           }
         },
         {
           "name": "Criar (barbers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria barbeiro e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('barberId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -366,17 +931,31 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"João Barbeiro\",\n  \"email\": \"joao@barberflow.com\",\n  \"phone\": \"67988880000\"\n}",
+              "raw": "{\n  \"name\": \"João Barbeiro\",\n  \"email\": \"joao@barberflow.com\",\n  \"phone\": \"67988880000\",\n  \"password\": \"{{barberPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Só o admin. password é opcional (mínimo 8 caracteres, sem ser só de espaços): com ele, o barbeiro ganha login com o e-mail do cadastro (has_login: true). Com a variável barberPassword vazia, o barbeiro fica sem login."
           }
         },
         {
           "name": "Mostrar (barbers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra barbeiro', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "GET",
             "header": [
@@ -390,19 +969,32 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/barbers/1",
+              "raw": "{{baseUrl}}/barbers/{{barberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "barbers",
-                "1"
+                "{{barberId}}"
               ]
             }
           }
         },
         {
           "name": "Atualizar parcialmente (barbers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Atualiza barbeiro', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "PATCH",
             "header": [
@@ -416,13 +1008,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/barbers/1",
+              "raw": "{{baseUrl}}/barbers/{{barberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "barbers",
-                "1"
+                "{{barberId}}"
               ]
             },
             "body": {
@@ -438,6 +1030,19 @@
         },
         {
           "name": "Remover (barbers)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remove barbeiro', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "DELETE",
             "header": [
@@ -451,15 +1056,1897 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/barbers/1",
+              "raw": "{{baseUrl}}/barbers/{{barberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "barbers",
-                "1"
+                "{{barberId}}"
               ]
+            },
+            "description": "Só o admin. Exclusão lógica: mantém o nome, troca o e-mail por removido+{id}@barberflow.invalid (liberando o original), apaga o telefone e apaga o login do barbeiro."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agendamentos",
+      "description": "Cria o próprio cliente, barbeiro e serviço (os \"Preparar\"), para não depender dos que as outras pastas excluem. Rode na ordem: os três \"Preparar\", Horários livres (escolhe o próximo dia de segunda a sábado e guarda o primeiro e o último horário livre), Criar (guarda appointmentId), Listar, Mostrar, Remarcar, Mudar status e, por último, a exclusão que dá 409. Com outro BUSINESS_DAYS no servidor, preencha appointmentDate com um dia de expediente.",
+      "item": [
+        {
+          "name": "Preparar cliente (agendamentos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria o cliente da agenda e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('appointmentClientId', pm.response.json().id);",
+                  "});"
+                ]
+              }
             }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cliente da Agenda\",\n  \"email\": \"cliente.agenda.{{$timestamp}}@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin ou barbeiro. Cliente só para esta pasta: o id vai para appointmentClientId."
+          }
+        },
+        {
+          "name": "Preparar barbeiro (agendamentos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria o barbeiro da agenda e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('appointmentBarberId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/barbers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "barbers"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Barbeiro da Agenda\",\n  \"email\": \"barbeiro.agenda.{{$timestamp}}@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Só o admin. Barbeiro sem login, só para esta pasta: o id vai para appointmentBarberId."
+          }
+        },
+        {
+          "name": "Preparar serviço (agendamentos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria o serviço da agenda e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.collectionVariables.set('appointmentServiceId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/services",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "services"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Corte da Agenda\",\n  \"duration\": 30,\n  \"price\": 35\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Só o admin. Serviço ativo de 30 minutos, só para esta pasta: o id vai para appointmentServiceId."
+          }
+        },
+        {
+          "name": "Horários livres",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Próximo dia de segunda a sábado (o expediente padrão), a partir de amanhã. Uma data já preenchida",
+                  "// em appointmentDate fica, se ainda não passou.",
+                  "const pad = (value) => String(value).padStart(2, '0');",
+                  "const format = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;",
+                  "const day = new Date();",
+                  "day.setDate(day.getDate() + 1);",
+                  "const current = pm.collectionVariables.get('appointmentDate');",
+                  "if (!current || current < format(day)) {",
+                  "    while (day.getDay() === 0) {",
+                  "        day.setDate(day.getDate() + 1);",
+                  "    }",
+                  "    pm.collectionVariables.set('appointmentDate', format(day));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista os horários livres e guarda o primeiro e o último', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const slots = pm.response.json().data;",
+                  "    pm.expect(slots).to.be.an('array').that.is.not.empty;",
+                  "    pm.collectionVariables.set('appointmentTime', slots[0]);",
+                  "    pm.collectionVariables.set('appointmentNewTime', slots[slots.length - 1]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/barbers/{{appointmentBarberId}}/available-slots?date={{appointmentDate}}&service_id={{appointmentServiceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "barbers",
+                "{{appointmentBarberId}}",
+                "available-slots"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{appointmentDate}}",
+                  "description": "Dia (Y-m-d). O script antes do request escolhe o próximo dia de segunda a sábado."
+                },
+                {
+                  "key": "service_id",
+                  "value": "{{appointmentServiceId}}",
+                  "description": "Serviço ativo: a duração dele decide quais inícios cabem."
+                },
+                {
+                  "key": "appointment_id",
+                  "value": "{{appointmentId}}",
+                  "description": "Ao remarcar: o horário deste agendamento conta como livre. Só admin e o barbeiro dele.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Todos os perfis. Inícios livres (H:i) do barbeiro no dia para a duração do serviço, em {\"data\": [...]}. Dia que já passou ou sem expediente devolve a lista vazia."
+          }
+        },
+        {
+          "name": "Criar (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cria o agendamento e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    const appointment = pm.response.json();",
+                  "    pm.expect(appointment.status).to.eql('scheduled');",
+                  "    pm.expect(appointment.start_time).to.eql(pm.collectionVariables.get('appointmentTime') + ':00');",
+                  "    pm.expect(appointment.end_time).to.be.a('string');",
+                  "    pm.expect(appointment.reminder_sent_at).to.eql(null);",
+                  "    pm.collectionVariables.set('appointmentId', appointment.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_id\": {{appointmentClientId}},\n  \"barber_id\": {{appointmentBarberId}},\n  \"service_id\": {{appointmentServiceId}},\n  \"date\": \"{{appointmentDate}}\",\n  \"start_time\": \"{{appointmentTime}}\",\n  \"notes\": \"Agendado pelo Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin para qualquer cliente; barbeiro só na própria agenda (sem barber_id, vale o dele); cliente só para si (sem client_id, vale o dele). O servidor calcula end_time, copia o price do serviço e começa com status scheduled."
+          }
+        },
+        {
+          "name": "Listar (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista os agendamentos do dia com o criado', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const ids = pm.response.json().data.map((item) => item.id);",
+                  "    pm.expect(ids).to.include(Number(pm.collectionVariables.get('appointmentId')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments?date={{appointmentDate}}&barber_id={{appointmentBarberId}}&page=1&per_page=15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{appointmentDate}}",
+                  "description": "Só os desse dia (Y-m-d)."
+                },
+                {
+                  "key": "barber_id",
+                  "value": "{{appointmentBarberId}}",
+                  "description": "Só os desse barbeiro."
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "from",
+                  "value": "2026-11-01",
+                  "description": "Início do período (Y-m-d).",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "2026-11-30",
+                  "description": "Fim do período (Y-m-d), igual ou depois de from.",
+                  "disabled": true
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{appointmentClientId}}",
+                  "description": "Só os desse cliente.",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "scheduled",
+                  "description": "scheduled, confirmed, in_progress, completed, cancelled ou no_show.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Lista paginada em ordem de data e horário. O barbeiro vê só a agenda dele e o cliente só os próprios, seja qual for o filtro."
+          }
+        },
+        {
+          "name": "Mostrar (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra o agendamento', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const appointment = pm.response.json();",
+                  "    pm.expect(appointment.id).to.eql(Number(pm.collectionVariables.get('appointmentId')));",
+                  "    pm.expect(appointment.client).to.have.all.keys('id', 'name');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}"
+              ]
+            },
+            "description": "Cliente, barbeiro e serviço vêm só com id e name."
+          }
+        },
+        {
+          "name": "Remarcar (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remarca para o último horário livre', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().start_time).to.eql(pm.collectionVariables.get('appointmentNewTime') + ':00');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start_time\": \"{{appointmentNewTime}}\",\n  \"notes\": \"Remarcado pelo Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin ou o barbeiro do agendamento, só com status scheduled ou confirmed. Aceita date, start_time, barber_id, service_id e notes; client_id e status são ignorados."
+          }
+        },
+        {
+          "name": "Mudar status (appointments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Confirma o agendamento', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "    pm.expect(pm.response.json().status_label).to.eql('Confirmado');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "status"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"confirmed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Transições: scheduled vai para confirmed, in_progress, cancelled ou no_show; confirmed para in_progress, cancelled ou no_show; in_progress para completed. in_progress, completed e no_show só depois do horário de início. O cliente só cancela, até CLIENT_CANCEL_MIN_HOURS horas antes."
+          }
+        },
+        {
+          "name": "Excluir cliente com horário marcado (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa a exclusão com 409', function () {",
+                  "    pm.response.to.have.status(409);",
+                  "    pm.expect(pm.response.json().message).to.include('agendamentos futuros');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients/{{appointmentClientId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients",
+                "{{appointmentClientId}}"
+              ]
+            },
+            "description": "Só o admin. Cliente, barbeiro ou serviço com agendamento de hoje em diante ainda ativo não é excluído: 409, e nada muda."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Pagamentos",
+      "description": "Rode na ordem. A API só aceita pagamento de atendimento concluído, e um atendimento só é concluído depois do horário de início; como ninguém agenda no passado, esta pasta não consegue criar o atendimento que paga. O primeiro request acha um atendimento concluído sem pagamento (without_payment=1) e guarda o id em paymentAppointmentId: conclua um na Agenda antes, se a lista vier vazia. Depois a pasta registra o pagamento no Pix (guarda paymentId), mostra as recusas (já pago e não concluído, este com o agendamento da pasta Agendamentos), lista com filtro, mostra, corrige e estorna. Corrigir e estornar são só do admin. Cada atendimento tem um pagamento só: depois desta pasta, o atendimento usado fica com o pagamento estornado.",
+      "item": [
+        {
+          "name": "Atendimento concluído sem pagamento",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista só concluídos sem pagamento', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.response.json().data.forEach(function (appointment) {",
+                  "        pm.expect(appointment.status).to.eql('completed');",
+                  "        pm.expect(appointment.payment).to.eql(null);",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test('Há um atendimento concluído sem pagamento (se não, conclua um na Agenda)', function () {",
+                  "    const waiting = pm.response.json().data;",
+                  "    pm.expect(waiting).to.be.an('array').that.is.not.empty;",
+                  "    pm.collectionVariables.set('paymentAppointmentId', waiting[0].id);",
+                  "    pm.collectionVariables.set('paymentAmount', waiting[0].price);",
+                  "    pm.collectionVariables.set('paymentDate', waiting[0].date);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments?without_payment=1&page=1&per_page=15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ],
+              "query": [
+                {
+                  "key": "without_payment",
+                  "value": "1",
+                  "description": "1: só os concluídos que ainda não têm pagamento (pendente e estornado contam como registrado)."
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "barber_id",
+                  "value": "{{appointmentBarberId}}",
+                  "description": "Só os desse barbeiro (combina com o without_payment).",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Admin, barbeiro (só os da agenda dele) ou cliente (só os próprios). Guarda o primeiro da lista em paymentAppointmentId, o preço em paymentAmount e a data em paymentDate. Lista vazia: conclua um atendimento na Agenda (depois do horário de início) e rode de novo."
+          }
+        },
+        {
+          "name": "Registrar (payments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Registra o pagamento com o preço do agendamento e guarda o id', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    const payment = pm.response.json();",
+                  "    pm.expect(payment.amount).to.eql(pm.collectionVariables.get('paymentAmount'));",
+                  "    pm.expect(payment.status).to.eql('paid');",
+                  "    pm.expect(payment.method_label).to.eql('Pix');",
+                  "    pm.expect(payment.paid_at).to.be.a('string');",
+                  "    pm.expect(payment.discount).to.eql('0.00');",
+                  "    pm.expect(payment.loyalty_reward).to.eql(false);",
+                  "    pm.expect(payment.appointment.client).to.have.all.keys('id', 'name');",
+                  "    pm.collectionVariables.set('paymentId', payment.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointment_id\": {{paymentAppointmentId}},\n  \"method\": \"pix\",\n  \"notes\": \"Registrado pelo Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin, ou o barbeiro do agendamento. Sem amount, vale o price do agendamento; sem status, nasce pago (paid), com o paid_at do servidor. method: cash, pix, credit_card ou debit_card. status, se mandado: pending ou paid."
+          }
+        },
+        {
+          "name": "Registrar de novo (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o segundo pagamento do mesmo atendimento', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.appointment_id[0]).to.eql('Este atendimento já tem pagamento registrado.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointment_id\": {{paymentAppointmentId}},\n  \"method\": \"cash\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Um pagamento por atendimento, mesmo depois do estorno: o segundo dá 422 em appointment_id."
+          }
+        },
+        {
+          "name": "Registrar atendimento não concluído (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o pagamento de um atendimento que não foi concluído', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors).to.have.property('appointment_id');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointment_id\": \"{{appointmentId}}\",\n  \"method\": \"pix\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Usa o agendamento da pasta Agendamentos (confirmado, ainda não concluído): só atendimento concluído recebe pagamento. Sem rodar aquela pasta, appointmentId fica vazio e o 422 diz que o agendamento é obrigatório."
+          }
+        },
+        {
+          "name": "Listar com filtro (payments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Lista o pagamento registrado, com os totais do filtro', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const page = pm.response.json();",
+                  "    const ids = page.data.map(function (payment) { return payment.id; });",
+                  "    pm.expect(ids).to.include(Number(pm.collectionVariables.get('paymentId')));",
+                  "    pm.expect(page.totals).to.have.all.keys('pending', 'paid', 'refunded');",
+                  "    pm.expect(page.totals.paid.payments).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments?from={{paymentDate}}&to={{paymentDate}}&method=pix&status=paid&page=1&per_page=15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{paymentDate}}",
+                  "description": "Início do período (Y-m-d), pela data do atendimento."
+                },
+                {
+                  "key": "to",
+                  "value": "{{paymentDate}}",
+                  "description": "Fim do período (Y-m-d), igual ou depois de from."
+                },
+                {
+                  "key": "method",
+                  "value": "pix",
+                  "description": "cash, pix, credit_card ou debit_card."
+                },
+                {
+                  "key": "status",
+                  "value": "paid",
+                  "description": "pending, paid ou refunded."
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                },
+                {
+                  "key": "barber_id",
+                  "value": "{{appointmentBarberId}}",
+                  "description": "Só os dos agendamentos desse barbeiro.",
+                  "disabled": true
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{appointmentClientId}}",
+                  "description": "Só os dos agendamentos desse cliente.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Do atendimento mais recente para o mais antigo. Além de data, links e meta, traz totals: a quantidade e a soma de cada status, com os mesmos filtros e em todas as páginas. O barbeiro vê só os da agenda dele e o cliente só os próprios."
+          }
+        },
+        {
+          "name": "Mostrar (payments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra o pagamento com o agendamento resumido', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const payment = pm.response.json();",
+                  "    pm.expect(payment.id).to.eql(Number(pm.collectionVariables.get('paymentId')));",
+                  "    pm.expect(payment.appointment).to.have.all.keys('id', 'date', 'start_time', 'end_time', 'client', 'barber', 'service');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "O agendamento vem resumido: data, horário e cliente, barbeiro e serviço só com id e name."
+          }
+        },
+        {
+          "name": "Corrigir (payments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Corrige as observações sem mudar o status', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().notes).to.eql('Corrigido pelo Postman');",
+                  "    pm.expect(pm.response.json().status).to.eql('paid');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Corrigido pelo Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Só o admin. Aceita amount, method e notes; o status, o paid_at e o agendamento não mudam por aqui."
+          }
+        },
+        {
+          "name": "Estornar (payments)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Estorna o pagamento e mantém a data em que foi pago', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('refunded');",
+                  "    pm.expect(pm.response.json().status_label).to.eql('Estornado');",
+                  "    pm.expect(pm.response.json().paid_at).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{paymentId}}",
+                "status"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"refunded\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Transições: pending vai para paid (admin ou o barbeiro do agendamento) e paid para refunded (só o admin). O estorno mantém o paid_at, e o valor sai do faturamento do dashboard."
+          }
+        },
+        {
+          "name": "Estornar de novo (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa a transição que não vale', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.status[0]).to.eql('Não é possível mudar de Estornado para Estornado.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{paymentId}}",
+                "status"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"refunded\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Estornado é final: nenhuma mudança de status vale depois dele."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lembretes",
+      "description": "Rode depois das pastas Agendamentos e Pagamentos. O lembrete por e-mail sai sozinho pelo comando appointments:send-reminders, que o agendador roda a cada 15 minutos, para os agendamentos das próximas REMINDER_HOURS_BEFORE horas (padrão 24). Esta pasta usa o \"Enviar lembrete agora\", do admin e do barbeiro do agendamento: manda o lembrete do agendamento da pasta Agendamentos (appointmentId), mostra o 429 de um segundo envio antes de 10 minutos e o 422 de um atendimento concluído (o da pasta Pagamentos, paymentAppointmentId). No local, com MAIL_MAILER=log, o e-mail vai para o fim do storage/logs/laravel.log. Rodar a pasta de novo antes de 10 minutos dá 429 já no primeiro request; rode antes a pasta Agendamentos, que cria outro agendamento.",
+      "item": [
+        {
+          "name": "Enviar lembrete agora",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Envia o lembrete e devolve o agendamento com o reminder_sent_at', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const appointment = pm.response.json();",
+                  "    pm.expect(appointment.id).to.eql(Number(pm.collectionVariables.get('appointmentId')));",
+                  "    pm.expect(appointment.reminder_sent_at).to.be.a('string');",
+                  "    pm.expect(appointment.client).to.have.all.keys('id', 'name');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/reminder",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "reminder"
+              ]
+            },
+            "description": "Admin, ou o barbeiro do agendamento (o cliente recebe 403, mesmo no próprio horário). Sem corpo. Manda o lembrete por e-mail na hora, grava o reminder_sent_at e devolve o agendamento. Só agendado ou confirmado que ainda não começou, nunca para cliente excluído nem para e-mail do domínio barberflow.invalid (422 em reminder). Um envio a cada 10 minutos por agendamento, contando o do comando e mesmo depois de remarcar, e até 10 por minuto por usuário (429 com Retry-After). Se o e-mail não sair, 503, e o reminder_sent_at volta ao que era."
+          }
+        },
+        {
+          "name": "Enviar de novo (429)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa um segundo envio antes de 10 minutos', function () {",
+                  "    pm.response.to.have.status(429);",
+                  "    pm.expect(pm.response.headers.get('Retry-After')).to.be.a('string');",
+                  "    pm.expect(pm.response.json().message).to.include('menos de 10 minutos');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/reminder",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "reminder"
+              ]
+            },
+            "description": "O mesmo agendamento antes de 10 minutos: 429, com o Retry-After em segundos e a mensagem de quando dá para mandar de novo. Remarcar não libera antes da hora. O limite é por agendamento: outro agendamento sai na hora, até 10 por minuto por usuário."
+          }
+        },
+        {
+          "name": "Lembrete de atendimento concluído (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o lembrete de um atendimento concluído', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.reminder[0]).to.eql('Só é possível enviar o lembrete de um agendamento com status Agendado ou Confirmado.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{paymentAppointmentId}}/reminder",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{paymentAppointmentId}}",
+                "reminder"
+              ]
+            },
+            "description": "Só agendado e confirmado recebem lembrete. Os outros status, o agendamento que já começou, o cliente excluído e o e-mail que não recebe mensagem dão 422 no campo reminder."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fidelidade",
+      "description": "Rode depois das pastas Agendamentos e Pagamentos. A cada LOYALTY_VISITS atendimentos concluídos (padrão 10), o cliente ganha um prêmio: LOYALTY_DISCOUNT_PERCENT % de desconto (padrão 100, o atendimento grátis) no pagamento de um atendimento. A pasta mostra a fidelidade do cliente da pasta Agendamentos (appointmentClientId), o resumo em cada cliente da listagem, a recusa da conta com o agendamento de outro cliente, a recusa do prêmio com o valor junto e os campos discount e loyalty_reward do pagamento da pasta Pagamentos. Para pagar com o prêmio, mande use_loyalty_reward: true, sem amount, no Registrar (payments) de um atendimento cujo cliente tenha prêmio disponível.",
+      "item": [
+        {
+          "name": "Fidelidade do cliente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mostra as visitas, o progresso e os prêmios do cliente', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const loyalty = pm.response.json();",
+                  "    pm.expect(loyalty).to.have.all.keys('client_id', 'visits', 'visits_per_reward', 'progress', 'rewards_earned', 'rewards_used', 'available_rewards', 'discount_percent');",
+                  "    pm.expect(loyalty.client_id).to.eql(Number(pm.collectionVariables.get('appointmentClientId')));",
+                  "    pm.expect(loyalty.progress).to.be.below(loyalty.visits_per_reward);",
+                  "    pm.expect(loyalty.available_rewards).to.eql(Math.max(0, loyalty.rewards_earned - loyalty.rewards_used));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients/{{appointmentClientId}}/loyalty",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients",
+                "{{appointmentClientId}}",
+                "loyalty"
+              ],
+              "query": [
+                {
+                  "key": "appointment_id",
+                  "value": "{{appointmentId}}",
+                  "description": "Um agendamento deste cliente: ele fica fora das visitas, a conta do pagamento dele com o prêmio. De outro cliente, 422; de uma agenda que o usuário não vê, 403.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Admin e barbeiro veem a de qualquer cliente; o cliente, só a própria (a de outro dá 403). visits: atendimentos concluídos, sem os pagos com o prêmio. progress: visitas desde o último prêmio (ex.: 7 de 10). available_rewards: prêmios ganhos menos os usados (o estorno do pagamento com o prêmio devolve o prêmio). discount_percent: o desconto do prêmio."
+          }
+        },
+        {
+          "name": "Fidelidade na listagem de clientes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cada cliente traz o resumo da fidelidade', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const clients = pm.response.json().data;",
+                  "    pm.expect(clients).to.be.an('array').that.is.not.empty;",
+                  "    clients.forEach(function (client) {",
+                  "        pm.expect(client.loyalty).to.have.all.keys('visits', 'visits_per_reward', 'progress', 'rewards_earned', 'rewards_used', 'available_rewards', 'discount_percent');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients?page=1&per_page=15",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Número da página, de 1 a 100000 (padrão 1)."
+                },
+                {
+                  "key": "per_page",
+                  "value": "15",
+                  "description": "Itens por página, de 1 a 100 (padrão 15)."
+                }
+              ]
+            },
+            "description": "Admin e barbeiro. Cada cliente traz em loyalty o mesmo resumo, sem o client_id, contado na própria consulta da página (sem uma consulta por cliente). É o que a coluna Fidelidade da tela de Clientes mostra."
+          }
+        },
+        {
+          "name": "Conta com o agendamento de outro cliente (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o agendamento que não é do cliente', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.appointment_id[0]).to.eql('O agendamento informado não foi encontrado entre os deste cliente.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/clients/{{appointmentClientId}}/loyalty?appointment_id={{paymentAppointmentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "clients",
+                "{{appointmentClientId}}",
+                "loyalty"
+              ],
+              "query": [
+                {
+                  "key": "appointment_id",
+                  "value": "{{paymentAppointmentId}}",
+                  "description": "O atendimento da pasta Pagamentos, que é de outro cliente."
+                }
+              ]
+            },
+            "description": "O appointment_id precisa ser de um agendamento deste cliente que o usuário pode ver. O de outro cliente, o que não existe e o de uma agenda que o usuário não vê dão o mesmo 422."
+          }
+        },
+        {
+          "name": "Prêmio com o valor junto (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o valor mandado junto com o prêmio', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.amount[0]).to.eql('Com o prêmio de fidelidade, o valor é calculado pelo desconto: não envie o valor.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointment_id\": {{appointmentId}},\n  \"method\": \"cash\",\n  \"use_loyalty_reward\": true,\n  \"amount\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Admin, ou o barbeiro do agendamento. Com use_loyalty_reward: true, o valor sai do desconto (LOYALTY_DISCOUNT_PERCENT % do price do agendamento), e o amount mandado junto, mesmo 0, dá 422. Sem prêmio disponível, a recusa é 422 em use_loyalty_reward (ex.: O cliente ainda não tem prêmio de fidelidade disponível: 7 de 10 visitas, sem contar este atendimento.). Com o prêmio, a resposta traz loyalty_reward true, o discount e o amount que sobrou."
+          }
+        },
+        {
+          "name": "Pagamento sem o prêmio",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('O pagamento traz o desconto e se usou o prêmio', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const payment = pm.response.json();",
+                  "    pm.expect(payment.discount).to.eql('0.00');",
+                  "    pm.expect(payment.loyalty_reward).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "O pagamento da pasta Pagamentos, registrado sem o prêmio: discount \"0.00\" e loyalty_reward false. Pago com o prêmio, loyalty_reward vem true e discount traz o desconto."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "description": "Só o admin (barbeiro e cliente recebem 403). Tudo conta pela data do atendimento; o faturamento soma só os pagamentos pagos. A definição de cada número está no docs/API.md e no App\\Services\\DashboardMetrics.",
+      "item": [
+        {
+          "name": "Dashboard do mês atual",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Devolve os números do mês atual', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const dashboard = pm.response.json();",
+                  "    pm.expect(dashboard).to.have.all.keys('period', 'revenue', 'appointments', 'occupancy', 'top_services', 'barbers');",
+                  "    pm.expect(dashboard.period.from.slice(8)).to.eql('01');",
+                  "    pm.expect(dashboard.revenue.by_method.length).to.eql(4);",
+                  "    pm.expect(dashboard.appointments.by_status.length).to.eql(6);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dashboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dashboard"
+              ]
+            },
+            "description": "Sem from e to, vale o mês atual, do primeiro ao último dia, no fuso do app (APP_TIMEZONE)."
+          }
+        },
+        {
+          "name": "Dashboard de um período",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Devolve um item por dia do período', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const dashboard = pm.response.json();",
+                  "    const from = pm.collectionVariables.get('dashboardFrom');",
+                  "    const to = pm.collectionVariables.get('dashboardTo');",
+                  "    const days = (Date.parse(to) - Date.parse(from)) / 86400000 + 1;",
+                  "    pm.expect(dashboard.period).to.eql({ from: from, to: to, days: days });",
+                  "    pm.expect(dashboard.revenue.by_day.length).to.eql(days);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dashboard?from={{dashboardFrom}}&to={{dashboardTo}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dashboard"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{dashboardFrom}}",
+                  "description": "Início (Y-m-d). Vai junto com to."
+                },
+                {
+                  "key": "to",
+                  "value": "{{dashboardTo}}",
+                  "description": "Fim (Y-m-d), igual ou depois de from. Até 366 dias, com os dois dias incluídos."
+                }
+              ]
+            },
+            "description": "O período padrão das variáveis dashboardFrom e dashboardTo é novembro de 2026. by_day traz todos os dias do período, mesmo sem valor."
+          }
+        },
+        {
+          "name": "Período longo demais (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Recusa o período de 367 dias', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().errors.to[0]).to.eql('O período pode ter no máximo 366 dias.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/dashboard?from=2026-01-01&to=2027-01-02",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dashboard"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-01-01",
+                  "description": "Início (Y-m-d)."
+                },
+                {
+                  "key": "to",
+                  "value": "2027-01-02",
+                  "description": "Fim (Y-m-d): 367 dias contando os dois, um a mais que o limite."
+                }
+              ]
+            },
+            "description": "O período tem no máximo 366 dias, contando o primeiro e o último."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Conta de cliente",
+      "description": "Cadastro de conta pelo próprio cliente, confirmação do e-mail e \"esqueci minha senha\".",
+      "item": [
+        {
+          "name": "Criar conta de cliente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Conta criada', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "register"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cliente Postman\",\n  \"email\": \"cliente.postman@example.com\",\n  \"phone\": \"67999990000\",\n  \"password\": \"{{clientPassword}}\",\n  \"password_confirmation\": \"{{clientPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cria a conta com perfil client e manda o link de confirmação por e-mail (no local, ele aparece no storage/logs/laravel.log). Preencha clientPassword antes. O e-mail não pode ter conta. Até confirmar o e-mail, a conta só usa as rotas da própria conta (usuário logado, troca de senha, reenvio do link e logout): services, clients e barbers respondem 403."
+          }
+        },
+        {
+          "name": "Reenviar confirmação do e-mail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pedido de reenvio respondido', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 202]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/email/verification-notification",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "email",
+                "verification-notification"
+              ]
+            },
+            "description": "Com o token da conta: 202 quando reenvia o link, 200 quando o e-mail já está confirmado."
+          }
+        },
+        {
+          "name": "Esqueci minha senha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pedido de link aceito', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/forgot-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "forgot-password"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{loginEmail}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Manda o link de redefinição. A resposta é sempre a mesma, com e-mail cadastrado ou não. Até 5 pedidos por minuto por e-mail e IP."
+          }
+        },
+        {
+          "name": "Redefinir a senha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Senha redefinida', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reset-password"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"email\": \"{{resetEmail}}\",\n  \"password\": \"{{newPassword}}\",\n  \"password_confirmation\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Preencha resetToken e resetEmail com os dados do link do e-mail (/reset-password/{token}?email=...) e newPassword. Encerra todos os logins da conta. Conta de cliente que ainda não tinha confirmado o e-mail perde o nome e o telefone digitados no cadastro (o nome vira a parte do e-mail antes do @). Token inválido ou vencido dá 422."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sair",
+      "item": [
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Token apagado', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "    pm.collectionVariables.set('token', '');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logout"
+              ]
+            },
+            "description": "Apaga o token usado na chamada (os outros tokens da conta continuam valendo) e limpa a variável token."
           }
         }
       ]

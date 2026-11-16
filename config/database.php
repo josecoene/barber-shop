@@ -38,10 +38,15 @@ return [
             'database' => env('DB_DATABASE', database_path('database.sqlite')),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-            'busy_timeout' => null,
+            // Várias requisições ao mesmo tempo gravam no mesmo arquivo (o contador do limite de
+            // requisições na tabela cache, a cada chamada da API; as telas fazem chamadas em paralelo).
+            // No modo DEFERRED, duas transações que leem e depois gravam se travam e uma falha na hora
+            // com "database is locked". IMMEDIATE pega a trava de escrita já no começo da transação, e o
+            // busy_timeout (ms) faz a outra esperar a vez em vez de falhar.
+            'busy_timeout' => 5000,
             'journal_mode' => null,
             'synchronous' => null,
-            'transaction_mode' => 'DEFERRED',
+            'transaction_mode' => 'IMMEDIATE',
         ],
 
         'mysql' => [

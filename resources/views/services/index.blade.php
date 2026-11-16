@@ -7,6 +7,8 @@
         'resource' => 'services',
         'title' => 'Serviços',
         'singular' => 'serviço',
+        'plural' => 'serviços',
+        'searchLabel' => 'Buscar por nome',
         'columns' => ['Nome', 'Duração', 'Preço', 'Status'],
         'fields' => 'partials.service-fields',
     ])

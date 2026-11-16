@@ -7,7 +7,9 @@
         'resource' => 'barbers',
         'title' => 'Barbeiros',
         'singular' => 'barbeiro',
-        'columns' => ['Nome', 'E-mail', 'Telefone'],
-        'fields' => 'partials.person-fields',
+        'plural' => 'barbeiros',
+        'searchLabel' => 'Buscar por nome ou e-mail',
+        'columns' => ['Nome', 'E-mail', 'Telefone', 'Acesso'],
+        'fields' => 'partials.barber-fields',
     ])
 @endsection

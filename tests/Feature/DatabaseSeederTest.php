@@ -2,14 +2,32 @@
 
 namespace Tests\Feature;
 
+use App\Enums\UserRole;
 use App\Models\Service;
 use App\Models\User;
+use Database\Seeders\AdminUserSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class DatabaseSeederTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * Sem ADMIN_* (mesmo que o .env de quem roda os testes tenha), o AdminUserSeeder
+     * não cria ninguém. Os testes do admin inicial ligam os valores com config([...]).
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config([
+            'barberflow.admin.name' => 'Administrador',
+            'barberflow.admin.email' => null,
+            'barberflow.admin.password' => null,
+        ]);
+    }
 
     public function test_seeding_twice_does_not_duplicate_records(): void
     {
@@ -41,13 +59,86 @@ class DatabaseSeederTest extends TestCase
         $this->assertSame(5, Service::count());
     }
 
-    public function test_seeds_the_test_user(): void
+    public function test_seeds_the_test_user_as_admin_with_the_same_password(): void
     {
         $this->seed();
 
-        $this->assertDatabaseHas('users', [
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+        $user = User::firstWhere('email', 'test@example.com');
+
+        $this->assertSame('Test User', $user->name);
+        $this->assertSame(UserRole::Admin, $user->role);
+        $this->assertNotNull($user->email_verified_at);
+        $this->assertTrue(Hash::check('password', $user->password));
+    }
+
+    public function test_test_user_without_role_becomes_admin_and_keeps_its_password(): void
+    {
+        // Como no banco de quem já rodou o seed antes do login existir.
+        $user = User::create(['name' => 'Test User', 'email' => 'test@example.com', 'password' => 'outra-senha-123']);
+        $hash = $user->password;
+
+        $this->seed();
+
+        $user->refresh();
+        $this->assertSame(UserRole::Admin, $user->role);
+        $this->assertSame($hash, $user->password);
+    }
+
+    public function test_test_user_with_another_role_keeps_it(): void
+    {
+        $user = User::create(['name' => 'Test User', 'email' => 'test@example.com', 'password' => 'outra-senha-123']);
+        $user->forceFill(['role' => UserRole::Barber])->save();
+
+        $this->seed();
+
+        $this->assertSame(UserRole::Barber, $user->fresh()->role);
+    }
+
+    public function test_admin_seeder_without_password_only_warns(): void
+    {
+        config(['barberflow.admin.email' => 'dono@barberflow.test']);
+
+        $this->artisan('db:seed', ['--class' => AdminUserSeeder::class])
+            ->expectsOutputToContain('Administrador inicial não criado')
+            ->assertSuccessful();
+
+        $this->assertDatabaseMissing('users', ['email' => 'dono@barberflow.test']);
+    }
+
+    public function test_admin_seeder_creates_the_admin_from_the_config(): void
+    {
+        config([
+            'barberflow.admin.name' => 'Dono da Barbearia',
+            'barberflow.admin.email' => 'dono@barberflow.test',
+            'barberflow.admin.password' => 'senha-do-dono-123',
         ]);
+
+        $this->seed(AdminUserSeeder::class);
+
+        $admin = User::firstWhere('email', 'dono@barberflow.test');
+
+        $this->assertSame('Dono da Barbearia', $admin->name);
+        $this->assertSame(UserRole::Admin, $admin->role);
+        $this->assertNotNull($admin->email_verified_at);
+        $this->assertTrue(Hash::check('senha-do-dono-123', $admin->password));
+    }
+
+    public function test_admin_seeder_never_changes_an_existing_user(): void
+    {
+        $user = User::create(['name' => 'Já existia', 'email' => 'dono@barberflow.test', 'password' => 'senha-antiga-123']);
+        $user->forceFill(['role' => UserRole::Client])->save();
+        $hash = $user->password;
+
+        config([
+            'barberflow.admin.email' => 'dono@barberflow.test',
+            'barberflow.admin.password' => 'senha-do-dono-123',
+        ]);
+
+        $this->seed(AdminUserSeeder::class);
+
+        $user->refresh();
+        $this->assertSame($hash, $user->password);
+        $this->assertSame(UserRole::Client, $user->role);
+        $this->assertSame(1, User::count());
     }
 }
