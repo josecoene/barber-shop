@@ -35,7 +35,13 @@
 
     <a class="visually-hidden-focusable btn btn-light position-absolute top-0 start-0 m-2 z-3" href="#conteudo">Pular para o conteúdo</a>
 
-    <nav class="navbar navbar-expand-lg bg-dark" data-bs-theme="dark" aria-label="Menu principal">
+    {{--
+        O menu abre a partir de 1200px (navbar-expand-xl); abaixo disso, fica no botão "Abrir menu". Aberto,
+        ele cabe numa linha só: os links não quebram (text-nowrap) e, quando falta espaço, quem encolhe é o
+        nome do usuário, cortado com reticências (navbar-account no pages.css). Em 992px, os 7 links do admin
+        com o perfil, Minha conta e Sair não cabem nem com o nome escondido.
+    --}}
+    <nav class="navbar navbar-expand-xl bg-dark" data-bs-theme="dark" aria-label="Menu principal">
         <div class="container">
             <a class="navbar-brand fw-semibold" href="{{ route('home') }}">BarberFlow</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#main-nav"
@@ -47,7 +53,7 @@
                     @foreach ($links as $link)
                         @can($link['ability'])
                             <li class="nav-item">
-                                <a class="nav-link {{ request()->routeIs($link['route']) ? 'active' : '' }}"
+                                <a class="nav-link text-nowrap {{ request()->routeIs($link['route']) ? 'active' : '' }}"
                                     @if (request()->routeIs($link['route'])) aria-current="page" @endif
                                     href="{{ route($link['route']) }}">{{ $link['label'] }}</a>
                             </li>
@@ -55,17 +61,17 @@
                     @endforeach
                 </ul>
 
-                <div class="d-flex flex-wrap align-items-center gap-2 gap-lg-3 py-2 py-lg-0">
-                    <span class="navbar-text py-0">
+                <div class="navbar-account d-flex flex-wrap flex-xl-nowrap align-items-center gap-2 gap-xl-3 py-2 py-xl-0 ms-xl-3">
+                    {{-- O nome cortado na tela continua inteiro no title e para o leitor de tela. --}}
+                    <span class="navbar-text d-flex align-items-center gap-1 py-0">
                         <span class="visually-hidden">Você entrou como</span>
-                        <span class="navbar-user d-inline-block text-truncate align-bottom text-white"
-                            title="{{ $currentUser->name }}">{{ $currentUser->name }}</span>
+                        <span class="navbar-user text-truncate text-white" title="{{ $currentUser->name }}">{{ $currentUser->name }}</span>
                         <span class="badge text-bg-secondary">{{ $currentUser->role?->label() }}</span>
                     </span>
 
                     {{-- Para o cliente, Minha conta já está no menu. --}}
                     @cannot('access-client')
-                        <a class="link-light link-underline-opacity-0 link-underline-opacity-75-hover small"
+                        <a class="link-light link-underline-opacity-0 link-underline-opacity-75-hover small text-nowrap"
                             @if (request()->routeIs('account.show')) aria-current="page" @endif
                             href="{{ route('account.show') }}">Minha conta</a>
                     @endcannot

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Services\Auth\ClientRegistration;
 use Illuminate\Foundation\Auth\EmailVerificationRequest;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -36,13 +37,19 @@ class EmailVerificationController extends Controller
         return redirect()->intended(route('home'))->with('status', 'E-mail confirmado.');
     }
 
-    public function send(Request $request): RedirectResponse
+    /**
+     * Reenvio do link. Com o servidor de e-mail fora do ar, volta à tela com o
+     * aviso de que o link não saiu (ClientRegistration::RESEND_FAILED).
+     */
+    public function send(Request $request, ClientRegistration $registration): RedirectResponse
     {
         if ($request->user()->hasVerifiedEmail()) {
             return redirect()->intended(route('home'));
         }
 
-        $request->user()->sendEmailVerificationNotification();
+        if (! $registration->resendVerification($request->user())) {
+            return back()->with('warning', ClientRegistration::RESEND_FAILED);
+        }
 
         return back()->with('status', 'Enviamos um novo link de confirmação para o seu e-mail.');
     }

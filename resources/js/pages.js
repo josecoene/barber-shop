@@ -149,27 +149,30 @@ const PAYMENT_ACTIONS = {
     },
 };
 
-/* text-break deixa nome e e-mail longos quebrarem linha, para a tabela caber no celular. */
+/*
+ * Colunas de cada cadastro, na ordem do cabeçalho da tabela (partials/crud). A primeira é sempre o nome,
+ * que no celular vira o título do item. Nome e e-mail quebram linha só entre palavras (o e-mail, também
+ * depois do @ e antes de cada ponto: emailText); telefone, duração e preço ficam numa linha só.
+ */
 const COLUMNS = {
     barbers: [
-        { key: 'name', className: 'text-break' },
-        { key: 'email', className: 'text-break' },
-        { key: 'phone', empty: 'Não informado' },
+        { key: 'name' },
+        { key: 'email', render: emailText },
+        { key: 'phone', empty: 'Não informado', className: 'text-nowrap' },
         /* Acesso: o barbeiro tem login (o admin cria ou redefine pelo campo de senha do formulário). */
         { key: 'has_login', format: (value) => (value ? 'Sim' : 'Não') },
     ],
-    /* Com a coluna Fidelidade, o telefone também quebra linha: um número sem espaço alargaria a tabela no celular. */
     clients: [
-        { key: 'name', className: 'text-break' },
-        { key: 'email', className: 'text-break' },
-        { key: 'phone', empty: 'Não informado', className: 'text-break' },
+        { key: 'name' },
+        { key: 'email', render: emailText },
+        { key: 'phone', empty: 'Não informado', className: 'text-nowrap' },
         /* Fidelidade: visitas desde o último prêmio (ex.: 7/10), vindas da própria listagem, e um selo quando há prêmio. */
         { key: 'loyalty', render: loyaltyCell },
     ],
     services: [
-        { key: 'name', className: 'text-break' },
-        { key: 'duration', format: (value) => `${value} min` },
-        { key: 'price', format: (value) => currency.format(Number(value)) },
+        { key: 'name' },
+        { key: 'duration', format: (value) => `${value} min`, className: 'text-nowrap' },
+        { key: 'price', format: (value) => currency.format(Number(value)), className: 'text-nowrap' },
         { key: 'status', badge: true },
     ],
 };
@@ -754,6 +757,36 @@ function rewardBenefit(discountPercent) {
 }
 
 /*
+ * E-mail com pontos de quebra (<wbr>) depois do @ e antes de cada ponto: numa coluna estreita, ele quebra
+ * linha nesses lugares ("henrique.barbosa@" e "demo.barberflow.test"), e não no meio de uma palavra. O
+ * texto entra como texto, nunca como HTML: o e-mail vem da API.
+ */
+function emailText(email) {
+    const wrapper = document.createElement('span');
+    let part = '';
+
+    for (const char of String(email ?? '')) {
+        if (char === '.' && part) {
+            wrapper.append(part, document.createElement('wbr'));
+            part = '';
+        }
+
+        part += char;
+
+        if (char === '@') {
+            wrapper.append(part, document.createElement('wbr'));
+            part = '';
+        }
+    }
+
+    if (part) {
+        wrapper.append(part);
+    }
+
+    return wrapper;
+}
+
+/*
  * Célula "Fidelidade" da lista de Clientes, com o resumo que vem em cada cliente do GET /api/clients:
  * "7/10" (visitas desde o último prêmio, por extenso para o leitor de tela) e um selo quando o cliente
  * tem prêmio para usar.
@@ -1117,13 +1150,16 @@ function initCrud(root) {
     const plural = root.dataset.plural;
     const endpoint = `/api/${resource}`;
     const columns = COLUMNS[resource];
-    /* Sem permissão para excluir (ex.: o barbeiro nos clientes), a tabela não mostra o botão Excluir. */
+    /* Sem permissão para excluir (ex.: o barbeiro nos clientes), a tabela e a lista ficam sem o botão Excluir. */
     const canDelete = root.dataset.canDelete !== 'false';
 
     const alerts = root.querySelector('[data-alerts]');
+    /* Os cadastros saem na tabela (tablet para cima) e na lista do celular; o CSS mostra uma das duas. */
     const rows = root.querySelector('[data-rows]');
+    const mobileRows = root.querySelector('[data-mobile-rows]');
     const table = rows.closest('table');
-    const colspan = root.querySelectorAll('thead th').length;
+    const headers = [...table.querySelectorAll('thead th')].map((header) => header.textContent.trim());
+    const colspan = headers.length;
 
     const searchInput = root.querySelector('[data-search]');
     const pageStatus = root.querySelector('[data-page-status]');
@@ -1152,44 +1188,36 @@ function initCrud(root) {
     /* Alerta de "não foi possível carregar": sai assim que uma carga seguinte der certo. */
     let loadErrorAlert = null;
 
+    /* Um dado do cadastro, igual na célula da tabela e na lista do celular. */
+    function columnContent(item, column) {
+        const value = item[column.key];
+
+        /* Coluna com conteúdo próprio (ex.: o e-mail e a fidelidade dos clientes): render devolve o elemento. */
+        if (column.render) {
+            return column.render(value);
+        }
+
+        if (column.badge) {
+            const status = STATUS_LABELS[value] ?? { text: value, badge: 'text-bg-light' };
+
+            return textElement('span', `badge ${status.badge}`, status.text);
+        }
+
+        if (column.empty && (value === null || value === '')) {
+            return textElement('span', 'text-body-secondary', column.empty);
+        }
+
+        return document.createTextNode(column.format ? column.format(value) : (value ?? ''));
+    }
+
     function renderCell(item, column) {
         const cell = document.createElement('td');
-        const value = item[column.key];
 
         if (column.className) {
             cell.className = column.className;
         }
 
-        /* Coluna com conteúdo próprio (ex.: a fidelidade dos clientes): render devolve o elemento da célula. */
-        if (column.render) {
-            cell.append(column.render(value));
-
-            return cell;
-        }
-
-        if (column.badge) {
-            const status = STATUS_LABELS[value] ?? { text: value, badge: 'text-bg-light' };
-            const badge = document.createElement('span');
-            badge.className = `badge ${status.badge}`;
-            badge.textContent = status.text;
-            cell.append(badge);
-
-            return cell;
-        }
-
-        if (column.empty && (value === null || value === '')) {
-            /* O texto de vazio quebra só entre palavras, mesmo numa coluna em que o valor quebra no meio (text-break). */
-            cell.classList.remove('text-break');
-
-            const empty = document.createElement('span');
-            empty.className = 'text-body-secondary';
-            empty.textContent = column.empty;
-            cell.append(empty);
-
-            return cell;
-        }
-
-        cell.textContent = column.format ? column.format(value) : value;
+        cell.append(columnContent(item, column));
 
         return cell;
     }
@@ -1205,11 +1233,8 @@ function initCrud(root) {
         return button;
     }
 
-    /* Os botões ficam num flex-wrap: no celular, "Excluir" desce para baixo de "Editar" em vez de alargar a tabela. */
-    function renderActions(item) {
-        const cell = document.createElement('td');
-        cell.className = 'text-end';
-
+    /* Editar e Excluir num flex-wrap: numa coluna estreita, "Excluir" desce para baixo de "Editar". */
+    function actionGroup(item) {
         const group = document.createElement('div');
         group.className = 'd-flex flex-wrap gap-2 justify-content-end';
         group.append(actionButton('Editar', 'btn-outline-primary', item, openForm));
@@ -1218,9 +1243,55 @@ function initCrud(root) {
             group.append(actionButton('Excluir', 'btn-outline-danger', item, openDelete));
         }
 
-        cell.append(group);
+        return group;
+    }
 
-        return cell;
+    function renderRow(item) {
+        const row = document.createElement('tr');
+        columns.forEach((column) => row.append(renderCell(item, column)));
+
+        const actions = document.createElement('td');
+        actions.className = 'text-end';
+        actions.append(actionGroup(item));
+        row.append(actions);
+
+        return row;
+    }
+
+    /*
+     * Item da lista do celular: o nome em cima; embaixo, cada um dos outros dados com o nome da coluna (o
+     * texto do cabeçalho da tabela) ao lado; por último, os botões.
+     */
+    function renderItem(item) {
+        const entry = document.createElement('li');
+        entry.className = 'list-group-item';
+
+        const details = document.createElement('dl');
+        details.className = 'crud-details small mb-0';
+
+        columns.forEach((column, index) => {
+            if (column.key === 'name') {
+                return;
+            }
+
+            const value = document.createElement('dd');
+            value.className = 'mb-0';
+            value.append(columnContent(item, column));
+            details.append(textElement('dt', 'fw-normal text-body-secondary', headers[index]), value);
+        });
+
+        const actions = actionGroup(item);
+        actions.classList.add('mt-2');
+
+        entry.append(textElement('p', 'crud-name fw-semibold mb-1', item.name), details, actions);
+
+        return entry;
+    }
+
+    /* Recado no lugar dos cadastros (carregando, vazio, erro), na tabela e na lista do celular. */
+    function showMessage(text) {
+        rows.replaceChildren(messageRow(colspan, text));
+        mobileRows.replaceChildren(textElement('li', 'list-group-item text-center text-body-secondary py-4', text));
     }
 
     function updatePager(meta) {
@@ -1248,20 +1319,13 @@ function initCrud(root) {
             const message = search
                 ? `Nenhum ${singular} encontrado para "${search}".`
                 : `Nenhum ${singular} cadastrado ainda.`;
-            rows.replaceChildren(messageRow(colspan, message));
+            showMessage(message);
 
             return;
         }
 
-        const lines = page.data.map((item) => {
-            const row = document.createElement('tr');
-            columns.forEach((column) => row.append(renderCell(item, column)));
-            row.append(renderActions(item));
-
-            return row;
-        });
-
-        rows.replaceChildren(...lines);
+        rows.replaceChildren(...page.data.map(renderRow));
+        mobileRows.replaceChildren(...page.data.map(renderItem));
     }
 
     async function load() {
@@ -1272,9 +1336,10 @@ function initCrud(root) {
             params.set('search', search);
         }
 
-        rows.replaceChildren(messageRow(colspan, 'Carregando...'));
+        showMessage('Carregando...');
         pageStatus.textContent = 'Carregando...';
         table.setAttribute('aria-busy', 'true');
+        mobileRows.setAttribute('aria-busy', 'true');
 
         try {
             const page = await fetchPage(`${endpoint}?${params}`);
@@ -1299,7 +1364,7 @@ function initCrud(root) {
                 return;
             }
 
-            rows.replaceChildren(messageRow(colspan, 'Não foi possível carregar a lista.'));
+            showMessage('Não foi possível carregar a lista.');
             pageStatus.textContent = 'Não foi possível carregar a lista.';
 
             /* Sem permissão ou sem login, tentar de novo não adianta: mostra só a mensagem. */
@@ -1317,6 +1382,7 @@ function initCrud(root) {
         } finally {
             if (loadNumber === loadCount) {
                 table.removeAttribute('aria-busy');
+                mobileRows.removeAttribute('aria-busy');
             }
         }
     }
@@ -1442,6 +1508,51 @@ function initCrud(root) {
 /* Texto que o leitor de tela lê num agendamento: horário, cliente, serviço e status. */
 function describeAppointment(appointment) {
     return `${timeRange(appointment)}, ${appointment.client?.name ?? 'cliente'}, ${appointment.service?.name ?? 'serviço'}, ${appointment.status_label}`;
+}
+
+/*
+ * Medidas dos blocos da Agenda, em rem, as mesmas do pages.css: a altura de uma fatia
+ * (--schedule-slot-height), a de uma linha do bloco (fonte de 0.75rem com line-height 1.2) e o que o
+ * bloco gasta em cima e embaixo (padding de 0.125rem e borda de 1px, dos dois lados). Com elas, cada
+ * bloco mostra só as linhas que cabem inteiras. Mudou uma no CSS, mude aqui também.
+ */
+const SCHEDULE_SLOT_REM = 4;
+const SCHEDULE_LINE_REM = 0.9;
+const SCHEDULE_BLOCK_EDGES_REM = 0.375;
+/* Horário, cliente, serviço e status. */
+const SCHEDULE_BLOCK_MAX_LINES = 4;
+
+/* Quantas linhas inteiras cabem no bloco de um agendamento de `minutes` minutos, com fatias de `slotMinutes`. */
+function scheduleBlockLines(minutes, slotMinutes) {
+    const height = (minutes / slotMinutes) * SCHEDULE_SLOT_REM - SCHEDULE_BLOCK_EDGES_REM;
+    /* A folga mínima cobre o arredondamento da conta, para a linha que cabe exata não ficar de fora. */
+    const lines = Math.floor(height / SCHEDULE_LINE_REM + 1e-9);
+
+    return Math.min(SCHEDULE_BLOCK_MAX_LINES, Math.max(0, lines));
+}
+
+/*
+ * Linhas do bloco de um agendamento na Agenda. Com as 4 linhas: o horário ("10:00 às 10:30"), o cliente,
+ * o serviço e o status. Num bloco mais curto, o início vai na linha do cliente ("10:00 · Bruno
+ * Carvalho") e entram só as linhas que cabem inteiras: um bloco de 20 minutos mostra essa linha e o
+ * serviço; um de 15, só ela. O detalhe completo continua no modal e no nome acessível do bloco.
+ */
+function scheduleBlockContent(appointment, lines) {
+    const client = appointment.client?.name ?? '';
+    const service = textElement('span', '', appointment.service?.name ?? '');
+    const status = textElement('span', 'schedule-block-status', appointment.status_label);
+
+    if (lines >= SCHEDULE_BLOCK_MAX_LINES) {
+        return [textElement('span', 'schedule-block-time', timeRange(appointment)), textElement('span', 'fw-semibold', client), service, status];
+    }
+
+    const first = document.createElement('span');
+    first.append(
+        textElement('span', 'schedule-block-time', `${shortTime(appointment.start_time)} · `),
+        textElement('span', 'fw-semibold', client),
+    );
+
+    return [first, service, status].slice(0, lines);
 }
 
 /*
@@ -1706,12 +1817,7 @@ function initSchedule(root) {
                 block.dataset.status = appointment.status;
                 block.style.top = `calc(${(start - gridStart) / slotMinutes} * var(--schedule-slot-height))`;
                 block.style.height = `calc(${(end - start) / slotMinutes} * var(--schedule-slot-height))`;
-                block.append(
-                    textSpan('schedule-block-time', timeRange(appointment)),
-                    textSpan('fw-semibold', appointment.client?.name ?? ''),
-                    textSpan('', appointment.service?.name ?? ''),
-                    textSpan('schedule-block-status', appointment.status_label),
-                );
+                block.append(...scheduleBlockContent(appointment, scheduleBlockLines(end - start, slotMinutes)));
                 body.append(block);
             });
 

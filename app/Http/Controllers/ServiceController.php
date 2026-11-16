@@ -46,6 +46,11 @@ class ServiceController extends Controller
         );
     }
 
+    /**
+     * O insert vai dentro de uma transação: se a espera pela resposta do banco
+     * desistir (DB_READ_TIMEOUT) depois que ele gravou, o Laravel não repete o
+     * insert, e o serviço não sai em dobro.
+     */
     public function store(Request $request)
     {
         Gate::authorize('create', Service::class);
@@ -57,7 +62,9 @@ class ServiceController extends Controller
             'status' => 'sometimes|required|string|in:active,inactive', // sem status, fica active
         ]);
 
-        return response()->json(Service::create($validated), 201);
+        $service = DB::transaction(fn () => Service::create($validated));
+
+        return response()->json($service, 201);
     }
 
     /**

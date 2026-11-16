@@ -27,7 +27,7 @@ Tudo sai de um Dockerfile só, `docker/php/Dockerfile`, dividido em estágios. C
 ## Antes de começar
 
 - Docker Desktop com Compose 2.24.4 ou mais novo (`docker compose version`). Os arquivos usam o `!override` do Compose e o `start_interval` dos healthchecks, que pede o Docker Engine 25 ou mais novo. Testado no Windows 11 com Docker 29.5.3 e Compose v5.1.4.
-- Internet no primeiro build: as imagens, os pacotes do Composer e do npm e a fonte Instrument Sans, que o `vite.config.js` de hoje baixa no build.
+- Internet no primeiro build: as imagens e os pacotes do Composer e do npm. Desde a `feat/auth`, o `vite.config.js` não baixa mais nenhuma fonte.
 - Não precisa de PHP, Composer, MySQL nem Node no computador.
 - Dev e homolog usam a mesma porta (8080). Suba um de cada vez.
 
@@ -110,6 +110,8 @@ A homolog usa quatro segredos, que nascem aleatórios e ficam no `docker/homolog
 | `HOMOLOG_DB_EXPORTER_PASSWORD` | Senha do usuário `exporter` do MySQL, só de leitura, do monitoramento |
 | `HOMOLOG_GRAFANA_ADMIN_PASSWORD` | Senha do admin do Grafana do monitoramento |
 
+Três linhas opcionais entram depois, para o admin e os logins de demonstração: `HOMOLOG_ADMIN_EMAIL`, `HOMOLOG_ADMIN_PASSWORD` e `HOMOLOG_DEMO_USER_PASSWORD` (seção "Dados de demonstração e administrador"). Nenhum compose lê essas três.
+
 - **O arquivo é gerado uma vez só e guardado enquanto o banco da homolog existir.** O MySQL grava as senhas do app e do exporter só na primeira subida, quando cria o banco: com outra senha, o app não entra mais no banco (veja "Problemas comuns"). Com outra chave, as sessões abertas deixam de valer.
 - O Git ignora o arquivo (`docker/homolog/.gitignore`), e o build das imagens também (`.dockerignore`). O modelo sem valores é o `docker/homolog/homolog.env.example`.
 - Os compose leem o arquivo pelo `--env-file`, que as funções `homolog` (abaixo) e `homologmon` (`docs/nuvem/MONITORAMENTO.md`) já passam.
@@ -166,11 +168,75 @@ Todos com a função `homolog` (passo 4). O compose lê os arquivos inteiros at�
 |---|---|
 | Ver o estado | `homolog ps` |
 | Logs do app | `homolog logs -f app` |
+| Logs do agendador (a rodada do lembrete a cada 15 minutos) | `homolog logs -f scheduler` |
 | Situação das migrations | `homolog exec app php artisan migrate:status` |
 | Abrir o Tinker | `homolog exec -e HOME=/tmp app php artisan tinker` |
 | Parar e manter os dados | `homolog down` |
 
 O Tinker precisa do `HOME=/tmp` porque o disco do container é só de leitura e ele grava a própria configuração na pasta do usuário.
+
+### Dados de demonstração e administrador
+
+A homolog sobe com o banco vazio. Para entrar nas telas, ela precisa de um admin (`AdminUserSeeder`) e, para a demonstração, dos dados do `DemoSeeder`: 3 barbeiros com login, 15 clientes (4 com conta), os serviços e 30 dias de agenda com pagamentos. Os dois seeders recebem a senha só no ambiente do comando, num container descartável, e nunca de um arquivo versionado.
+
+**1. As senhas, uma vez só.** O e-mail do admin e as duas senhas ficam no mesmo `docker/homolog/homolog.env`, em três linhas a mais. Com a imagem `app` já construída (passo 2 de "Subir"):
+
+```powershell
+docker run --rm --entrypoint php barberflow-app:homolog -r "echo PHP_EOL.'HOMOLOG_ADMIN_EMAIL=admin@demo.barberflow.test'.PHP_EOL.'HOMOLOG_ADMIN_PASSWORD='.bin2hex(random_bytes(16)).PHP_EOL.'HOMOLOG_DEMO_USER_PASSWORD='.bin2hex(random_bytes(16)).PHP_EOL;" | Out-File -Append -Encoding ascii docker\homolog\homolog.env
+```
+
+As senhas saem aleatórias, com 32 letras e números, e nada aparece na tela. O `PHP_EOL` do começo evita grudar a primeira linha nova na última do arquivo (veja "Vindo do jeito antigo"). Rode uma vez só: com a mesma linha duas vezes, o compose e a função abaixo usam a última. Nenhum compose lê essas três linhas, então elas nunca chegam aos containers que ficam no ar; só entram, com `-e`, nos containers descartáveis dos seeders e do k6.
+
+**2. Os seeders.** Com a homolog no ar e a mesma função que subiu a stack (`homolog`, ou `homologmon` com o monitoramento):
+
+```powershell
+function Get-HomologValue([string] $Name) { $l = Get-Content docker\homolog\homolog.env | Where-Object { $_ -like "$Name=*" } | Select-Object -Last 1; if (-not $l) { throw "$Name não está no homolog.env" }; $l.Substring($Name.Length + 1) }
+
+$env:DEMO_USER_PASSWORD = Get-HomologValue 'HOMOLOG_DEMO_USER_PASSWORD'
+homolog run --rm --no-deps -e DEMO_USER_PASSWORD -e RUN_MIGRATIONS=false app php artisan db:seed --class=DemoSeeder --force
+Remove-Item Env:DEMO_USER_PASSWORD
+
+$env:ADMIN_NAME = 'Administrador'
+$env:ADMIN_EMAIL = Get-HomologValue 'HOMOLOG_ADMIN_EMAIL'
+$env:ADMIN_PASSWORD = Get-HomologValue 'HOMOLOG_ADMIN_PASSWORD'
+homolog run --rm --no-deps -e ADMIN_NAME -e ADMIN_EMAIL -e ADMIN_PASSWORD -e RUN_MIGRATIONS=false app php artisan db:seed --class=AdminUserSeeder --force
+Remove-Item Env:ADMIN_NAME, Env:ADMIN_EMAIL, Env:ADMIN_PASSWORD
+```
+
+- A função `Get-HomologValue` lê uma linha do `homolog.env` sem mostrar o valor. O `-e` sem valor repassa a variável do terminal para o container, e o `Remove-Item` tira a senha do terminal logo depois.
+- O `DemoSeeder` responde `Agenda de demonstração criada: N agendamentos e M pagamentos.` (em 15/11/2026: 177 e 95). Rodar de novo não duplica nada: `A agenda de demonstração já existe: nenhum agendamento novo foi criado.`. Ele também não muda o que já existe: um serviço com o preço, a duração ou o status que o admin mudou no ensaio fica assim, um serviço excluído continua excluído (dos 4 de exemplo, ele cria só os que nunca existiram) e nenhuma senha muda. O `AdminUserSeeder` responde `Administrador inicial criado.` e nunca muda um usuário que já existe.
+- Sem a `DEMO_USER_PASSWORD`, ou com menos de 8 caracteres, o `DemoSeeder` avisa e não cria nada. Fora da homolog ele também não roda, porque só a homolog liga o `DEMO_SEED_ENABLED`. O `AdminUserSeeder` segue a mesma regra: sem a `ADMIN_PASSWORD`, ou com menos de 8 caracteres, ele avisa e não cria o admin.
+- **A agenda segue o dia em que o seeder rodou:** os 30 dias ficam em volta daquela data (15 antes, o próprio dia e 14 depois). Como ele não duplica, um banco que já tem a demonstração continua com a agenda do dia em que ela nasceu. Uma agenda em volta de outra data pede um banco novo, o que apaga os dados da homolog.
+- No Git Bash, os mesmos passos com `export` e `unset`, como no `load-tests/README.md`.
+
+Logins que os dois seeders criam (todos com o e-mail já confirmado):
+
+| Perfil | E-mail | Senha |
+|---|---|---|
+| Admin | o `HOMOLOG_ADMIN_EMAIL` (`admin@demo.barberflow.test`) | `HOMOLOG_ADMIN_PASSWORD` |
+| Barbeiro | `carlos.mendes`, `rafael.souza` e `diego.almeida`, todos `@demo.barberflow.test` | `HOMOLOG_DEMO_USER_PASSWORD` |
+| Cliente com conta | `ana.ribeiro` (a que tem o prêmio de fidelidade), `camila.fernandes`, `felipe.gomes` e `joao.nunes`, todos `@demo.barberflow.test` | `HOMOLOG_DEMO_USER_PASSWORD` |
+
+Para entrar pela tela sem mostrar a senha, copie para a área de transferência e cole no campo: `Get-HomologValue 'HOMOLOG_DEMO_USER_PASSWORD' | Set-Clipboard`. Limpe depois com `Set-Clipboard -Value ' '` (o histórico da área de transferência do Windows, o Win+V, também guarda o que foi copiado). O domínio `demo.barberflow.test` é reservado para teste: nenhum e-mail chega a uma pessoa, e o Mailpit guarda tudo.
+
+**Trocar a senha de demonstração.** O `DemoSeeder` não muda a senha de um login que já existe (`database/seeders/DemoSeeder.php:636`): a senha nova pede um banco novo, e isso apaga os dados da homolog. Combine com o grupo antes. No PowerShell, na raiz do repositório, com a mesma função que subiu a stack (`homolog`, ou `homologmon` com o monitoramento):
+
+```powershell
+homolog down
+$linha = docker run --rm --entrypoint php barberflow-app:homolog -r "echo 'HOMOLOG_DEMO_USER_PASSWORD='.bin2hex(random_bytes(16));"
+if ([regex]::IsMatch($linha, '^HOMOLOG_DEMO_USER_PASSWORD=[0-9a-f]{32}$')) { (Get-Content docker\homolog\homolog.env) | ForEach-Object { if ($_ -like 'HOMOLOG_DEMO_USER_PASSWORD=*') { $linha } else { $_ } } | Set-Content -Encoding ascii docker\homolog\homolog.env }
+if ((Get-Content docker\homolog\homolog.env) -ccontains $linha) { 'Senha trocada no homolog.env' } else { 'A troca falhou: não apague o banco' }
+Remove-Variable linha
+```
+
+O `down` sem `-v` mantém os volumes. O `docker run` gera a linha nova como no passo 1 desta seção (16 bytes aleatórios, 32 letras e números), e o primeiro `if` troca só a linha `HOMOLOG_DEMO_USER_PASSWORD` do `homolog.env`, com o mesmo `-Encoding ascii`: as outras linhas ficam como estão, e a senha não aparece na tela. O `[regex]::IsMatch` confere a linha nova sem guardá-la no `$Matches`, como o `-match` faria, e o `Remove-Variable` tira a senha nova do terminal. O segundo `if` lê o arquivo de novo e só mostra `Senha trocada no homolog.env` quando acha nele a linha nova. Se o `docker run` não devolver só a linha nova, se o `homolog.env` estiver só de leitura ou sem a linha `HOMOLOG_DEMO_USER_PASSWORD`, ou se o terminal estiver fora da raiz do repositório, sai `A troca falhou: não apague o banco`, e o arquivo fica como estava. O comando foi conferido em 16/11/2026 num `homolog.env` falso, no PowerShell 7 e no Windows PowerShell 5.1, rodado de uma vez e linha por linha: na troca, só essa linha mudou, sem BOM e com o fim de linha CRLF de antes, e o `$Matches` ficou sem a senha; nos cinco casos de falha (o `docker run` sem saída ou com duas linhas, o arquivo só de leitura, o arquivo sem a linha e o terminal fora da raiz), saiu `A troca falhou`, e o arquivo ficou igual. Só com `Senha trocada no homolog.env` na tela, apague o banco e suba de novo:
+
+```powershell
+docker volume rm barberflow-homolog_dbdata
+homolog up -d --wait
+```
+
+O banco nasce vazio, com as mesmas senhas do app e do `exporter`, que continuam no `homolog.env`, e o `app` roda as migrations. Depois, rode os dois seeders do passo 2 desta seção: o `DemoSeeder` cria os logins com a senha nova e a agenda em volta do dia em que roda, e o `AdminUserSeeder`, o admin com a senha de antes. Foi o caminho de 15/11/2026, no computador do Leonam, depois que a senha de demonstração apareceu na saída de uma busca (`docs/RELATORIO-TECNICO.md`, seção 4.12).
 
 ### O que conferir
 
@@ -190,6 +256,8 @@ O `docker-compose.prod.yml` tem só `app`, `web` e `scheduler`. O banco é o RDS
 
 - O `user_data` da instância (`terraform/templates/user_data.sh.tftpl`, branch `feat/infra-computacao`) grava em `/opt/barberflow` este compose e o `.env` ao lado dele, montado com os parâmetros do SSM, com `APP_IMAGE` e `WEB_IMAGE` apontando para o ECR, e roda `docker compose -f docker-compose.prod.yml up -d`. O passo a passo e o formato do `.env` estão no `docs/nuvem/TERRAFORM.md`, seção "Launch template e user_data".
 - Os logs vão para o CloudWatch pelo driver `awslogs`. O padrão fica no `daemon.json` do Docker da EC2, no log group `/barberflow/<ambiente>/app`, e vale para o `app` e o `scheduler`. O `web` tem um `logging:` próprio neste compose, para escrever no grupo `/barberflow/<ambiente>/web`: driver `awslogs`, com a região, o grupo e o ID da instância vindos do `.env` que o `user_data` monta (`AWSLOGS_REGION`, `AWSLOGS_WEB_GROUP` e `INSTANCE_ID`), e as mesmas opções do `daemon.json` (sem criar grupo, stream `<ID da instância>/<nome do container>` e modo `non-blocking`). Os log groups nascem no `terraform/logs.tf`. Como ler: `docs/nuvem/TERRAFORM.md`, seção "Logs no CloudWatch".
+- A rodada do lembrete por e-mail roda dentro do processo do `scheduler` (`routes/console.php`), e o log dela sai na saída dele: o aviso de cada lembrete que falhou, só com o id do agendamento, e uma linha `ERROR` só com as contas da rodada. Na AWS, as duas vão para o grupo `app`, no stream do `scheduler`; na homolog, para o `homolog logs scheduler` e, com o monitoramento, para o Loki. A linha da rodada sai `DONE` mesmo quando ela falha (um detalhe do Laravel, igual na 13.33 e na 13.40): procure o `ERROR`.
+- Os limites de tempo do banco, do cache e do servidor de e-mail (`DB_CONNECT_TIMEOUT`, `DB_READ_TIMEOUT`, `REDIS_CONNECT_TIMEOUT`, `REDIS_READ_TIMEOUT` e `MAIL_TIMEOUT`) não são parâmetros do SSM: na AWS valem os padrões do `config/database.php` e do `config/mail.php` (3, 5, 3, 3 e 10 segundos). Na homolog, eles vêm do `.env.example`, com os mesmos valores.
 - Na homolog, o `docker-compose.homolog.yml` troca o `logging:` do `web` pelo driver padrão do Docker (`logging: !override` com `driver: json-file`). Assim ela sobe no Docker Desktop sem credencial da AWS, e o `docker compose logs web` funciona como antes. O `docker compose config` da homolog não tem nenhum `awslogs`.
 - O bloco de produção (`APP_ENV=production`, `APP_DEBUG=false`, `LOG_CHANNEL=stderr`, `LOG_LEVEL=info`, `CACHE_STORE=redis`, `SESSION_DRIVER=redis`) vale mais que o `.env`. Cache e sessão ficam no Redis porque as travas do `migrate --isolated` e do `onOneServer()` precisam de um cache que todas as instâncias enxerguem.
 - `SESSION_SECURE_COOKIE` é `true` por padrão. Sem HTTPS no ALB, defina `SESSION_SECURE_COOKIE=false`, senão o login não segura a sessão. Na AWS, o parâmetro do SSM segue o certificado do ALB: `true` com `certificate_arn`, `false` sem ele.
@@ -235,14 +303,15 @@ O Dependabot propõe toda segunda as versões novas do Dockerfile e dos compose,
 
 - `expose_php = Off`: some o header `X-Powered-By`.
 - OPcache ligado com os ajustes da rodada otimizada da Sprint 4 (`otimizado.ini`): 128 MB, até 20 mil arquivos e cache de caminhos. Na produção ele não confere a data dos arquivos (`validate_timestamps=0`), porque o código só muda com imagem nova. No dev confere em toda requisição.
-- Pool `www` em `pm = dynamic`, com até 10 processos (cada um usa por volta de 30 a 50 MB) e reciclagem a cada 500 requisições. O `docker.conf` oficial continua valendo: logs no stderr e `clear_env = no`, para o Laravel enxergar as variáveis do container.
+- Pool `www` em `pm = dynamic`, com até 10 processos (cada um usa por volta de 30 a 50 MB) e reciclagem a cada 500 requisições. O `docker.conf` oficial continua valendo: logs no stderr e `clear_env = no`, para o Laravel enxergar as variáveis do container. Com o banco congelado, cada processo fica ocupado até o limite de leitura do MySQL desistir (cerca de 20 s, o `DB_READ_TIMEOUT` aplicado pelo `AppServiceProvider`), e 10 pedidos assim enchem o pool (`load-tests/resiliencia/README.md`, "Com o limite de leitura do MySQL"). Com o servidor de e-mail congelado, o processo que manda um e-mail fica ocupado até o `MAIL_TIMEOUT` desistir (10 s, ou até 20 s se ele congelar no meio da conversa), e não mais os 60 s do `default_socket_timeout` do PHP (`load-tests/resiliencia/README.md`, "Com o limite de tempo do servidor de e-mail").
 - Na imagem `app` o PHP-FPM roda como `www-data`, então ele avisa no log que ignora as linhas `user` e `group` do pool. É esperado.
 
 ### Extensões do PHP
 
 - Além do que a imagem oficial já traz (`mbstring`, `curl`, `openssl`, `pdo_sqlite`, `sodium` e outras), o build compila só o `pdo_mysql` e o `redis` e confere que o OPcache está ligado.
 - **Sem a `intl`.** O Laravel 13 não exige a extensão: nenhum pacote do `composer.lock` pede `ext-intl`, e os que sugerem usam os polyfills `symfony/polyfill-intl-*`, que já estão no vendor. Ela só faria falta no `Number::` do Laravel (`Number::format`, `Number::currency` e parecidos) e nas validações de e-mail `email:dns` e `email:spoof`, que a aplicação não usa (conferido em 14/11/2026 no código das branches da aplicação, até a `feat/pagamentos-dashboard`). O CI roda os testes com a intl desligada (`docs/nuvem/CI-CD.md`), e um uso novo falha no pull request, e não na AWS. Se a aplicação passar a precisar dela, a extensão entra no estágio `base`, no mesmo `RUN` das outras, e o `:intl` sai do `ci.yml`.
-- **Sem ferramentas de compilação.** A imagem oficial do PHP (Debian) deixa instaladas as ferramentas que compilam extensões (`PHPIZE_DEPS`: `gcc`, `g++`, `make`, `autoconf` e outras). O estágio `base` tira tudo no fim do mesmo `RUN` que compila o `pdo_mysql` e o `redis`, e o build para se `gcc`, `make` ou os cabeçalhos do sistema sobrarem. A imagem `app` passou de 175 para 117 pacotes, e o Trivy, de 311 alertas altos e críticos (4 críticos) para 115 (3 críticos), em 14/11/2026. Nenhum deles tinha correção publicada nessa data, então o Trivy do CI (`--ignore-unfixed`, CRITICAL) passa. E quem invadir o container não acha um compilador pronto.
+- **Sem ferramentas de compilação.** A imagem oficial do PHP (Debian) deixa instaladas as ferramentas que compilam extensões (`PHPIZE_DEPS`: `gcc`, `g++`, `make`, `autoconf` e outras). O estágio `base` tira tudo no fim do mesmo `RUN` que compila o `pdo_mysql` e o `redis`, e o build para se `gcc`, `make` ou os cabeçalhos do sistema sobrarem. A imagem `app` passou de 175 para 117 pacotes, e o Trivy, de 311 alertas altos e críticos (4 críticos) para 115 (3 críticos), em 14/11/2026. Nenhum deles tinha correção publicada nessa data, então o Trivy do CI (`--ignore-unfixed`, CRITICAL) passa. Em 15/11/2026, na imagem refeita com o Laravel 13.40.0 e o banco do Trivy do dia, eram 119 (3 críticos), ainda nenhum com correção publicada, e nenhum no vendor do Composer. E quem invadir o container não acha um compilador pronto.
+- Na imagem `web`, o Trivy de 15/11/2026 achou 3 alertas altos com correção publicada, todos no `libxslt` 1.1.43-r3 do `nginx:1.30.6-alpine` (corrigidos na 1.1.43-r4), e nenhum crítico: o Trivy do CI passa, porque só barra CRITICAL. Eles saem com um `nginx` novo, que o Dependabot propõe quando sair, ou com um `apk upgrade` do pacote no estágio `web`, decisão que ficou em aberto (`docs/RELATORIO-TECNICO.md`, seção 8).
 - O tamanho da imagem não muda: os arquivos tirados ficam na camada da imagem oficial, e a camada nova só os esconde. O que conta é o sistema de arquivos final, que é o que o Trivy e o container enxergam.
 - Para compilar outra extensão, instale as ferramentas no mesmo `RUN` dela (`apt-get install $PHPIZE_DEPS`) e tire no fim, como o estágio `base` faz. O `dev` herda o `base` e também não tem compilador.
 
@@ -271,7 +340,7 @@ O Dependabot propõe toda segunda as versões novas do Dockerfile e dos compose,
 | MySQL aberto na porta 3306 de todas as interfaces | Porta 3306 só no 127.0.0.1 |
 | Só app, Nginx e MySQL | Mais Redis, agendador (`scheduler`) e o serviço `assets` para o Vite |
 | Sem healthcheck | Healthcheck em todos os serviços, `depends_on` esperando ficar saudável, redes `frontend` e `backend` e `no-new-privileges` |
-| Headers `X-Frame-Options`, `X-XSS-Protection` e `X-Content-Type-Options` no Nginx | Os headers de segurança passam para a aplicação, na branch `feat/auth`; até ela entrar, as páginas e a API saem sem esses headers. Os arquivos estáticos (`/build/`, `favicon.ico`, `robots.txt`) já saem com o `X-Content-Type-Options: nosniff` do Nginx |
+| Headers `X-Frame-Options`, `X-XSS-Protection` e `X-Content-Type-Options` no Nginx | Os headers de segurança ficam na aplicação (`App\Http\Middleware\SecurityHeaders`, desde a `feat/auth`), conferidos na homolog em 15/11/2026 (`docs/nuvem/SEGURANCA.md`). Os arquivos estáticos (`/build/`, `favicon.ico`, `robots.txt`) saem com o `X-Content-Type-Options: nosniff` do Nginx |
 | Pasta do site em `/var/www/public` | `/var/www/html/public` |
 
 O volume do banco antigo não é reaproveitado: o projeto novo (`barberflow-dev`) cria um banco vazio, e o entrypoint do dev roda as migrations.
@@ -290,7 +359,7 @@ O volume do banco antigo não é reaproveitado: o projeto novo (`barberflow-dev`
 - **Erro 500 com "Vite manifest not found"**: falta o `public/build`. Rode `docker compose run --rm assets`.
 - **`required variable HOMOLOG_APP_KEY is missing a value`** (ou outra `HOMOLOG_*`): o comando rodou sem o `--env-file` (use a função `homolog`) ou o `docker/homolog/homolog.env` não tem a linha. Se o banco da homolog ainda não existe, gere o arquivo (passo 3). Se já existe, as senhas precisam ser as da primeira subida; a linha que falta, se for do monitoramento, se acrescenta como em "Vindo do jeito antigo".
 - **`The file ... homolog.env already exists`** no passo 3 (no Git Bash, `cannot overwrite existing file`): o arquivo já existe e guarda as senhas do banco da homolog. Não gere outro: pule o passo 3.
-- **`Access denied for user 'barberflow'` no log do `app` da homolog**: a `HOMOLOG_DB_PASSWORD` não é a mesma da primeira subida, quando o MySQL criou o banco (um `homolog.env` gerado de novo, ou uma variável `HOMOLOG_DB_PASSWORD` velha na janela do terminal, que vale mais que o arquivo). Use a senha da primeira subida. Se ela se perdeu, apague o banco da homolog (só tem dados de teste) e suba de novo: derrube a stack com `homolog down`, rode `docker volume rm barberflow-homolog_dbdata`, apague o `docker/homolog/homolog.env` e refaça o passo 3.
+- **`Access denied for user 'barberflow'` no log do `app` da homolog**: a `HOMOLOG_DB_PASSWORD` não é a mesma da primeira subida, quando o MySQL criou o banco (um `homolog.env` gerado de novo, ou uma variável `HOMOLOG_DB_PASSWORD` velha na janela do terminal, que vale mais que o arquivo). Use a senha da primeira subida. Se ela se perdeu, apague o banco da homolog (só tem dados de teste) e suba de novo: derrube a stack com `homolog down`, rode `docker volume rm barberflow-homolog_dbdata`, apague o `docker/homolog/homolog.env` e refaça o passo 3. Para manter o `homolog.env` que você tem, basta apagar o volume: o banco nasce de novo com as senhas dele. Foi o caminho de 15/11/2026, no computador do Leonam, com o OK dele: o volume da senha perdida foi apagado, e a homolog subiu do zero com o `homolog.env` que já existia (`docs/RELATORIO-TECNICO.md`, seção 4.12).
 - **`service "web" has neither an image nor a build context specified`** (ou `"app"`): o `docker-compose.prod.yml` foi usado sem `APP_IMAGE` e `WEB_IMAGE`.
 - **`failed to initialize logging driver` no `web`**: o `docker-compose.prod.yml` subiu sozinho fora da EC2, e o `web` tentou mandar os logs para o CloudWatch (driver `awslogs`) sem região, grupo ou credencial da AWS. No computador, use sempre a homolog (os dois arquivos juntos), que troca o driver pelo `json-file`.
 - **`APP_KEY inválido` no log do `app`**: a chave não tem 32 bytes. Gere outra com `php artisan key:generate --show` (passo 3 da homolog). Na AWS, veja "Preencher o APP_KEY" no `docs/nuvem/TERRAFORM.md`.

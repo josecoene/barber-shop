@@ -262,7 +262,7 @@ O caminho de uma requisição: internet, ALB (porta 80 ou 443), target group, po
 |---|---|---|
 | Tipo | `internet-facing`, nas 2 subnets públicas, com o security group do ALB | É a porta de entrada da aplicação e o único que recebe da internet |
 | Target group | HTTP na porta 80 das instâncias (`target_type = instance`) | O Nginx do container `web` escuta na 80 |
-| Health check | `GET /up`, esperando `200`, a cada 15 s, com 5 s de limite. A instância entra depois de 2 respostas boas e sai depois de 3 falhas | O `/up` é raso: não consulta banco nem cache, e uma queda do banco não faz o Auto Scaling trocar instâncias em loop |
+| Health check | `GET /up`, esperando `200`, a cada 15 s, com 5 s de limite. A instância entra depois de 2 respostas boas e sai depois de 3 falhas | O `/up` é raso: não consulta banco nem cache, e uma queda do banco não faz o Auto Scaling trocar instâncias em loop. A exceção é o banco congelado com o pool do PHP-FPM cheio, em que até o `/up` espera um processo livre (`docs/ARQUITETURA.md`, "Limitações e riscos conhecidos") |
 | Saída de uma instância | Espera de 30 s (`deregistration_delay`) | As requisições em andamento terminam; o padrão de 300 s só atrasaria o instance refresh |
 | Porta 80 | Sem certificado, encaminha para o app. Com `certificate_arn`, só redireciona (301) para a 443 | |
 | Porta 443 | Só existe com `certificate_arn`, com a política `ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09` | TLS 1.3 e 1.2, só cifras com sigilo futuro e troca de chaves pós-quântica. É a padrão do console da AWS (conferido em 13/11/2026); a `ELBSecurityPolicy-TLS13-1-2-2021-06` é a anterior, com mais cifras no TLS 1.2 |
@@ -856,7 +856,7 @@ exit
 - O `read -s` não mostra a senha enquanto ela é digitada, e o que o `read` recebe não entra no histórico do terminal.
 - O `-e ADMIN_PASSWORD`, sem `=valor`, passa o valor que está no ambiente: a senha não aparece na linha do comando.
 - O `run --rm` sobe um container novo e descartável, e não usa o `exec` no `app` que está no ar: o entrypoint de produção congela a configuração (`php artisan optimize`) quando o container sobe, então o `app` que já está rodando não enxerga variáveis novas. O container descartável congela com o `ADMIN_*`, roda o seeder e é apagado. O `RUN_MIGRATIONS=false` evita que ele rode as migrations de novo.
-- Rode uma vez só, numa instância só: o banco é o mesmo para todas. O `AdminUserSeeder` nunca altera um usuário que já existe; sem e-mail ou senha, ele só avisa.
+- Rode uma vez só, numa instância só: o banco é o mesmo para todas. O `AdminUserSeeder` nunca altera um usuário que já existe; sem e-mail, sem senha ou com uma senha de menos de 8 caracteres (a regra das outras senhas do sistema), ele só avisa e não cria nada.
 - Depois, entre com esse e-mail em `/login` e troque a senha em Minha conta, se quiser.
 
 ## Logs no CloudWatch
@@ -874,6 +874,7 @@ aws logs tail /barberflow/prod/web --since 30m --log-stream-name-prefix <ID da i
 aws logs tail /barberflow/prod/app --since 1h --filter-pattern ERROR
 ```
 
+- A rodada do lembrete por e-mail roda dentro do processo do agendador e escreve no stream do `scheduler`: quando um lembrete falha, um aviso só com o id do agendamento e uma linha `ERROR` só com as contas da rodada (`aws logs tail /barberflow/prod/app --since 1h --log-stream-name-prefix <ID da instância>/barberflow-scheduler --filter-pattern ERROR`). A linha da rodada sai `DONE` mesmo quando ela falha (um detalhe do Laravel, igual na 13.33 e na 13.40): procure o `ERROR`.
 - Os logs ficam `log_retention_days` dias (30 por padrão) e depois somem sozinhos.
 - O log da subida da instância (`/var/log/barberflow-bootstrap.log`) não vai para o CloudWatch: o driver `awslogs` só leva os containers. Ele fica na instância (seção "Entrar na instância") e no console (`aws ec2 get-console-output`).
 - Os logs de erro e de consultas lentas do banco ficam em `/aws/rds/instance/barberflow-<ambiente>-db/error` e `/slowquery`.

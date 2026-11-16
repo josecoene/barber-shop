@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\EmailTakenException;
 use App\Models\Barber;
 use App\Rules\NotOnlySpaces;
 use Illuminate\Http\Request;
@@ -18,6 +19,10 @@ use Illuminate\Validation\Rules\Password;
  *
  * O campo password (opcional, só o admin manda) cria o login do barbeiro ou
  * redefine a senha dele.
+ *
+ * O e-mail repetido que passou pela regra unique (outro pedido com o mesmo
+ * e-mail no mesmo instante, num barbeiro ou num login) sai como o mesmo 422
+ * dela (EmailTakenException), no cadastro e na edição.
  */
 class BarberController extends Controller
 {
@@ -75,13 +80,15 @@ class BarberController extends Controller
             'password' => $this->passwordRules(),
         ]);
 
-        $barber = DB::transaction(function () use ($validated) {
+        // Outro pedido gravou o mesmo e-mail depois da validação, no cadastro de barbeiros ou num login
+        // (users): o mesmo 422 da regra unique. O guard fica por fora da transação, que já foi desfeita.
+        $barber = EmailTakenException::guard(fn () => DB::transaction(function () use ($validated) {
             $barber = Barber::create(Arr::except($validated, 'password'));
 
             $barber->syncLogin($validated['password'] ?? null);
 
             return $barber;
-        });
+        }));
 
         return response()->json($barber, 201);
     }
@@ -121,11 +128,11 @@ class BarberController extends Controller
             'password' => $this->passwordRules(),
         ]);
 
-        DB::transaction(function () use ($barber, $validated) {
+        EmailTakenException::guard(fn () => DB::transaction(function () use ($barber, $validated) {
             $barber->update(Arr::except($validated, 'password'));
 
             $barber->syncLogin($validated['password'] ?? null);
-        });
+        }));
 
         return $barber;
     }

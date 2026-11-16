@@ -2,7 +2,7 @@
 
 Este guia explica o pipeline do BarberFlow no GitHub Actions: o CI, que confere cada pull request e cada push na `main`, e o deploy na AWS, que publica as imagens no ECR e troca as instâncias do Auto Scaling. Também traz a role de deploy (`terraform/cicd.tf`), a configuração do GitHub que o José liga (proteção da `main`, environment `production` e Dependabot), o rollback, as migrations e a ordem com o `terraform apply`.
 
-**Situação: validado só no código.** Nada foi para o GitHub nem para a AWS. Os dois workflows passam no actionlint, o `cicd.tf` passa no `terraform validate`, no `terraform test` e no `trivy config`, e os passos de cada job do CI rodaram no computador, em containers (seção "Situação conferida em 14/11/2026"). O CI verde no GitHub, o OIDC, o deploy e o rollback só se provam depois do push e do primeiro `apply`.
+**Situação: validado só no código.** Nada foi para a AWS. As 13 branches estão no GitHub desde 16/11/2026 (o push foi feito com o OK do Leonam, sem mexer na `main` de lá), mas nenhum workflow rodou: o CI só roda no pull request e no push na `main` (`.github/workflows/ci.yml:12-16`), e o deploy, com tag `v*` ou à mão (`.github/workflows/deploy.yml:16-20`). Os dois workflows passam no actionlint, o `cicd.tf` passa no `terraform validate`, no `terraform test` e no `trivy config`, e os passos de cada job do CI rodaram no computador, em containers (seção "Situação conferida em 14/11/2026"). O CI verde no GitHub só se prova no primeiro pull request que tiver o `ci.yml` (o da `feat/ci-cd`, o da `feat/observabilidade` ou o da `feat/entrega-final`, ou qualquer um depois que o `ci.yml` chegar à `main`), e o OIDC, o deploy e o rollback, depois do primeiro `apply`.
 
 | Parte | Dono | Arquivos |
 |---|---|---|
@@ -323,7 +323,7 @@ Settings, Rules, Rulesets, New ruleset, New branch ruleset:
 - lista de bypass vazia: nem o administrador faz push direto na `main`;
 - "Restrict deletions" e "Block force pushes";
 - "Require a pull request before merging", com 1 aprovação e "Dismiss stale pull request approvals when new commits are pushed";
-- "Require status checks to pass", com os checks `PHP`, `MySQL`, `Front`, `Docker`, `Terraform` e `actionlint` e "Require branches to be up to date before merging". Os checks aparecem na lista depois que o CI roda uma vez, no primeiro pull request.
+- "Require status checks to pass", com os checks `PHP`, `MySQL`, `Front`, `Docker`, `Terraform` e `actionlint` e "Require branches to be up to date before merging". Os checks aparecem na lista depois que o CI roda uma vez, no primeiro pull request que tiver o `ci.yml` (enquanto ele não estiver na `main`, só o de uma branch que já o traga, como a `feat/ci-cd`, a `feat/observabilidade` ou a `feat/entrega-final`).
 
 E uma regra para as tags de versão, em New ruleset, New tag ruleset: alvo `v*`, com "Restrict creations", "Restrict updates" e "Restrict deletions", e só o administrador do repositório no bypass. Assim só o José publica uma versão, e ninguém move uma tag de versão para outro commit.
 
@@ -423,12 +423,12 @@ O que rodou no computador, em containers, sem GitHub e sem AWS:
 | Passos do job `Front` (Node 24.22.3) | `npm ci` e build sem erro; `npm audit` sem nenhuma vulnerabilidade |
 | Jobs `PHP` e `MySQL` com o código da `feat/agendamentos` e um MySQL 8.4.13 com as credenciais do CI | Pint passou; SQLite com 475 testes passando, 3 pulados e 1 falha; MySQL com 479 testes e a mesma falha (abaixo) |
 
-Dois pontos deixam o CI vermelho hoje, os dois da trilha da aplicação, e não do pipeline:
+Dois pontos deixavam o CI vermelho nessa data, os dois da trilha da aplicação, e não do pipeline. Os dois foram resolvidos depois:
 
-- **`composer audit`:** o alerta GHSA-63hm-g96r-2m2q (severidade baixa, publicado em 13/11/2026) atinge o `laravel/framework` antes da 13.40.0, e o `composer.lock` está na 13.33.0. A correção é atualizar o `laravel/framework` para a 13.40 ou mais nova, dentro do `^13.17`.
-- **`Vite manifest not found`:** um teste do `RegistrationTest` da `feat/agendamentos` abre a página de erro 403 sem `withoutVite()`. No computador ele passa porque existe o `public/build`; no CI, que não faz o build, falha.
+- **`composer audit`:** o alerta GHSA-63hm-g96r-2m2q (severidade baixa, publicado em 13/11/2026) atingia o `laravel/framework` antes da 13.40.0, e o `composer.lock` estava na 13.33.0. Em 15/11/2026, com o OK do Leonam, o `laravel/framework` foi para a 13.40.0, dentro do `^13.17`, e o `composer audit` ficou sem alerta, também no `composer audit --locked` de uma cópia limpa, como no CI (`docs/RELATORIO-TECNICO.md`, seção 4.12).
+- **`Vite manifest not found`:** um teste do `RegistrationTest` da `feat/agendamentos` abria a página de erro 403 sem `withoutVite()`. No computador ele passava porque existe o `public/build`; no CI, que não faz o build, falhava. O teste ganhou o `withoutVite()` na `feat/lembretes-fidelidade` (commit `6e89adf`), e a rodada igual à do CI, numa cópia sem `public/build`, passa (747 testes passando e os 11 de trava pulados, como no SQLite).
 
-Com o ruleset da seção "Proteção da main" ligado, as duas correções precisam entrar no mesmo pull request: com só uma delas, o check `PHP` continua vermelho, e o merge não entra.
+Com o ruleset da seção "Proteção da main" ligado, um check `PHP` vermelho barra o merge: as duas correções precisam estar na branch do pull request, e as duas estão na `feat/entrega-final`.
 
 ## Problemas comuns
 

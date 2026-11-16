@@ -13,4 +13,4 @@ Este arquivo só aponta para onde cada passo do deploy está escrito. O passo a 
 | Ver os alarmes e o dashboard depois do deploy | `docs/nuvem/TERRAFORM.md`, seção "Observabilidade" |
 | Conferir tudo antes de abrir para os clientes | `docs/nuvem/go-live-checklist.md` |
 
-**Situação:** validado só no código. Nada foi para a AWS nem para o GitHub (`docs/nuvem/CI-CD.md`, "Situação conferida em 14/11/2026").
+**Situação:** validado só no código (`docs/nuvem/CI-CD.md`, "Situação conferida em 14/11/2026"). Nada foi para a AWS. As branches estão no GitHub desde 16/11/2026, mas o deploy nunca rodou: ele só roda com tag `v*` ou à mão.

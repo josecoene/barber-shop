@@ -2,10 +2,10 @@
 
 Este guia explica a observabilidade do BarberFlow em dois lugares:
 
-- **No computador, junto com a homolog:** Prometheus (métricas), Loki (logs, coletados pelo Alloy) e Grafana (o painel "BarberFlow: visão geral", com 13 painéis). É o monitoramento da Sprint 4, que vivia num repositório local do Leonam (`barber-shop-cloud`) e agora está no repositório do grupo, com os nomes de serviço e de rede deste projeto.
+- **No computador, junto com a homolog:** Prometheus (métricas), Loki (logs, coletados pelo Alloy) e Grafana (o painel "BarberFlow: visão geral", com 10 painéis em 3 linhas). É o monitoramento da Sprint 4, que vivia num repositório local do Leonam (`barber-shop-cloud`) e agora está no repositório do grupo, com os nomes de serviço e de rede deste projeto.
 - **Na AWS:** alarmes do CloudWatch com aviso por e-mail e um dashboard, no `terraform/monitoring.tf`. O que cada alarme olha, os limites e as variáveis estão no `docs/nuvem/TERRAFORM.md`, seção "Observabilidade".
 
-**Situação:** o monitoramento local foi conferido em 14/11/2026 com a homolog no ar (seção "Situação conferida em 14/11/2026"): os 4 alvos do Prometheus no ar, o painel no Grafana e os logs de todos os serviços chegando ao Loki. A parte da AWS está validada só no código (`terraform validate`, `terraform test` com o provider simulado e `trivy config`), como o resto do Terraform.
+**Situação:** o monitoramento local foi conferido em 14/11/2026 com a homolog no ar (seção "Situação conferida em 14/11/2026") e de novo em 15/11/2026, na entrega final, com o código inteiro da aplicação (seção "Situação conferida na entrega final"): os 4 alvos do Prometheus no ar, o painel no Grafana e os logs de todos os serviços chegando ao Loki. A parte da AWS está validada só no código (`terraform validate`, `terraform test` com o provider simulado e `trivy config`), como o resto do Terraform.
 
 ## Arquivos
 
@@ -14,7 +14,7 @@ Este guia explica a observabilidade do BarberFlow em dois lugares:
 | `docker-compose.monitoring.yml` | Prometheus, Grafana, Loki, Alloy, cAdvisor e os exporters do Nginx e do MySQL, sempre junto com a homolog |
 | `monitoring/prometheus/prometheus.yml` | Os 4 alvos de métricas, coletados a cada 5 s |
 | `monitoring/grafana/provisioning/` | Fontes de dados (Prometheus e Loki) e a pasta do painel, criadas na subida |
-| `monitoring/grafana/dashboards/barberflow.json` | O painel "BarberFlow: visão geral" (13 painéis) |
+| `monitoring/grafana/dashboards/barberflow.json` | O painel "BarberFlow: visão geral" (10 painéis em 3 linhas) |
 | `monitoring/loki/loki.yml` | Loki num processo só, com os logs em disco por 7 dias |
 | `monitoring/alloy/config.alloy` | Coleta dos logs dos containers do projeto pelo socket do Docker, com a senha do root do MySQL trocada por `[oculto]` |
 | `docker/mysql/init/01-exporter-user.sh` | Cria o usuário `exporter` do MySQL, só de leitura, junto com o banco da homolog |
@@ -72,7 +72,7 @@ Depois abra http://localhost:3000 (o painel) e http://localhost:9090/targets (os
 
 ## O painel "BarberFlow: visão geral"
 
-São 13 painéis, os mesmos da Sprint 4, agora lendo o serviço `web` (o Nginx) no lugar do `webserver` antigo:
+São 10 painéis, organizados em 3 linhas (Tráfego, Recursos e Logs centralizados), os mesmos da Sprint 4, agora lendo o serviço `web` (o Nginx) no lugar do `webserver` antigo. Para o Grafana, cada linha também é um item do painel, então a API conta 13 (10 painéis e 3 linhas):
 
 | Painel | De onde vem | O que mostra |
 |---|---|---|
@@ -103,7 +103,9 @@ O tempo de resposta e os status saem do log de acesso do Nginx, que manteve o co
   | Respostas 5xx do Nginx | `{service="web"} \|~ "\" 5[0-9][0-9] "` |
   | Uma rota | `{service="web"} \|= "/api/services"` |
   | O agendador | `{service="scheduler"}` |
+  | Lembrete por e-mail que falhou (a rodada do agendador) | `{service="scheduler"} \|~ "Lembrete\|ERROR"` |
 
+- **A rodada do lembrete escreve no log do `scheduler`.** Desde a segunda rodada de acabamento (15/11/2026), ela roda dentro do processo do agendador, e não como um comando à parte com a saída no `/dev/null`: quando um lembrete falha, o `scheduler` escreve um aviso `Lembrete por e-mail não enviado.` só com o `appointment_id` e uma linha `ERROR` só com as contas da rodada, e o Alloy leva as duas ao Loki, como o resto da saída do container. Antes, essas linhas se perdiam. A linha da rodada (`Running [appointments:send-reminders] ... DONE`) sai `DONE` mesmo quando ela falha, por um detalhe do Laravel, igual na 13.33 e na 13.40: procure o `ERROR`, e não o `FAIL`. Conferido em 15/11/2026 na saída do `scheduler` da homolog, sem o monitoramento (`load-tests/resiliencia/README.md`, "Com o limite de tempo do servidor de e-mail"), e de novo no mesmo dia, com o Laravel 13.40.0 e o monitoramento: a consulta da tabela acima trouxe do Loki os 8 avisos e a linha `ERROR` da rodada que falhou (seção "Situação conferida na rodada do Laravel 13.40.0").
 - O log de acesso do Nginx grava o caminho sem a query string e esconde o token dos links de redefinição de senha e de confirmação de e-mail. Em 14/11/2026, uma busca com um e-mail na query string (`/api/services?search=...`) chegou ao Loki só como `/api/services`, e o e-mail não aparece em nenhuma linha.
 - O Grafana grava só avisos e erros (`GF_LOG_LEVEL=warn`). Sem isso, cada subida nova encheria o Loki com perto de 2 mil linhas da migração do banco interno dele.
 - Quando cria o banco da homolog, o MySQL escreve no log, uma vez, a senha aleatória do root (`GENERATED ROOT PASSWORD: ...`). O Alloy troca a senha por `[oculto]` antes de mandar a linha ao Loki (`loki.process` do `config.alloy`), porque o Grafana mostra os logs sem login. No `docker compose logs db` ela continua aparecendo.
@@ -153,7 +155,7 @@ Com a homolog e o monitoramento no ar, no PowerShell:
 
 1. Os 4 alvos (`prometheus`, `cadvisor`, `nginx-exporter` e `mysqld-exporter`) com `health` `up`.
 2. O `mysql_up` em 1: o exporter entrou no banco.
-3. O painel com 13 painéis.
+3. O painel com 13 itens: os 10 painéis e as 3 linhas.
 4. Os serviços com log no Loki (pela fonte de dados do Grafana, sem login): `app`, `web`, `db`, `redis`, `scheduler` e os do monitoramento.
 
 No Git Bash, o mesmo com `curl -s` e o endereço de cada linha.
@@ -191,14 +193,14 @@ Conferidas em 14/11/2026 no Docker Hub, no GHCR e nas releases do GitHub de cada
 
 ## Situação conferida em 14/11/2026
 
-Na homolog (base `fix/menu-e-setup`, sem o login nem o `/api/health`), com o MySQL num tmpfs, porque o volume `barberflow-homolog_dbdata` deste computador foi criado com uma senha que se perdeu (`docs/nuvem/DOCKER.md`, "Problemas comuns"):
+Na homolog (base `fix/menu-e-setup`, sem o login nem o `/api/health`), com o MySQL num tmpfs, porque o volume `barberflow-homolog_dbdata` deste computador foi criado com uma senha que se perdeu (`docs/nuvem/DOCKER.md`, "Problemas comuns"). Esse volume foi apagado em 15/11/2026, com o OK do Leonam, e o banco nasceu de novo no volume padrão (seção "Situação conferida na rodada do Laravel 13.40.0"):
 
 | O quê | Resultado |
 |---|---|
 | `docker compose config` da homolog com o monitoramento e com a carga | Válido; o Alloy recebe `COMPOSE_PROJECT=barberflow-homolog` e as portas novas ficam no 127.0.0.1 |
 | `homologmon up -d --wait` | Os 13 containers saudáveis (ou no ar, os que não têm healthcheck) em 20 s |
 | Alvos do Prometheus (API) | `prometheus`, `cadvisor`, `nginx` e `mysql` com `health` `up`; `mysql_up` e `nginx_up` em 1 |
-| Grafana (API) | `database: ok`, versão 13.3.1; o painel `barberflow` com 13 painéis, provisionado na pasta BarberFlow; o admin entra com a senha do `homolog.env`, e `admin`/`admin` recebe 401 |
+| Grafana (API) | `database: ok`, versão 13.3.1; o painel `barberflow` com 13 itens (10 painéis e 3 linhas), provisionado na pasta BarberFlow; o admin entra com a senha do `homolog.env`, e `admin`/`admin` recebe 401 |
 | Fontes de dados (API do Grafana) | Prometheus e Loki com `OK` |
 | Loki (pela fonte de dados do Grafana) | Logs dos 13 serviços do projeto; as consultas dos painéis de tempo de resposta e de status responderam (p95 de 6 ms e contagem por status com 200 e 404) |
 | E-mail na query string | Não chegou ao Loki |
@@ -215,13 +217,41 @@ As correções da revisão (plugins do Grafana, estatísticas do Alloy, senha do
 |---|---|
 | `docker compose config` com o monitoramento e com a carga | Válido. O `web` fica na `frontend` e na `web-metrics` (e na `carga`, na homolog de carga), o `db` na `backend` e na `db-metrics`, cada exporter na rede do serviço dele e na `monitoring`, e o k6 só na `carga`. Sem o monitoramento, o `web` e o `db` continuam só nas redes da homolog |
 | `up -d --wait` | Os 13 containers saudáveis (ou no ar) em 20 s; os 4 alvos `up`, `mysql_up` e `nginx_up` em 1, e CPU e memória dos 13 containers no cAdvisor |
-| Grafana | O painel com 13 painéis e as duas fontes com `OK`. Nenhum plugin baixado: a pasta `/var/lib/grafana/plugins` vazia, o Prometheus e o Loki na versão 13.2.5 da imagem, e as quatro opções novas ligadas na API de configurações do admin |
+| Grafana | O painel com 13 itens (10 painéis e 3 linhas) e as duas fontes com `OK`. Nenhum plugin baixado: a pasta `/var/lib/grafana/plugins` vazia, o Prometheus e o Loki na versão 13.2.5 da imagem, e as quatro opções novas ligadas na API de configurações do admin |
 | Grafana sem rede (`--network none`), antes e depois da correção | Antes, o log mostrou a tentativa de instalar do grafana.com 5 apps (`grafana-lokiexplore-app`, `grafana-pyroscope-app`, `grafana-exploretraces-app`, `grafana-metricsdrilldown-app` e `grafana-advisor-app`) e de procurar versão nova dos 15 plugins da imagem; depois, o instalador nem roda (`Skipping disabled service`) |
 | Alloy | Roda com `--disable-reporting`, sem erro no log; o Alloy e o cAdvisor sobem pelo digest |
 | Senha do root no Loki | A linha `GENERATED ROOT PASSWORD` do banco novo chegou ao Loki com `[oculto]`; no `docker compose logs db`, continua com a senha |
 | Redes | O `mysqld-exporter` resolve só o `db` (não acha `app`, `redis`, `mailpit` nem `web`); do container do k6, o `/up` e o `/login` do `web` respondem, e `app`, `redis`, `mailpit` e `db` dão `bad address` |
 | Funções do Git Bash | Com o `MSYS_NO_PATHCONV=1`, o `run ... db` acha o `/docker-entrypoint-initdb.d/01-exporter-user.sh` e o `exec -e HOME=/tmp` chega como `/tmp`. Sem ele, o caminho vira `C:/Program Files/Git/...` (`No such file or directory`) e o `HOME`, a pasta temporária do Windows |
 | `down` (sem `-v`) | Tudo derrubado; os volumes ficaram, e o `barberflow-homolog_dbdata` não foi usado |
+
+## Situação conferida na entrega final
+
+Em 15/11/2026, na `feat/entrega-final`, com o código inteiro da aplicação (login, `/api/health`, agenda e pagamentos) e os dados do `DemoSeeder`. O MySQL ficou num tmpfs, pelo mesmo motivo da seção anterior:
+
+| O quê | Resultado |
+|---|---|
+| `homologmon up -d --wait` | Os 13 containers saudáveis (ou no ar, os sem healthcheck) em 18,2 s |
+| `/api/health` | `{"status":"ok","checks":{"database":"ok","cache":"ok"}}`, HTTP 200 em 9 ms |
+| Alvos do Prometheus | Os 4 `up`, sem erro; `mysql_up` e `nginx_up` em 1 |
+| Grafana | Versão 13.3.1, banco `ok`, o painel com os 13 itens (10 painéis e 3 linhas) |
+| Loki | Logs dos 13 serviços. Na primeira hora, 36 linhas do `app`, 40 do `web` e 6 do `scheduler` |
+| Erro de banco no Loki | Nas quedas do banco do roteiro de resiliência, 3 linhas `Erro no banco de dados.`, só com `connection`, `code`, `driver_code` e `file`, sem SQL, e-mail ou pilha (`docs/nuvem/SEGURANCA.md`, "LGPD") |
+| Teste de carga | No estresse com 200 VUs, o cAdvisor (lido pelo Prometheus) mediu o pico do `app`: 1,92 núcleo de CPU e 57 MB de memória (`load-tests/README.md`, "Resultado na entrega final") |
+
+## Situação conferida na rodada do Laravel 13.40.0
+
+Em 15/11/2026, depois da atualização do `laravel/framework` para a 13.40.0, com as imagens novas e o MySQL no volume padrão, que nasceu nesta subida: os dois volumes antigos do banco (o da senha perdida e o `barberflow-homolog_dbdata-r`) tinham sido apagados antes, com o OK do Leonam (`docs/RELATORIO-TECNICO.md`, seção 4.12).
+
+| O quê | Resultado |
+|---|---|
+| `homologmon up -d --wait` | Os 13 containers no ar em 20,1 s, com o volume `barberflow-homolog_dbdata` criado nessa subida; o script de init criou o usuário `exporter` no banco novo |
+| `/api/health` | 200 em 0,19 s, com banco e cache `ok` |
+| Alvos do Prometheus | Os 4 `up`, sem erro; `mysql_up` e `nginx_up` em 1 |
+| Grafana | Versão 13.3.1, banco `ok`, o painel com os 13 itens e as duas fontes com `OK`, sem nenhum plugin baixado. O admin entrou com a senha do `homolog.env` (`POST /login`), e `admin`/`admin` recebeu 401 |
+| Loki | Logs dos 13 serviços (nos primeiros 30 minutos, 41 linhas do `app`, 46 do `web`, 8 do `scheduler` e 47 do `db`); a linha `GENERATED ROOT PASSWORD` do banco novo com `[oculto]` |
+| Lembrete que falhou | Com o Mailpit congelado, a consulta `{service="scheduler"} \|~ "Lembrete\|ERROR"` trouxe os 8 avisos, só com o `appointment_id`, e a linha `ERROR` da rodada, só com as contas; a `{service="scheduler"} \|= "send-reminders"` trouxe as duas rodadas, a que falhou e a seguinte. Nenhuma linha do `scheduler` com `@` |
+| `homologmon down` (sem `-v`) e `up` de novo | `down` em 5,9 s e `up` em 14,4 s, no mesmo volume, com "Nothing to migrate" e os mesmos dados. No fim, a homolog ficou derrubada sem `-v`, e o volume do banco ficou com os dados de demonstração. Mais tarde, no mesmo dia, ele foi apagado e criado de novo, com a demonstração e a senha de demonstração nova (`docs/RELATORIO-TECNICO.md`, seção 4.12) |
 
 ## Problemas comuns
 
@@ -231,3 +261,4 @@ As correções da revisão (plugins do Grafana, estatísticas do Alloy, senha do
 - **`port is already allocated` na 3000 ou na 9090:** outro programa usa a porta. Confira com `docker ps` e com `Get-NetTCPConnection -LocalPort 3000 -State Listen` e pare o outro.
 - **`Found orphan containers` ou `network ... has active endpoints` no `down`:** a stack subiu com a `homologmon` e desceu com a `homolog`. Rode `homologmon down`.
 - **O painel de tempo de resposta está vazio, mas o de requisições não:** o log de acesso do Nginx mudou de formato. Veja "O painel".
+- **O admin do Grafana recebe 401 com a senha certa:** depois de mais de 5 senhas erradas em 5 minutos (um teste com `admin`/`admin`, por exemplo), o Grafana recusa o login do usuário por 5 minutos, até com a senha certa, e o log não mostra nada (`GF_LOG_LEVEL=warn`). Espere os 5 minutos e entre de novo. Visto na rodada do Laravel 13.40.0 (15/11/2026).

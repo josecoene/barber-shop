@@ -64,9 +64,19 @@ return [
             'prefix_indexes' => true,
             'strict' => true,
             'engine' => null,
-            'options' => extension_loaded('pdo_mysql') ? array_filter([
+            // ATTR_TIMEOUT: segundos para desistir de abrir a conexão (DB_CONNECT_TIMEOUT, padrão 3; sem
+            // ele, o pdo_mysql espera 30). Com o banco fora do ar, o erro sai logo, e o /api/health responde
+            // 503 em segundos. Fica fora do extension_loaded porque é uma opção do PDO, e não do pdo_mysql.
+            'options' => array_filter([
+                PDO::ATTR_TIMEOUT => (int) (env('DB_CONNECT_TIMEOUT') ?: 3),
+            ] + (extension_loaded('pdo_mysql') ? [
                 Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
+            ] : [])),
+            // Segundos que cada leitura do MySQL espera a resposta, só nas requisições web (DB_READ_TIMEOUT,
+            // padrão 5). O PDO não tem essa opção: o AppServiceProvider aplica o valor como o
+            // mysqlnd.net_read_timeout do PHP, fora da linha de comando. Sem ele, com o banco de pé e sem
+            // responder, o PHP espera até 24 horas, e a requisição fica presa até o 504 do Nginx (60 s).
+            'read_timeout' => (int) (env('DB_READ_TIMEOUT') ?: 5),
         ],
 
         'mariadb' => [
@@ -165,6 +175,12 @@ return [
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_DB', '0'),
+            // Segundos para desistir de abrir a conexão (REDIS_CONNECT_TIMEOUT) e de esperar cada
+            // resposta (REDIS_READ_TIMEOUT), os dois com padrão 3. Sem eles, o phpredis espera o
+            // default_socket_timeout do PHP, de 60 segundos: com o cache fora do ar, as telas (a sessão
+            // fica no Redis) e o /api/health ficariam presos esperando. Os mesmos valores na conexão cache.
+            'timeout' => (float) (env('REDIS_CONNECT_TIMEOUT') ?: 3),
+            'read_timeout' => (float) (env('REDIS_READ_TIMEOUT') ?: 3),
             'max_retries' => env('REDIS_MAX_RETRIES', 3),
             'backoff_algorithm' => env('REDIS_BACKOFF_ALGORITHM', 'decorrelated_jitter'),
             'backoff_base' => env('REDIS_BACKOFF_BASE', 100),
@@ -178,6 +194,8 @@ return [
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_CACHE_DB', '1'),
+            'timeout' => (float) (env('REDIS_CONNECT_TIMEOUT') ?: 3),
+            'read_timeout' => (float) (env('REDIS_READ_TIMEOUT') ?: 3),
             'max_retries' => env('REDIS_MAX_RETRIES', 3),
             'backoff_algorithm' => env('REDIS_BACKOFF_ALGORITHM', 'decorrelated_jitter'),
             'backoff_base' => env('REDIS_BACKOFF_BASE', 100),

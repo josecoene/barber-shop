@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Client;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Routing\Route as RouteDefinition;
@@ -150,12 +151,60 @@ class WebPagesTest extends TestCase
     {
         $client = $this->makeClientUser(verified: false);
 
+        // Sem aviso nenhum (a tela aberta de novo, depois de entrar ou recarregar), ela não sabe se o último
+        // envio deu certo e não diz que o link foi enviado; o aviso do cadastro e do reenvio fica no
+        // RegistrationTest e no MailErrorLogTest.
         $this->actingAs($client)
             ->get('/email/verify')
             ->assertOk()
-            ->assertSee($client->email)
+            ->assertSeeText($client->email)
+            ->assertSeeText('Falta confirmar o e-mail')
+            ->assertSeeText('Não recebeu o link? Confira a caixa de spam ou peça um novo.')
+            ->assertDontSeeText('Enviamos')
+            ->assertDontSee('alert-warning')
+            ->assertDontSee('alert-success')
             ->assertSee('action="'.route('verification.send').'"', false)
             ->assertSee('Reenviar o link');
+    }
+
+    /**
+     * No celular, o e-mail da tela "Confirme seu e-mail" quebra linha só depois
+     * do @ e antes de cada ponto (os <wbr>), como nas listas e tabelas dos
+     * cadastros (o emailText do pages.js), e não no meio de uma palavra. Também
+     * com o aviso amarelo do e-mail que não saiu.
+     */
+    public function test_email_confirmation_notice_breaks_the_email_only_after_the_at_and_before_the_dots(): void
+    {
+        $client = $this->makeClientUser(Client::create(['name' => 'Cliente', 'email' => 'maria.helena.souza@email.exemplo.com.br']), verified: false);
+        $email = '<strong class="text-break">maria<wbr>.helena<wbr>.souza@<wbr>email<wbr>.exemplo<wbr>.com<wbr>.br</strong>';
+
+        $this->actingAs($client)
+            ->get('/email/verify')
+            ->assertOk()
+            ->assertSee($email, false)
+            ->assertSeeText('Falta confirmar o e-mail maria.helena.souza@email.exemplo.com.br.');
+
+        $this->actingAs($client)
+            ->withSession(['warning' => 'O link não saiu.'])
+            ->get('/email/verify')
+            ->assertOk()
+            ->assertSee($email, false);
+    }
+
+    /**
+     * Cada pedaço do e-mail sai escapado, como o resto da tela: um e-mail com &,
+     * aspas ou < (gravado direto no banco, porque a validação não deixaria
+     * passar todos) nunca vira HTML.
+     */
+    public function test_email_confirmation_notice_escapes_each_piece_of_the_email(): void
+    {
+        $client = $this->makeClientUser(Client::create(['name' => 'Cliente', 'email' => 'a&b\'c"d<i>x</i>.e@f.g']), verified: false);
+
+        $this->actingAs($client)
+            ->get('/email/verify')
+            ->assertOk()
+            ->assertSee('<strong class="text-break">a&amp;b&#039;c&quot;d&lt;i&gt;x&lt;/i&gt;<wbr>.e@<wbr>f<wbr>.g</strong>', false)
+            ->assertDontSee('<i>x</i>', false);
     }
 
     public function test_login_page_posts_to_the_server_with_remember_me_and_the_account_links(): void
@@ -207,6 +256,40 @@ class WebPagesTest extends TestCase
             ->assertSee('href="'.route('account.show').'"', false)
             // O Sair é um formulário POST, não mais um link para o login.
             ->assertDontSee('href="'.route('login').'"', false);
+    }
+
+    /**
+     * O menu abre a partir de 1200px (navbar-expand-xl) e, aberto, fica numa linha
+     * só: os links e o Minha conta não quebram, e quem encolhe é o nome, que o CSS
+     * corta com reticências. O nome inteiro continua no title e depois do "Você
+     * entrou como" do leitor de tela, e o Sair continua um POST com o token CSRF.
+     */
+    public function test_menu_fits_in_one_line_and_keeps_the_full_name(): void
+    {
+        $name = 'Administrador da homologação com um nome bem comprido';
+        $admin = $this->makeAdmin();
+        $admin->update(['name' => $name]);
+
+        $html = $this->actingAs($admin)
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('<nav class="navbar navbar-expand-xl bg-dark"', false)
+            ->assertDontSee('navbar-expand-lg', false)
+            ->assertSee('<div class="navbar-account d-flex flex-wrap flex-xl-nowrap', false)
+            ->assertSeeInOrder([
+                '<span class="visually-hidden">Você entrou como</span>',
+                '<span class="navbar-user text-truncate text-white" title="'.$name.'">'.$name.'</span>',
+                '<span class="badge text-bg-secondary">Administrador</span>',
+                'small text-nowrap"',
+                'href="'.route('account.show').'">Minha conta</a>',
+                '<form method="POST" action="'.route('logout').'"',
+                'name="_token"',
+                '>Sair</button>',
+            ], false)
+            ->getContent();
+
+        // Os 7 links do admin, todos sem quebra de linha.
+        $this->assertSame(7, substr_count($html, 'class="nav-link text-nowrap'));
     }
 
     /**
@@ -610,6 +693,43 @@ class WebPagesTest extends TestCase
             ->assertSee('Preencha para criar ou redefinir o acesso do barbeiro');
     }
 
+    /**
+     * Telas de cadastro (partials/crud), com quem abre cada uma.
+     */
+    public static function crudPages(): array
+    {
+        return [
+            'clientes do admin' => ['makeAdmin', '/clients', 'clients', 'Clientes'],
+            'clientes do barbeiro' => ['makeBarberUser', '/clients', 'clients', 'Clientes'],
+            'barbeiros' => ['makeAdmin', '/barbers', 'barbers', 'Barbeiros'],
+            'serviços' => ['makeAdmin', '/services', 'services', 'Serviços'],
+        ];
+    }
+
+    /**
+     * No celular, os cadastros saem numa lista (um item por cadastro, que o pages.js
+     * monta) no lugar da tabela, que só aparece da largura de tablet para cima: nos
+     * 390px, a tabela partia o nome e o e-mail no meio da palavra. A busca controla
+     * as duas, as duas dizem a página em que estão, e a tabela prende o texto
+     * escondido do leitor de tela (position-relative) para a página não rolar para o lado.
+     */
+    #[DataProvider('crudPages')]
+    public function test_crud_page_has_a_list_for_the_phone_and_the_table_from_the_tablet_up(string $makeUser, string $uri, string $resource, string $title): void
+    {
+        $this->actingAs($this->{$makeUser}())
+            ->get($uri)
+            ->assertOk()
+            ->assertSee('aria-controls="'.$resource.'-list '.$resource.'-table" data-search', false)
+            ->assertSeeInOrder([
+                '<ul class="list-group list-group-flush border-bottom-0 d-md-none" id="'.$resource.'-list"',
+                'aria-label="'.$title.' cadastrados, em ordem de nome" aria-describedby="'.$resource.'-page-status" data-mobile-rows>',
+                '<div class="table-responsive position-relative d-none d-md-block">',
+                'id="'.$resource.'-table"',
+                'aria-label="'.$title.' cadastrados, em ordem de nome" aria-describedby="'.$resource.'-page-status">',
+                'id="'.$resource.'-page-status"',
+            ], false);
+    }
+
     public function test_only_the_admin_gets_the_delete_button_on_the_clients_page(): void
     {
         $this->actingAs($this->makeAdmin())
@@ -632,12 +752,28 @@ class WebPagesTest extends TestCase
         $this->actingAs($client)
             ->get('/account')
             ->assertOk()
-            ->assertSee($client->email)
+            ->assertSeeText($client->email)
             ->assertSee('Cliente')
             ->assertSee('Confirmado')
             ->assertSee('data-password-form', false)
             ->assertSee('name="current_password"', false)
             ->assertSee('name="password_confirmation"', false);
+    }
+
+    /**
+     * No celular, o e-mail da Minha conta quebra linha só depois do @ e antes
+     * de cada ponto, como na tela "Confirme seu e-mail" (o mesmo parcial
+     * partials.email-text, com o escape conferido no teste dela), e não no meio
+     * de uma palavra.
+     */
+    public function test_account_page_breaks_the_email_only_after_the_at_and_before_the_dots(): void
+    {
+        $client = $this->makeClientUser(Client::create(['name' => 'Cliente', 'email' => 'maria.helena.souza@clientes.barberflow.test']));
+
+        $this->actingAs($client)
+            ->get('/account')
+            ->assertOk()
+            ->assertSee('<dd class="text-break">maria<wbr>.helena<wbr>.souza@<wbr>clientes<wbr>.barberflow<wbr>.test</dd>', false);
     }
 
     /**
