@@ -874,7 +874,7 @@ aws logs tail /barberflow/prod/web --since 30m --log-stream-name-prefix <ID da i
 aws logs tail /barberflow/prod/app --since 1h --filter-pattern ERROR
 ```
 
-- A rodada do lembrete por e-mail roda dentro do processo do agendador e escreve no stream do `scheduler`: quando um lembrete falha, um aviso só com o id do agendamento e uma linha `ERROR` só com as contas da rodada (`aws logs tail /barberflow/prod/app --since 1h --log-stream-name-prefix <ID da instância>/barberflow-scheduler --filter-pattern ERROR`). A linha da rodada sai `DONE` mesmo quando ela falha (um detalhe do Laravel 13.33): procure o `ERROR`.
+- A rodada do lembrete por e-mail roda dentro do processo do agendador e escreve no stream do `scheduler`: quando um lembrete falha, um aviso só com o id do agendamento e uma linha `ERROR` só com as contas da rodada (`aws logs tail /barberflow/prod/app --since 1h --log-stream-name-prefix <ID da instância>/barberflow-scheduler --filter-pattern ERROR`). A linha da rodada sai `DONE` mesmo quando ela falha (um detalhe do Laravel, igual na 13.33 e na 13.40): procure o `ERROR`.
 - Os logs ficam `log_retention_days` dias (30 por padrão) e depois somem sozinhos.
 - O log da subida da instância (`/var/log/barberflow-bootstrap.log`) não vai para o CloudWatch: o driver `awslogs` só leva os containers. Ele fica na instância (seção "Entrar na instância") e no console (`aws ec2 get-console-output`).
 - Os logs de erro e de consultas lentas do banco ficam em `/aws/rds/instance/barberflow-<ambiente>-db/error` e `/slowquery`.

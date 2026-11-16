@@ -995,7 +995,7 @@ A saída do comando diz quantos lembretes saíram, quantos foram pulados e quant
 - **pulados:** o de cliente excluído, o de e-mail do domínio `barberflow.invalid` e o que outro envio pegou antes;
 - **com falha:** o e-mail não saiu. O `reminder_sent_at` volta a nulo, e a rodada seguinte tenta de novo. O log ganha um aviso só com o id do agendamento. Com alguma falha, a rodada do agendador termina como falha, com uma linha `ERROR` no log só com as contas (ex.: `Lembretes por e-mail com falha nesta rodada: 1. Enviados: 0. Pulados: 0.`), e o comando termina com o código 1.
 
-Como a rodada roda no processo do agendador, o log dela sai junto com o dele: nos containers, na saída do `scheduler` (e no CloudWatch e no Loki); no local, no `laravel.log`. A linha da rodada na saída do agendador sai `DONE` mesmo quando ela falha (um detalhe do Laravel 13.33): quem acompanha procura o `ERROR`.
+Como a rodada roda no processo do agendador, o log dela sai junto com o dele: nos containers, na saída do `scheduler` (e no CloudWatch e no Loki); no local, no `laravel.log`. A linha da rodada na saída do agendador sai `DONE` mesmo quando ela falha (um detalhe do Laravel, igual na 13.33 e na 13.40): quem acompanha procura o `ERROR`.
 
 Cada lembrete sai uma vez. Antes de enviar, a rodada reserva a linha com um `UPDATE ... WHERE reminder_sent_at IS NULL`, que também confere o status, a data, o horário, o barbeiro e o serviço que ela leu: duas rodadas ao mesmo tempo, ou a rodada e o "Enviar lembrete agora", não mandam o mesmo lembrete duas vezes, e o e-mail fala do horário que estava na linha. Remarcar a data ou o horário volta o `reminder_sent_at` a nulo, e o lembrete do horário novo sai na rodada dele.
 

@@ -423,12 +423,12 @@ O que rodou no computador, em containers, sem GitHub e sem AWS:
 | Passos do job `Front` (Node 24.22.3) | `npm ci` e build sem erro; `npm audit` sem nenhuma vulnerabilidade |
 | Jobs `PHP` e `MySQL` com o código da `feat/agendamentos` e um MySQL 8.4.13 com as credenciais do CI | Pint passou; SQLite com 475 testes passando, 3 pulados e 1 falha; MySQL com 479 testes e a mesma falha (abaixo) |
 
-Dois pontos deixam o CI vermelho hoje, os dois da trilha da aplicação, e não do pipeline:
+Dois pontos deixavam o CI vermelho nessa data, os dois da trilha da aplicação, e não do pipeline. Os dois foram resolvidos depois:
 
-- **`composer audit`:** o alerta GHSA-63hm-g96r-2m2q (severidade baixa, publicado em 13/11/2026) atinge o `laravel/framework` antes da 13.40.0, e o `composer.lock` está na 13.33.0. A correção é atualizar o `laravel/framework` para a 13.40 ou mais nova, dentro do `^13.17`.
-- **`Vite manifest not found`:** um teste do `RegistrationTest` da `feat/agendamentos` abre a página de erro 403 sem `withoutVite()`. No computador ele passa porque existe o `public/build`; no CI, que não faz o build, falha.
+- **`composer audit`:** o alerta GHSA-63hm-g96r-2m2q (severidade baixa, publicado em 13/11/2026) atingia o `laravel/framework` antes da 13.40.0, e o `composer.lock` estava na 13.33.0. Em 15/11/2026, com o OK do Leonam, o `laravel/framework` foi para a 13.40.0, dentro do `^13.17`, e o `composer audit` ficou sem alerta, também no `composer audit --locked` de uma cópia limpa, como no CI (`docs/RELATORIO-TECNICO.md`, seção 4.12).
+- **`Vite manifest not found`:** um teste do `RegistrationTest` da `feat/agendamentos` abria a página de erro 403 sem `withoutVite()`. No computador ele passava porque existe o `public/build`; no CI, que não faz o build, falhava. O teste ganhou o `withoutVite()` na `feat/lembretes-fidelidade` (commit `6e89adf`), e a rodada igual à do CI, numa cópia sem `public/build`, passa (747 testes passando e os 11 de trava pulados, como no SQLite).
 
-Com o ruleset da seção "Proteção da main" ligado, as duas correções precisam entrar no mesmo pull request: com só uma delas, o check `PHP` continua vermelho, e o merge não entra.
+Com o ruleset da seção "Proteção da main" ligado, um check `PHP` vermelho barra o merge: as duas correções precisam estar na branch do pull request, e as duas estão na `feat/entrega-final`.
 
 ## Problemas comuns
 

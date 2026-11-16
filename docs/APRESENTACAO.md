@@ -15,10 +15,10 @@ Roteiro da demonstração e slides da apresentação final, para as duas discipl
 
 **No dia, até 2 horas antes** (a sessão das telas vale 120 minutos):
 
-1. Suba a homolog com o monitoramento: `homologmon up -d --build --wait` (`docs/nuvem/MONITORAMENTO.md`, "Subir"). Se o `app` der `Access denied for user 'barberflow'`, o banco da homolog foi criado com outra senha: veja `docs/nuvem/DOCKER.md`, "Problemas comuns", e a seção 7 do relatório (é o caso do computador do Leonam).
-2. Crie o admin e os dados de demonstração: `docs/nuvem/DOCKER.md`, "Dados de demonstração e administrador". **A agenda fica em volta do dia em que o seeder roda** (15 dias antes, o dia e 14 depois). Com um banco que já tinha a demonstração de outro dia, a agenda continua a daquele dia, e o "hoje" pode aparecer vazio. Um banco novo apaga os dados da homolog: combine com o grupo antes.
+1. Suba a homolog com o monitoramento: `homologmon up -d --build --wait` (`docs/nuvem/MONITORAMENTO.md`, "Subir"). Se o `app` der `Access denied for user 'barberflow'`, o banco da homolog foi criado com outra senha: veja `docs/nuvem/DOCKER.md`, "Problemas comuns".
+2. Crie o admin e os dados de demonstração: `docs/nuvem/DOCKER.md`, "Dados de demonstração e administrador". **A agenda fica em volta do dia em que o seeder roda** (15 dias antes, o dia e 14 depois). Com um banco que já tinha a demonstração de outro dia, a agenda continua a daquele dia, e o "hoje" pode aparecer vazio. Um banco novo apaga os dados da homolog: combine com o grupo antes. No computador do Leonam, o banco da homolog (o volume `barberflow-homolog_dbdata`, criado em 15/11/2026) já tem o admin e a demonstração, com a agenda de 31/10 a 28/11/2026: os seeders não mudam nada nele. Ele tem também o resíduo de um teste de carga (seção 7 do relatório), que aparece na demonstração enquanto não for tirado: em novembro, o Dashboard conta um 4º barbeiro, de teste e já excluído, na Ocupação do mês (a tela mostra "(4 barbeiros)", e a taxa sai um quarto mais baixa que a dos 3 barbeiros da demonstração) e no resumo por barbeiro, zerado, e o total de Atendimentos e o Cancelado ganham 1; a Agenda de 16/11 mostra o agendamento cancelado desse barbeiro em "Cancelados e faltas" (no celular, numa seção dele). Ao mostrar a ocupação do mês no bloco 3, avise que ela conta esse barbeiro de teste.
 3. Confira o `/api/health` (`curl.exe -i http://localhost:8080/api/health`, com banco e cache `ok`).
-4. O painel do Grafana mostra o tráfego dos últimos minutos, e a própria demonstração das telas (bloco 3) já gera o que o bloco 5 mostra. Para um gráfico mais cheio, rode antes o smoke do k6 (30 segundos) na homolog de carga (`load-tests/README.md`) e volte aos limites normais com `homologmon up -d --wait`, que recria o `app` e o `web` sem mexer no banco.
+4. O painel do Grafana mostra o tráfego dos últimos minutos, e a própria demonstração das telas (bloco 3) já gera o que o bloco 5 mostra. **Não rode o smoke do k6 no banco da demonstração só para encher o gráfico.** Ele cadastra um cliente por iteração (29 `Cliente k6 ...` em 30 segundos, na rodada do Laravel 13.40.0), que o `teardown()` não apaga e que aparecem na tela Clientes e na lista de clientes do Agendar. E, com o admin da apresentação como usuário de carga, as telas dele recebem `429` ("Muitas requisições") por até um minuto depois da volta aos limites normais, porque o contador do limite por usuário fica no Redis com os pedidos do teste (`load-tests/README.md`, "Problemas comuns"). Se rodar mesmo assim (`load-tests/README.md`, com a volta pela `homologmon up -d --wait`, que recria o `app` e o `web` sem mexer no banco), use um usuário de carga que não seja o admin da apresentação, exclua depois os `Cliente k6` como admin (na tela Clientes, buscando por `Cliente k6`, ou pelo `DELETE /api/clients/{id}`, como na seção 4.12 do relatório; a exclusão anonimiza) e espere um minuto antes do passo 5.
 5. Deixe três janelas logadas, uma por perfil. Os cookies são por endereço, então cada perfil precisa de uma janela separada: a normal (admin), uma anônima (barbeiro) e outro navegador (cliente).
 6. Deixe abertas as abas do Grafana (http://localhost:3000), do Mailpit (http://localhost:8025) e dos alvos do Prometheus (http://localhost:9090/targets), o Postman e um terminal do PowerShell na raiz do repositório.
 
@@ -94,7 +94,7 @@ homologmon start redis
 curl.exe -s http://localhost:8080/api/health
 ```
 
-O primeiro `/api/health` responde `503` com `"cache":"falhou"` em uns 4 segundos; o segundo, `200`. **Não derrube o banco (`stop db`) na apresentação:** com o MySQL num tmpfs (o caso do computador do Leonam, seção "Pendências" do relatório), isso apaga o banco da homolog, e a demonstração some. Com o volume, os dados ficam e o banco volta em uns 2 segundos depois do `start`, mas, enquanto ele está fora, as telas e a API dão erro (o `/api/health` leva uns 13 segundos para responder `503`).
+O primeiro `/api/health` responde `503` com `"cache":"falhou"` em uns 4 segundos; o segundo, `200`. **Não derrube o banco (`stop db`) na apresentação:** com o MySQL num tmpfs, como na verificação, isso apaga o banco da homolog, e a demonstração some. Com o volume (o padrão da homolog, e o caso do computador do Leonam desde 15/11/2026), os dados ficam e o banco volta em uns 2 segundos depois do `start`, mas, enquanto ele está fora, as telas e a API dão erro (o `/api/health` leva uns 13 segundos para responder `503`).
 
 ### Se algo der errado
 
@@ -241,6 +241,7 @@ Navegador ou Postman, depois o Nginx, o PHP-FPM, os middlewares (headers, limite
 | Concorrência da agenda | 1 criado em 50 pedidos iguais |
 | Resiliência | Cache fora: 503 em 3 a 4 s e de volta em 200; app de volta em 1,7 s; banco num volume de volta em 1,9 s, sem perder nada; banco congelado: 503 em 20 s (antes, 504 em 60 s); servidor de e-mail congelado: 503 em 10 s (antes, 60 s) |
 | OWASP ZAP baseline | 0 FAIL, 4 avisos baixos ou informativos |
+| Dependências | `composer audit` e `npm audit` sem nenhum alerta, com o Laravel 13.40.0 |
 | Terraform | 69 testes passaram; `trivy config` sem problema |
 
 Os números do k6 valem para o computador da homolog, não para a AWS.
@@ -251,7 +252,6 @@ Os números do k6 valem para o computador da homolog, não para a AWS.
 
 - Aplicar na AWS e o go-live: precisa da conta do grupo e custa dinheiro
 - O CI verde no GitHub, os pull requests e a proteção da `main`: depois do push
-- Pendências: atualizar o `laravel/framework` (alerta de severidade baixa) e o volume do banco da homolog
 - Achados em aberto: o pool do PHP-FPM cheio com o banco congelado e a leitura lenta que o Laravel repete (relatório, seção 8)
 
 ---

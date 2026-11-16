@@ -105,7 +105,7 @@ O tempo de resposta e os status saem do log de acesso do Nginx, que manteve o co
   | O agendador | `{service="scheduler"}` |
   | Lembrete por e-mail que falhou (a rodada do agendador) | `{service="scheduler"} \|~ "Lembrete\|ERROR"` |
 
-- **A rodada do lembrete escreve no log do `scheduler`.** Desde a segunda rodada de acabamento (15/11/2026), ela roda dentro do processo do agendador, e não como um comando à parte com a saída no `/dev/null`: quando um lembrete falha, o `scheduler` escreve um aviso `Lembrete por e-mail não enviado.` só com o `appointment_id` e uma linha `ERROR` só com as contas da rodada, e o Alloy leva as duas ao Loki, como o resto da saída do container. Antes, essas linhas se perdiam. A linha da rodada (`Running [appointments:send-reminders] ... DONE`) sai `DONE` mesmo quando ela falha, por um detalhe do Laravel 13.33: procure o `ERROR`, e não o `FAIL`. Conferido em 15/11/2026 na saída do `scheduler` da homolog, sem o monitoramento (`load-tests/resiliencia/README.md`, "Com o limite de tempo do servidor de e-mail").
+- **A rodada do lembrete escreve no log do `scheduler`.** Desde a segunda rodada de acabamento (15/11/2026), ela roda dentro do processo do agendador, e não como um comando à parte com a saída no `/dev/null`: quando um lembrete falha, o `scheduler` escreve um aviso `Lembrete por e-mail não enviado.` só com o `appointment_id` e uma linha `ERROR` só com as contas da rodada, e o Alloy leva as duas ao Loki, como o resto da saída do container. Antes, essas linhas se perdiam. A linha da rodada (`Running [appointments:send-reminders] ... DONE`) sai `DONE` mesmo quando ela falha, por um detalhe do Laravel, igual na 13.33 e na 13.40: procure o `ERROR`, e não o `FAIL`. Conferido em 15/11/2026 na saída do `scheduler` da homolog, sem o monitoramento (`load-tests/resiliencia/README.md`, "Com o limite de tempo do servidor de e-mail"), e de novo no mesmo dia, com o Laravel 13.40.0 e o monitoramento: a consulta da tabela acima trouxe do Loki os 8 avisos e a linha `ERROR` da rodada que falhou (seção "Situação conferida na rodada do Laravel 13.40.0").
 - O log de acesso do Nginx grava o caminho sem a query string e esconde o token dos links de redefinição de senha e de confirmação de e-mail. Em 14/11/2026, uma busca com um e-mail na query string (`/api/services?search=...`) chegou ao Loki só como `/api/services`, e o e-mail não aparece em nenhuma linha.
 - O Grafana grava só avisos e erros (`GF_LOG_LEVEL=warn`). Sem isso, cada subida nova encheria o Loki com perto de 2 mil linhas da migração do banco interno dele.
 - Quando cria o banco da homolog, o MySQL escreve no log, uma vez, a senha aleatória do root (`GENERATED ROOT PASSWORD: ...`). O Alloy troca a senha por `[oculto]` antes de mandar a linha ao Loki (`loki.process` do `config.alloy`), porque o Grafana mostra os logs sem login. No `docker compose logs db` ela continua aparecendo.
@@ -193,7 +193,7 @@ Conferidas em 14/11/2026 no Docker Hub, no GHCR e nas releases do GitHub de cada
 
 ## Situação conferida em 14/11/2026
 
-Na homolog (base `fix/menu-e-setup`, sem o login nem o `/api/health`), com o MySQL num tmpfs, porque o volume `barberflow-homolog_dbdata` deste computador foi criado com uma senha que se perdeu (`docs/nuvem/DOCKER.md`, "Problemas comuns"):
+Na homolog (base `fix/menu-e-setup`, sem o login nem o `/api/health`), com o MySQL num tmpfs, porque o volume `barberflow-homolog_dbdata` deste computador foi criado com uma senha que se perdeu (`docs/nuvem/DOCKER.md`, "Problemas comuns"). Esse volume foi apagado em 15/11/2026, com o OK do Leonam, e o banco nasceu de novo no volume padrão (seção "Situação conferida na rodada do Laravel 13.40.0"):
 
 | O quê | Resultado |
 |---|---|
@@ -239,6 +239,20 @@ Em 15/11/2026, na `feat/entrega-final`, com o código inteiro da aplicação (lo
 | Erro de banco no Loki | Nas quedas do banco do roteiro de resiliência, 3 linhas `Erro no banco de dados.`, só com `connection`, `code`, `driver_code` e `file`, sem SQL, e-mail ou pilha (`docs/nuvem/SEGURANCA.md`, "LGPD") |
 | Teste de carga | No estresse com 200 VUs, o cAdvisor (lido pelo Prometheus) mediu o pico do `app`: 1,92 núcleo de CPU e 57 MB de memória (`load-tests/README.md`, "Resultado na entrega final") |
 
+## Situação conferida na rodada do Laravel 13.40.0
+
+Em 15/11/2026, depois da atualização do `laravel/framework` para a 13.40.0, com as imagens novas e o MySQL no volume padrão, que nasceu nesta subida: os dois volumes antigos do banco (o da senha perdida e o `barberflow-homolog_dbdata-r`) tinham sido apagados antes, com o OK do Leonam (`docs/RELATORIO-TECNICO.md`, seção 4.12).
+
+| O quê | Resultado |
+|---|---|
+| `homologmon up -d --wait` | Os 13 containers no ar em 20,1 s, com o volume `barberflow-homolog_dbdata` criado nessa subida; o script de init criou o usuário `exporter` no banco novo |
+| `/api/health` | 200 em 0,19 s, com banco e cache `ok` |
+| Alvos do Prometheus | Os 4 `up`, sem erro; `mysql_up` e `nginx_up` em 1 |
+| Grafana | Versão 13.3.1, banco `ok`, o painel com os 13 itens e as duas fontes com `OK`, sem nenhum plugin baixado. O admin entrou com a senha do `homolog.env` (`POST /login`), e `admin`/`admin` recebeu 401 |
+| Loki | Logs dos 13 serviços (nos primeiros 30 minutos, 41 linhas do `app`, 46 do `web`, 8 do `scheduler` e 47 do `db`); a linha `GENERATED ROOT PASSWORD` do banco novo com `[oculto]` |
+| Lembrete que falhou | Com o Mailpit congelado, a consulta `{service="scheduler"} \|~ "Lembrete\|ERROR"` trouxe os 8 avisos, só com o `appointment_id`, e a linha `ERROR` da rodada, só com as contas; a `{service="scheduler"} \|= "send-reminders"` trouxe as duas rodadas, a que falhou e a seguinte. Nenhuma linha do `scheduler` com `@` |
+| `homologmon down` (sem `-v`) e `up` de novo | `down` em 5,9 s e `up` em 14,4 s, no mesmo volume, com "Nothing to migrate" e os mesmos dados. No fim, a homolog ficou derrubada sem `-v`, e o volume do banco guarda os dados de demonstração |
+
 ## Problemas comuns
 
 - **O alvo `mysql` está `UP`, mas o painel do MySQL está vazio** (`mysql_up` em 0, e o log do `mysqld-exporter` diz `Access denied for user 'exporter'`): o banco não tem o usuário `exporter`, ou ele tem outra senha. Siga "Banco que já existe".
@@ -247,3 +261,4 @@ Em 15/11/2026, na `feat/entrega-final`, com o código inteiro da aplicação (lo
 - **`port is already allocated` na 3000 ou na 9090:** outro programa usa a porta. Confira com `docker ps` e com `Get-NetTCPConnection -LocalPort 3000 -State Listen` e pare o outro.
 - **`Found orphan containers` ou `network ... has active endpoints` no `down`:** a stack subiu com a `homologmon` e desceu com a `homolog`. Rode `homologmon down`.
 - **O painel de tempo de resposta está vazio, mas o de requisições não:** o log de acesso do Nginx mudou de formato. Veja "O painel".
+- **O admin do Grafana recebe 401 com a senha certa:** depois de mais de 5 senhas erradas em 5 minutos (um teste com `admin`/`admin`, por exemplo), o Grafana recusa o login do usuário por 5 minutos, até com a senha certa, e o log não mostra nada (`GF_LOG_LEVEL=warn`). Espere os 5 minutos e entre de novo. Visto na rodada do Laravel 13.40.0 (15/11/2026).

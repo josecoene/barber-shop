@@ -131,7 +131,7 @@ Por isso o banco fora (`stop db`) levou 13,3 s: o nome do serviço parado some d
 
 ### Banco fora com o volume de verdade (15/11/2026, revisão final)
 
-Na homolog da `feat/entrega-final`, sem o monitoramento, com o MySQL num volume novo e persistente (`barberflow-homolog_dbdata-r`; o `barberflow-homolog_dbdata` deste computador tem a senha perdida e ficou intocado), os dados do `DemoSeeder` (177 agendamentos e 95 pagamentos) e um token do barbeiro Carlos Mendes, de um login feito antes:
+Na homolog da `feat/entrega-final`, sem o monitoramento, com o MySQL num volume novo e persistente (`barberflow-homolog_dbdata-r`; o `barberflow-homolog_dbdata` deste computador tinha a senha perdida e ficou intocado; os dois foram apagados depois, em 15/11/2026, com o OK do Leonam), os dados do `DemoSeeder` (177 agendamentos e 95 pagamentos) e um token do barbeiro Carlos Mendes, de um login feito antes:
 
 | Caso | `/api/health` durante a queda | API com token (`/api/appointments`) | Volta |
 |---|---|---|---|
@@ -188,9 +188,24 @@ Na homolog da `feat/entrega-final`, com as imagens refeitas com as correções d
 - O envio desiste nos 10 s do `MAIL_TIMEOUT` (a espera pela saudação do SMTP), um sexto dos 60 s do Nginx. O cadastro leva 0,4 s a mais que o reenvio: é a gravação da conta, com o hash da senha, antes do envio.
 - **Log do `app`:** 3 linhas `Falha no envio de e-mail.` (o cadastro e os dois reenvios), só com a classe, o código e o arquivo:linha, sem o endereço e sem o texto do erro do Symfony.
 - **Log do `scheduler`** (`homolog logs scheduler`), na rodada das 13h45, com o Mailpit congelado: 3 avisos `Lembrete por e-mail não enviado.`, cada um só com o `appointment_id`, e 1 linha `ERROR` só com as contas (`Lembretes por e-mail com falha nesta rodada: 3. Enviados: 0. Pulados: 0.`), sem nenhum nome, e-mail ou telefone. O `reminder_sent_at` dos 3 voltou a nulo. Antes, o comando agendado tinha a saída no `/dev/null`, e nada disso aparecia.
-- **A linha da rodada saiu `30s DONE`, e não `FAIL`,** com a rodada falhando: é do Laravel 13.33 (`docs/ARQUITETURA.md`, "Limitações e riscos conhecidos"). Quem acompanha o agendador procura a linha `ERROR`.
+- **A linha da rodada saiu `30s DONE`, e não `FAIL`,** com a rodada falhando: é do Laravel 13.33, e continua na 13.40 (seção seguinte e `docs/ARQUITETURA.md`, "Limitações e riscos conhecidos"). Quem acompanha o agendador procura a linha `ERROR`.
 - **Volta:** com o `unpause`, o reenvio deu 202 em 0,04 s, e o link chegou; a rodada das 14h00 mandou os 3 lembretes em 0,23 s.
 - **Não medido aqui:** o servidor que congela no meio da conversa (até 20 s, porque o comando sem resposta e o `QUIT` esperam o limite cada um). O `pause` do Docker congela o Mailpit antes da saudação, para toda conexão nova. Numa sonda no container local, esse caso levou 20,04 s.
+
+### A rodada do lembrete com o Laravel 13.40.0 (15/11/2026)
+
+Na homolog com o `laravel/framework` 13.40.0, as imagens novas, o monitoramento e o MySQL no volume padrão, criado de novo nessa rodada (`docs/RELATORIO-TECNICO.md`, seção 4.12), pelas rodadas de verdade do `schedule:work`, sem nada rodado na mão. O Mailpit foi congelado (`homologmon pause mailpit`) às 19h44, antes da rodada das 19h45, com os 8 lembretes de 16/11 do `DemoSeeder` pendentes:
+
+| Medida | Segunda rodada de acabamento (13.33.0) | Laravel 13.40.0 |
+|---|---|---|
+| Rodada com o Mailpit congelado | 3 lembretes em 30 s, `30s DONE` | 8 lembretes em 1 min 20 s (10 s cada), `1min 20s DONE` |
+| Log da falha | 3 avisos com o id e 1 `ERROR` com as contas | 8 avisos com o id e 1 `ERROR` com as contas, também no Loki |
+| `reminder_sent_at` depois da falha | Nulo | Nulo |
+| Rodada seguinte, com o Mailpit de volta | 3 lembretes em 230,61 ms | 8 lembretes em 412,55 ms |
+
+- A linha da rodada continua `DONE`, e não `FAIL`, com a 13.40.0: quem acompanha o agendador procura o `ERROR`.
+- Nenhum nome, e-mail ou telefone dos 15 clientes e das 8 contas nas 46 linhas do `scheduler` da rodada que falhou.
+- As quedas do banco, do app e do cache não foram medidas de novo com a 13.40.0.
 
 ### Na `feat/observabilidade` (14/11/2026)
 
@@ -204,7 +219,7 @@ Na homolog da `feat/observabilidade`, com o `curl` esperando até 75 segundos:
 | Cache fora (`stop redis`) | `/up` 200; `/login` 500 em 4,0 s; `/api/services` 200 (nesta base, a API ainda não usa o cache) | `/login` 200 em 0,4 s depois do `start` |
 | Banco fora (`stop db`) | `/up` e `/login` 200; `/api/services` 500 em 13,3 s | MySQL saudável em 8,8 s depois do `start` |
 
-Nesta medição, o MySQL da homolog ficou num tmpfs (o volume `barberflow-homolog_dbdata` deste computador foi criado com uma senha que se perdeu, `docs/nuvem/DOCKER.md`, "Problemas comuns"), e o `stop db` apagou o banco: depois do `start`, foi preciso um `restart` do `app` para as migrations rodarem de novo. Com o volume de verdade, os dados continuam, e o `start` basta.
+Nesta medição, o MySQL da homolog ficou num tmpfs (o volume `barberflow-homolog_dbdata` deste computador foi criado com uma senha que se perdeu, `docs/nuvem/DOCKER.md`, "Problemas comuns"; ele foi apagado em 15/11/2026), e o `stop db` apagou o banco: depois do `start`, foi preciso um `restart` do `app` para as migrations rodarem de novo. Com o volume de verdade, os dados continuam, e o `start` basta.
 
 Os 13 segundos do banco fora e os 4 do cache fora são o tempo de o PHP desistir de achar o serviço parado (o nome dele some do DNS do Docker). Na AWS, o endereço do RDS e o do ElastiCache continuam existindo, e o tempo depende de como o serviço caiu. Os timeouts curtos que entraram depois (3 s para o cache e 3 s por tentativa para o banco) estão medidos na seção acima.
 
@@ -212,5 +227,6 @@ Os 13 segundos do banco fora e os 4 do cache fora são o tempo de o PHP desistir
 
 - Os três casos na AWS, depois do primeiro `apply`, com o RDS e o ElastiCache de verdade.
 - O servidor de e-mail que congela no meio da conversa, na homolog: até aqui, só a sonda local (20,04 s).
+- As quedas do banco, do app e do cache com o Laravel 13.40.0: a rodada da atualização mediu só a rodada do lembrete com o servidor de e-mail congelado.
 
-O volume `barberflow-homolog_dbdata` deste computador, com a senha perdida, continua sem uso: as medições com volume (revisão final e rodada de acabamento) usaram um volume novo (`barberflow-homolog_dbdata-r`). Apagar ou trocar o antigo, e apagar o novo se ele não for mais usado, espera o OK do Leonam.
+Os dois volumes do banco da homolog deste computador, o `barberflow-homolog_dbdata` da senha perdida e o `barberflow-homolog_dbdata-r` das medições com volume (revisão final e as duas rodadas de acabamento), foram apagados em 15/11/2026, com o OK do Leonam. A homolog voltou ao volume padrão (`barberflow-homolog_dbdata`), criado de novo na rodada do Laravel 13.40.0 com a senha do `homolog.env` e com os dados de demonstração: nele, só a rodada do lembrete com o servidor de e-mail congelado foi medida, e as quedas do banco, do app e do cache, não.

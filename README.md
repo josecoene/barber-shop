@@ -247,7 +247,7 @@ A rodada automática só acontece se algo chamar o agendador:
 - **no local**, deixe num terminal à parte `php artisan schedule:work` (no jeito 2, `docker exec -it -w /app barberflow-app php artisan schedule:work`). Ele fica rodando e chama o agendador a cada minuto; pare com Ctrl+C. Nos jeitos 3 e 4, o container `scheduler` já faz isso;
 - **num servidor sem containers**, o cron chama o agendador a cada minuto: `* * * * * cd /caminho/do/projeto && php artisan schedule:run >> /dev/null 2>&1`.
 
-A rodada roda dentro do processo do agendador, então o log dela vai para o mesmo lugar que o do resto da aplicação: o `storage/logs/laravel.log` no local e, nos containers (com o log no `stderr`), a saída do `scheduler` (`docker compose logs scheduler`). Quando um lembrete falha, o log ganha um aviso só com o id do agendamento e uma linha `ERROR` só com as contas da rodada; a linha da rodada na saída do agendador sai `DONE` mesmo assim (um detalhe do Laravel 13.33), então procure o `ERROR`.
+A rodada roda dentro do processo do agendador, então o log dela vai para o mesmo lugar que o do resto da aplicação: o `storage/logs/laravel.log` no local e, nos containers (com o log no `stderr`), a saída do `scheduler` (`docker compose logs scheduler`). Quando um lembrete falha, o log ganha um aviso só com o id do agendamento e uma linha `ERROR` só com as contas da rodada; a linha da rodada na saída do agendador sai `DONE` mesmo assim (um detalhe do Laravel, igual na 13.33 e na 13.40), então procure o `ERROR`.
 
 Sem o agendador, o lembrete automático não sai, mas o "Enviar lembrete agora" do detalhe da Agenda continua funcionando. No local, com `MAIL_MAILER=log`, os lembretes vão para o fim do `storage/logs/laravel.log`, como os outros e-mails, inteiros e com o endereço do cliente: por isso o `log` só serve no local, e fora dele o `MAIL_MAILER` precisa enviar de verdade (`smtp`; na homolog, o Mailpit). O e-mail mostra o nome da barbearia (`BARBERSHOP_NAME`, ou o `APP_NAME` quando vazio) e, quando preenchidos, o endereço (`BARBERSHOP_ADDRESS`) e o telefone (`BARBERSHOP_PHONE`).
 
@@ -315,7 +315,7 @@ docker run --rm -v "${ci}:/src:ro" composer:2 sh -c "cp -a /src/. /app/ && cd /a
 
 - O clone leva só o que já tem commit, como o CI. Mudanças ainda sem commit ficam de fora. Numa rodada nova, troque o nome da pasta (o `git clone` recusa uma que já existe).
 - O CI usa o PHP 8.4; a imagem `composer:2` traz o 8.5. A suíte passa nos dois.
-- O `composer audit` falha hoje com um alerta de severidade baixa no `laravel/framework` (veja [Pendências](#pendências)).
+- O `composer audit` passa sem alerta desde 15/11/2026, com o `laravel/framework` na 13.40.0. A 13.33.0, de antes, tinha um alerta de severidade baixa (GHSA-63hm-g96r-2m2q), que fazia o job falhar.
 - Os outros jobs (MySQL, front, imagens com Trivy, Terraform e actionlint) estão no [`docs/nuvem/CI-CD.md`](docs/nuvem/CI-CD.md), "Rodar o mesmo no computador".
 
 ### O que os testes cobrem
@@ -343,7 +343,9 @@ Os testes de feature ficam em `tests/Feature`, um arquivo por recurso ou assunto
 | `composer test:mysql` (MySQL 8.4.13, PHP 8.4.27) | 758 passaram, nenhum pulado, 8582 asserções |
 | Igual ao CI, numa cópia sem `vendor`, `public/build` e `.env` | 747 passaram e 11 pulados, 8544 asserções |
 | Pint e `npm run build` | Sem erro |
-| `npm audit` e `composer audit` | `npm audit` sem vulnerabilidade; `composer audit` com 1 alerta baixo (veja [Pendências](#pendências)) |
+| `npm audit` e `composer audit` | Os dois sem nenhum alerta: o `composer audit` desde a atualização do `laravel/framework` para a 13.40.0 (antes dela, ele acusava 1 alerta baixo na 13.33.0) |
+
+Com o `laravel/framework` 13.40.0, no mesmo dia, as três rodadas deram os mesmos números ([relatório técnico](docs/RELATORIO-TECNICO.md), seção 4.12).
 
 ## Endpoints
 
@@ -524,11 +526,12 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 - [x] As duas trilhas juntas (aplicação e nuvem)
 - [x] README, `AGENTS.md`, `docs/ARQUITETURA.md`, ADR do monólito modular, relatório técnico, roteiro da apresentação e checklist OWASP preenchido
 - [x] Verificação completa: suíte no SQLite, no MySQL e igual à do CI, homolog com as imagens de produção, k6, resiliência, headers, CSRF no navegador, OWASP ZAP, Terraform e os prints
-- [ ] `laravel/framework` 13.40.0 (alerta GHSA-63hm-g96r-2m2q): espera o OK do Leonam
-- [x] Queda do banco e "subir de novo sem perder nada" com o MySQL num volume de verdade (um volume novo, `barberflow-homolog_dbdata-r`, porque o antigo tem a senha perdida)
+- [x] `laravel/framework` 13.40.0 (15/11/2026, com o OK do Leonam): o `composer audit` sem o alerta GHSA-63hm-g96r-2m2q, a suíte com os mesmos números e a homolog conferida de novo do zero, com as imagens novas
+- [x] Queda do banco e "subir de novo sem perder nada" com o MySQL num volume de verdade (na revisão final, num volume novo, o `barberflow-homolog_dbdata-r`, porque o antigo tinha a senha perdida; na rodada do Laravel 13.40.0, o "subir de novo sem perder nada" outra vez, no volume padrão)
 - [x] Rodada de acabamento: o menu numa linha só, os cadastros em lista no celular e os blocos curtos da Agenda, com os prints refeitos; o 422 do e-mail repetido no mesmo instante, provado nos testes; e o cadastro de conta com o e-mail fora do ar e o limite de leitura do MySQL, medidos de novo na homolog (k6, ZAP, headers e CSRF ficaram os da verificação)
 - [x] Segunda rodada de acabamento: o limite de tempo do servidor de e-mail (`MAIL_TIMEOUT`) e o log do lembrete na saída do agendador, medidos de novo na homolog com o servidor de e-mail congelado; o e-mail da tela "Confirme seu e-mail" no celular; a confirmação do e-mail contra o cadastro de cliente da barbearia, provada sem erro no MySQL; e a confirmação que, no MySQL, ligava a conta ao cadastro de cliente de outra pessoa com um e-mail só parecido (com acento), com o cadastro de conta passando a recusar e-mail com acento (os prints, o k6, o ZAP, os headers e o CSRF ficaram os de antes). Logo depois, os dois achados novos dela: a confirmação que o MySQL desfaz por deadlock, com duas contas confirmando no mesmo instante, roda de novo, e o e-mail da Minha conta quebra só depois do @ e antes dos pontos no celular
-- [ ] O volume antigo da homolog (`barberflow-homolog_dbdata`, senha perdida): apagar ou trocar espera o OK do Leonam
+- [x] Os dois volumes do banco da homolog (o `barberflow-homolog_dbdata`, da senha perdida, e o `barberflow-homolog_dbdata-r`) apagados em 15/11/2026, com o OK do Leonam: a homolog voltou ao volume padrão, criado de novo com a senha do `homolog.env` e com os dados de demonstração
+- [ ] O resíduo do teste de concorrência no banco da demonstração: tirar espera o OK do Leonam (veja [Pendências](#pendências))
 
 ## Prints das telas
 
@@ -550,8 +553,11 @@ Os 44 prints (admin, barbeiro, cliente e visitante, cada tela em 1280 e em 390 p
 
 ## Pendências
 
-Esperam o OK do Leonam (detalhes no [relatório técnico](docs/RELATORIO-TECNICO.md), seção "Pendências"):
+As que esperavam o OK do Leonam foram resolvidas em 15/11/2026, com a resposta dele (detalhes no [relatório técnico](docs/RELATORIO-TECNICO.md), seção 4.12):
 
-- **`laravel/framework`:** o `composer audit` acusa o GHSA-63hm-g96r-2m2q, de severidade baixa, na 13.33.0. A correção é a 13.40.0. Até a atualização, o passo `composer audit` do job `PHP` do CI falha.
-- **Volume do banco da homolog:** o `barberflow-homolog_dbdata` do computador do Leonam foi criado com uma senha que se perdeu. A verificação usou o MySQL num tmpfs e, para o "subir de novo sem perder nada" e a queda do banco, um volume novo (`barberflow-homolog_dbdata-r`, com os dados do `DemoSeeder`). Apagar ou trocar o antigo, e apagar o novo se ele não for mais usado, espera a decisão dele.
-- **Arquivo solto na worktree Nuvem:** um arquivo sem uso na raiz da outra worktree do Orca, fora deste repositório. O nome dele fica fora deste documento, porque tem o formato de uma senha gerada.
+- **`laravel/framework`:** foi da 13.33.0 para a 13.40.0. O `composer audit` ficou sem alerta (o GHSA-63hm-g96r-2m2q, de severidade baixa, saiu), e o passo `composer audit` do job `PHP` do CI deixa de falhar.
+- **Volumes do banco da homolog:** o `barberflow-homolog_dbdata` do computador do Leonam, criado com uma senha que se perdeu (por isso a verificação usou o MySQL num tmpfs), e o `barberflow-homolog_dbdata-r`, o volume novo do "subir de novo sem perder nada" e da queda do banco, foram apagados. A homolog voltou ao volume padrão, o `barberflow-homolog_dbdata`, criado de novo com a senha do `homolog.env` e com os dados do `DemoSeeder`.
+
+Espera o OK dele (relatório técnico, seção "Pendências"):
+
+- **Resíduo do teste de concorrência no banco da demonstração:** o `concorrencia.js` da rodada do Laravel 13.40.0 rodou no volume que ficou com a demonstração e deixou nele o agendamento que passou, cancelado (o app não apaga agendamento), e o barbeiro, o serviço e o cliente do teste, que o script exclui no fim só logicamente. Em novembro, o Dashboard conta esse barbeiro na Ocupação (mostra "(4 barbeiros)", com a taxa um quarto mais baixa que a dos 3 da demonstração) e no resumo por barbeiro, zerado, e soma o cancelado aos Atendimentos; a Agenda de 16/11 mostra o cancelado em "Cancelados e faltas" no computador e numa seção do barbeiro no celular. Tirar o resíduo pede apagar direto no banco o agendamento e as linhas do barbeiro, do serviço e do cliente do teste (só o agendamento não basta: a Ocupação vem da linha do barbeiro) ou um banco novo com o seed de novo (apagar o volume).
