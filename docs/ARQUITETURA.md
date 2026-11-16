@@ -643,7 +643,7 @@ Disciplina de nuvem (as 4 sprints do `Sistema Cloud.pdf`, com o que cada uma ped
 |---|---|---|
 | 1 | Terraform, containers (`docker/`), `docker-compose.yml` e Nginx | Entregue: a imagem em estágios, os compose de dev, homolog e produção, a rede da AWS e o state remoto |
 | 2 | Banco gerenciado, cache distribuído, backup e conexões seguras | Entregue no código: RDS MySQL 8.4 com TLS e backup, ElastiCache, security groups, IAM e SSM. Validado só no código |
-| 3 | Imagens otimizadas e CI/CD | Entregue no código: CI em todo pull request e deploy por tag com OIDC e rollback. Validado só no código: as branches estão no GitHub desde 16/11/2026, mas o CI só roda a partir do primeiro pull request que tiver o `ci.yml`, e o deploy, depois do primeiro `apply` |
+| 3 | Imagens otimizadas e CI/CD | Entregue: CI em todo pull request e deploy por tag com OIDC e rollback. O CI rodou no GitHub em 16/11/2026, e a `main` passou nos 6 jobs no merge do #12; o deploy fica validado só no código até o primeiro `apply` |
 | 4 | Observabilidade, testes de carga e go-live | Entregue na homolog local: monitoramento, carga, resiliência e o checklist de go-live. O go-live na AWS fica com o grupo, porque pede a conta e custa dinheiro |
 
 Prioridades do produto (do esboço inicial): login e cadastros-base (alta), depois agenda e agendamento online (alta), depois status de atendimento, pagamentos e dashboard (média) e, por último, lembretes, fidelidade e relatórios avançados (baixa). Os relatórios avançados ficaram de fora (seção "Evolução futura").
