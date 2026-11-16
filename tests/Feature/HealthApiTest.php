@@ -9,6 +9,7 @@ use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Exceptions;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use RuntimeException;
 use Tests\TestCase;
@@ -48,6 +49,26 @@ class HealthApiTest extends TestCase
 
         $this->assertStringNotContainsString(basename($missing), $response->getContent());
         Exceptions::assertReported(QueryException::class);
+    }
+
+    public function test_logs_the_database_failure_without_the_sql(): void
+    {
+        $connection = config('database.default');
+        $missing = config("database.connections.{$connection}.driver") === 'sqlite'
+            ? storage_path('framework/testing/nao-existe/banco.sqlite')
+            : 'banco_que_nao_existe_test';
+
+        config(["database.connections.{$connection}.database" => $missing]);
+        DB::purge($connection);
+        Log::spy();
+
+        $this->getJson('/api/health')->assertStatus(503);
+
+        // Só a conexão, os códigos e quem consultou (bootstrap/app.php): nem o SQL, nem o caminho do banco.
+        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message, array $context) => $message === 'Erro no banco de dados.'
+            && array_keys($context) === ['connection', 'code', 'driver_code', 'file']
+            && $context['connection'] === $connection
+            && str_starts_with($context['file'], 'app/Http/Controllers/HealthController.php:'));
     }
 
     public function test_returns_503_when_the_cache_is_down(): void

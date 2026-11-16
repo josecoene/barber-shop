@@ -8,12 +8,14 @@ use Illuminate\Console\Command;
 /**
  * Manda o lembrete por e-mail dos agendamentos agendados ou confirmados que
  * começam nas próximas REMINDER_HOURS_BEFORE horas e ainda não receberam
- * (regras no App\Services\ReminderSender). O agendador roda a cada 15 minutos
- * (routes/console.php), na hora e sem fila.
+ * (regras no App\Services\ReminderSender), na hora e sem fila. É a mesma rodada
+ * que o agendador faz a cada 15 minutos (routes/console.php), para rodar na mão;
+ * o agendador chama o ReminderSender dentro do próprio processo, para o log da
+ * rodada não se perder.
  *
  * No fim mostra quantos lembretes saíram, quantos foram pulados e quantos
- * falharam. Com alguma falha, termina com o código 1, para o monitoramento
- * perceber; os que falharam voltam a ser tentados na próxima rodada.
+ * falharam. Com alguma falha, termina com o código 1; os que falharam voltam a
+ * ser tentados na próxima rodada.
  */
 class SendAppointmentReminders extends Command
 {

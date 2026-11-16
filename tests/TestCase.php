@@ -7,6 +7,8 @@ use App\Models\Barber;
 use App\Models\Client;
 use App\Models\User;
 use Closure;
+use Illuminate\Database\Connection;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Mail\MailManager;
 use Illuminate\Support\ConfigurationUrlParser;
@@ -14,11 +16,14 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
+use PDO;
+use PDOStatement;
 use RuntimeException;
 use Symfony\Component\Mailer\Exception\TransportException;
 use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\Address;
+use Tests\Support\LostConnectionStatement;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -201,6 +206,64 @@ abstract class TestCase extends BaseTestCase
             if (++$seen === $occurrence) {
                 $callback();
             }
+        });
+    }
+
+    /**
+     * Como o beforeQuery(), mas logo depois da consulta, com o resultado dela já
+     * lido. Serve para o outro pedido que grava entre a validação (a regra unique
+     * já contou zero) e uma gravação feita dentro de um DB::transaction(): gravado
+     * antes da transação, o registro dele continua no banco quando ela é desfeita,
+     * como num banco de verdade. Gravado no beforeQuery() do próprio insert, ele
+     * entraria na transação deste pedido e sumiria junto.
+     */
+    protected function afterQuery(string $pattern, Closure $callback, int $occurrence = 1): void
+    {
+        $seen = 0;
+        $connection = DB::connection();
+
+        $connection->listen(function (QueryExecuted $query) use (&$seen, $pattern, $callback, $occurrence, $connection) {
+            if ($query->connection !== $connection || $seen >= $occurrence || preg_match($pattern, str_replace(['"', '`'], '', $query->sql)) !== 1) {
+                return;
+            }
+
+            if (++$seen === $occurrence) {
+                $callback();
+            }
+        });
+    }
+
+    /**
+     * Simula a leitura que desiste no DB_READ_TIMEOUT depois que o banco já
+     * gravou: o primeiro comando da conexão padrão cujo SQL casa com $pattern
+     * (como no beforeQuery()) roda de verdade e, logo depois, dá o erro de conexão
+     * perdida do MySQL (2006). Fora de uma transação, o Laravel reconecta e repete
+     * o comando; a reconexão daqui volta à mesma conexão, como a de verdade volta
+     * ao mesmo banco (no SQLite em memória, uma conexão nova seria um banco vazio).
+     *
+     * Dentro de uma transação o Laravel nunca repete, e o RefreshDatabase roda
+     * cada teste dentro de uma: este helper fecha a dele, gravando o que o teste
+     * já criou. O RefreshDatabase percebe a transação fechada e recria as tabelas
+     * antes do próximo teste.
+     */
+    protected function loseConnectionAfter(string $pattern): void
+    {
+        $connection = DB::connection();
+
+        while ($connection->transactionLevel() > 0) {
+            $connection->commit();
+        }
+
+        $pdo = $connection->getPdo();
+
+        LostConnectionStatement::$pattern = $pattern;
+        $pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS, [LostConnectionStatement::class]);
+        $connection->setReconnector(fn (Connection $lost) => $lost->setPdo($pdo));
+
+        // No SQLite em memória, o RefreshDatabase usa o mesmo PDO no teste seguinte.
+        $this->beforeApplicationDestroyed(function () use ($pdo) {
+            LostConnectionStatement::$pattern = null;
+            $pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS, [PDOStatement::class]);
         });
     }
 

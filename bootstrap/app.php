@@ -5,16 +5,20 @@ use App\Http\Middleware\EnsureEmailIsVerified;
 use App\Http\Middleware\SecurityHeaders;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Exceptions\ThrottleRequestsException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
+use Symfony\Component\Mailer\Exception\TransportExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -54,6 +58,59 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias(['verified' => EnsureEmailIsVerified::class]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // Erros sem dado pessoal no log, em dois casos:
+        // - erro de banco: a mensagem da QueryException traz o SQL com os valores da consulta no lugar dos
+        //   "?" (nome, e-mail e observações de quem está nela), e a do MySQL pode repetir um valor
+        //   ("Duplicate entry 'x' for key ..."). O log fica com a conexão e o código do erro (o SQLSTATE e o
+        //   do banco, como 23000 e 1062);
+        // - falha no envio de e-mail (confirmação de conta, "esqueci a senha" e o reenvio do link): a
+        //   mensagem do Symfony Mailer traz a resposta do servidor de e-mail, que costuma repetir o endereço
+        //   de quem ia receber ("550 5.1.1 <maria@...>: Recipient address rejected"), e a do login no SMTP
+        //   traz o usuário. O log fica com a classe do erro e o código (o da resposta do servidor, como 550,
+        //   ou 0 quando ele nem respondeu).
+        // Nos dois, mais o arquivo:linha do código do projeto que fez a consulta ou mandou o e-mail, sem a
+        // mensagem e sem o rastro da pilha. Vale também para o erro embrulhado em outro, como o ViewException
+        // de uma consulta feita dentro de uma view, que repete a mensagem dela. O return false impede o log
+        // padrão do Laravel; os outros erros seguem para ele. O lembrete por e-mail não passa por aqui: o
+        // ReminderSender trata a própria falha e grava só o id do agendamento.
+        $exceptions->report(function (Throwable $e) {
+            // O primeiro ponto da pilha fora do vendor é o código do projeto: o arquivo do próprio erro é
+            // sempre o do Laravel (Connection.php) ou o do Symfony Mailer.
+            $origin = function (Throwable $error): string {
+                $vendor = base_path('vendor').DIRECTORY_SEPARATOR;
+                $frame = collect($error->getTrace())
+                    ->first(fn (array $frame) => isset($frame['file'], $frame['line']) && ! str_starts_with($frame['file'], $vendor));
+                $location = $frame === null ? $error->getFile().':'.$error->getLine() : $frame['file'].':'.$frame['line'];
+
+                return Str::after($location, base_path().DIRECTORY_SEPARATOR);
+            };
+
+            for ($cause = $e; $cause !== null; $cause = $cause->getPrevious()) {
+                if ($cause instanceof QueryException) {
+                    Log::error('Erro no banco de dados.', [
+                        'connection' => $cause->getConnectionName(),
+                        'code' => $cause->getCode(),
+                        'driver_code' => $cause->errorInfo[1] ?? null,
+                        'file' => $origin($cause),
+                    ]);
+
+                    return false;
+                }
+
+                if ($cause instanceof TransportExceptionInterface) {
+                    Log::error('Falha no envio de e-mail.', [
+                        'class' => $cause::class,
+                        'code' => $cause->getCode(),
+                        'file' => $origin($cause),
+                    ]);
+
+                    return false;
+                }
+            }
+
+            return null;
+        });
+
         $wantsJson = fn (Request $request) => $request->is('api', 'api/*') || $request->expectsJson();
 
         $exceptions->shouldRenderJsonWhen($wantsJson);

@@ -40,7 +40,7 @@ O JSON pode trazer os acentos escapados (`"n\u00e3o"` no lugar de `"não"`). É 
 | `419` | Sessão expirada | Só nas telas: o token CSRF da sessão do navegador não vale mais |
 | `422 Unprocessable Entity` | Falha de validação | Campo ausente, inválido, duplicado ou fora do limite, filtro de listagem inválido, e-mail ou senha errados no login, horário ocupado ou fora do expediente, mudança de status que não vale, pagamento de atendimento não concluído ou que já tem pagamento, prêmio de fidelidade sem direito ou com o valor junto, lembrete de agendamento que não recebe lembrete, período do dashboard maior que 366 dias |
 | `429 Too Many Requests` | Limite de requisições | Passou do limite por minuto (veja [Limites de requisição](#limites-de-requisição)), ou pediu o "Enviar lembrete agora" do mesmo agendamento antes de 10 minutos, mesmo depois de remarcar |
-| `503 Service Unavailable` | Fora do ar | `/health` quando o banco ou o cache não responde, ou o e-mail do "Enviar lembrete agora" que não saiu |
+| `503 Service Unavailable` | Fora do ar | `/health` quando o banco ou o cache não responde, ou o e-mail que não saiu no "Enviar lembrete agora" ou no reenvio do link de confirmação |
 
 ### Sem login (401)
 
@@ -331,7 +331,7 @@ O cliente cria a própria conta. Admin e barbeiro não se cadastram: o admin ini
 | Campo | Obrigatório | Regras |
 |---|---|---|
 | `name` | sim | até 255 caracteres |
-| `email` | sim | e-mail válido, até 255 caracteres, que ainda não tenha conta. Não aceita o domínio `barberflow.invalid` |
+| `email` | sim | e-mail válido, até 255 caracteres, que ainda não tenha conta, só com letras, números e símbolos simples, sem acento (veja abaixo). Não aceita o domínio `barberflow.invalid` |
 | `phone` | não | até 20 caracteres |
 | `password` | sim | mínimo de 8 caracteres |
 | `password_confirmation` | sim | igual a `password` |
@@ -344,22 +344,33 @@ Resposta `201`:
 
 A conta nasce com o perfil `client` (um `role` mandado no corpo é ignorado) e com o e-mail ainda não confirmado. O BarberFlow manda um e-mail com o link de confirmação, que vale 60 minutos.
 
+Com o servidor de e-mail fora do ar, a conta é criada do mesmo jeito e a resposta continua `201`, com outro aviso. Para pedir o link de novo, entre (`POST /login`) e use o reenvio, abaixo. A falha vai para o log da aplicação sem o endereço:
+
+```json
+{ "message": "Conta criada, mas não foi possível enviar o e-mail de confirmação agora. Peça um novo link em alguns minutos." }
+```
+
+Dois cadastros com o mesmo e-mail no mesmo instante: os dois passam pela regra `unique`, e o índice `unique` do banco recusa o segundo. Ele recebe o mesmo `422` da regra, `Este e-mail já está cadastrado.` no campo `email`, e a conta dele não é criada.
+
+E-mail com acento ou outro caractere fora do ASCII dá `422` em `email`: `O campo e-mail deve conter apenas letras, números e símbolos simples (sem acento).` O MySQL compara texto sem diferenciar acento: para o banco, `maria@gmáil.com` é o mesmo e-mail de `maria@gmail.com`, mas o link de confirmação iria para outro domínio (`xn--gmil-6na.com`), que qualquer um pode registrar. Sem a recusa, a conta com o endereço parecido ocuparia o lugar da conta da dona do e-mail, que receberia `Este e-mail já está cadastrado.`, e o "esqueci minha senha" mandaria o link para o endereço parecido.
+
 Até confirmar, a conta entra (login e token funcionam), mas só usa as rotas da própria conta: `/user`, `/user/password`, `/logout` e o reenvio do link. As outras, como `/services` e `/barbers`, respondem `403` (`Confirme seu e-mail para continuar.`), e assim quem cria uma conta com o e-mail de outra pessoa não vê nada antes de provar que o e-mail é dele.
 
 **Confirmação do e-mail.** O link do e-mail abre nas telas (`/email/verify/{id}/{hash}`, assinado). Quem não está logado entra primeiro e depois o link é confirmado. Ao confirmar:
 
-- se já existe um cliente com o mesmo e-mail, sem conta, a conta é ligada a ele, e o cliente passa a ver o histórico que a barbearia já tinha;
-- se não existe, nasce um cadastro de cliente com o nome, o e-mail e o telefone da conta.
+- se já existe um cliente com o mesmo e-mail (no MySQL, maiúsculas e minúsculas não contam), sem conta, a conta é ligada a ele, e o cliente passa a ver o histórico que a barbearia já tinha;
+- se não existe, nasce um cadastro de cliente com o nome, o e-mail e o telefone da conta;
+- se o cliente achado já tem outra conta, ou se o e-mail dele só é igual ao da conta para o banco (no MySQL, a busca por `maria@gmáil.com` acha `maria@gmail.com`), a conta não é ligada a ele nem ganha um cadastro, e o log da aplicação registra só os ids. Sem cadastro de cliente, a conta não agenda (`403`).
 
-A ligação só acontece depois da confirmação, porque é ela que prova que a pessoa é dona do e-mail. Sem isso, qualquer um veria o histórico de outra pessoa só digitando o e-mail dela.
+A ligação só acontece depois da confirmação, porque é ela que prova que a pessoa é dona do e-mail, e só com o mesmo e-mail: quem confirmou `maria@gmáil.com` provou ser dono de outro endereço. Sem isso, qualquer um veria o histórico de outra pessoa só digitando o e-mail dela.
 
 Fora do ambiente local, os links que vão por e-mail (confirmação e "esqueci minha senha") sempre começam pelo `APP_URL`, seja qual for o `Host` da requisição que pediu o e-mail.
 
-**Reenviar o link (`POST /email/verification-notification`)**, com login, até 6 vezes por minuto: `202` com `{"message": "Enviamos um novo link de confirmação para o seu e-mail."}`, ou `200` com `{"message": "Seu e-mail já está confirmado."}`.
+**Reenviar o link (`POST /email/verification-notification`)**, com login, até 6 vezes por minuto: `202` com `{"message": "Enviamos um novo link de confirmação para o seu e-mail."}`, ou `200` com `{"message": "Seu e-mail já está confirmado."}`. Com o servidor de e-mail fora do ar, `503` com `{"message": "Não foi possível enviar o link de confirmação agora. Tente de novo em alguns minutos."}`; a falha vai para o log sem o endereço.
 
 ### Esqueci minha senha
 
-**Pedir o link (`POST /forgot-password`)**, aberto, com o campo `email`. A resposta é sempre a mesma, com e-mail cadastrado ou não, para ninguém usar esta rota para descobrir quem tem conta:
+**Pedir o link (`POST /forgot-password`)**, aberto, com o campo `email`. A resposta é sempre a mesma, com e-mail cadastrado ou não, para ninguém usar esta rota para descobrir quem tem conta. Vale também com o servidor de e-mail fora do ar ou recusando o endereço: a falha, que só acontece com um e-mail cadastrado, vai para o log da aplicação sem o endereço, e a resposta não muda:
 
 ```json
 { "message": "Se o e-mail estiver cadastrado, você vai receber o link para redefinir a senha." }
@@ -411,7 +422,7 @@ Os valores ficam em `config/barberflow.php` e os que têm variável podem mudar 
 | Cadastro de conta de cliente | 5 por minuto | IP | (fixo) |
 | Esqueci e redefinir a senha | 5 por minuto | e-mail + IP | (fixo) |
 | Reenvio do e-mail de confirmação | 6 por minuto | usuário | (fixo) |
-| "Enviar lembrete agora" | 1 a cada 10 minutos, contando o lembrete do comando e mesmo depois de remarcar | agendamento | (fixo, `resend_minutes`) |
+| "Enviar lembrete agora" | 1 a cada 10 minutos, contando o lembrete automático e mesmo depois de remarcar | agendamento | (fixo, `resend_minutes`) |
 | "Enviar lembrete agora" | 10 por minuto | usuário | (fixo) |
 | `GET /health` | sem limite | | |
 
@@ -447,7 +458,7 @@ Resposta `503` quando algo falha (aqui, o banco):
 }
 ```
 
-A resposta só diz `ok` ou `falhou`. O motivo da falha vai para o log da aplicação, nunca para a resposta.
+A resposta só diz `ok` ou `falhou`. O motivo da falha vai para o log da aplicação, nunca para a resposta. Com o cache fora do ar, o `503` sai em 3 a 4 segundos; com o banco de pé e sem responder (congelado), em até cerca de 20, pelo limite de leitura do MySQL (veja [Limitações](#limitações)).
 
 A rota é aberta (sem login) e fica fora do limite de requisições por minuto da API (`withoutMiddleware('throttle:api')` em `routes/api.php`): o monitoramento e o deploy consultam o `/health` sem token e sem receber `429`.
 
@@ -626,6 +637,8 @@ curl "http://localhost:8000/api/clients?search=silva&per_page=10" \
 
 Na atualização, o e-mail do próprio registro é ignorado na checagem de unicidade, então enviar o mesmo e-mail em um `PUT` não gera erro.
 
+Dois pedidos com o mesmo e-mail no mesmo instante (`POST` ou `PUT`) passam os dois pela regra `unique`, e o índice `unique` do banco recusa o segundo. Ele recebe este mesmo `422`, e nada fica gravado em dobro. Vale também para os barbeiros, inclusive para o login do barbeiro, que usa o mesmo e-mail.
+
 **Excluir** (`DELETE /clients/1`, resposta `204`): o cliente sai das listas e, no banco, a linha fica assim:
 
 ```json
@@ -744,7 +757,7 @@ O servidor preenche o resto, e ignora esses campos quando vêm no corpo:
 | `status` e `status_label` | o status (começa em `scheduled`) e o nome dele em português |
 | `client`, `barber` e `service` | só `id` e `name` de cada um, sem e-mail e telefone. Continuam aparecendo depois que o cadastro é excluído (o cliente, anonimizado) |
 | `payment` | o pagamento do atendimento, só com `id`, `status` e `status_label` (ex.: `{"id": 9, "status": "paid", "status_label": "Pago"}`), ou `null` quando ainda não há pagamento. Valor e forma ficam em [Payments](#payments-pagamentos) |
-| `reminder_sent_at` | quando saiu o lembrete por e-mail, em UTC (ISO 8601), ou `null` enquanto não saiu. Só o servidor grava: o comando `appointments:send-reminders` e o "Enviar lembrete agora" (veja [Lembretes](#lembretes)). Remarcar a data ou o horário volta a `null`, para o lembrete do horário novo sair |
+| `reminder_sent_at` | quando saiu o lembrete por e-mail, em UTC (ISO 8601), ou `null` enquanto não saiu. Só o servidor grava: a rodada automática do agendador (ou o comando `appointments:send-reminders`, que faz a mesma rodada na mão) e o "Enviar lembrete agora" (veja [Lembretes](#lembretes)). Remarcar a data ou o horário volta a `null`, para o lembrete do horário novo sair |
 
 ### Regras de horário
 
@@ -808,7 +821,7 @@ Não existe `DELETE /appointments/{id}` (`405`): cancelar é mudar o status, e o
 - só com o status agendado ou confirmado;
 - quando a data, o horário, o barbeiro ou o serviço mudam, as regras de horário rodam de novo, sem contar o próprio agendamento, e o término é recalculado. Mudar só as `notes` não confere o horário;
 - o preço só muda quando o serviço muda;
-- mudar a data ou o horário volta o `reminder_sent_at` a `null`: o lembrete que saiu falava do horário antigo, e o comando manda o do horário novo. Trocar só o barbeiro, o serviço ou as observações não mexe nele;
+- mudar a data ou o horário volta o `reminder_sent_at` a `null`: o lembrete que saiu falava do horário antigo, e a rodada automática manda o do horário novo. Trocar só o barbeiro, o serviço ou as observações não mexe nele;
 - `client_id` e `status` mandados no corpo são ignorados, sem erro: o cliente não muda, e o status tem rota própria;
 - no agendamento de um cliente excluído (um passado que ficou como agendado), `notes` preenchido dá `422` em `notes`: `O cliente foi excluído: deixe as observações em branco.` A exclusão apagou as observações (LGPD), e `notes` vazio ou `null` continua aceito;
 - se outra pessoa trocou o barbeiro ou o serviço do mesmo agendamento no mesmo instante, a resposta é `409` com `O agendamento mudou enquanto você editava. Recarregue e tente de novo.`
@@ -969,24 +982,26 @@ O corpo do e-mail não leva o nome, o e-mail, o telefone nem as observações do
 
 O `MAIL_MAILER=log` do `.env.example` é outra coisa e só serve no local: em vez de enviar, ele grava a mensagem inteira no fim do `storage/logs/laravel.log`, com o endereço do cliente (`To:`), a data, o horário, o serviço e o barbeiro, como faz com a confirmação de conta e o "esqueci a senha". Fora do local, use um `MAIL_MAILER` que envie de verdade, como o `smtp`, para o log não guardar dado pessoal.
 
-### Envio automático (comando)
+### Envio automático (agendador)
 
-O comando `appointments:send-reminders` manda o lembrete dos agendamentos que começam depois de agora e até `REMINDER_HOURS_BEFORE` horas à frente (padrão 24, com o limite incluído) e que ainda não receberam (`reminder_sent_at` nulo). O agendador do Laravel (`routes/console.php`) roda o comando a cada 15 minutos, com `onOneServer()` (com várias instâncias, só uma roda; precisa de cache compartilhado) e `withoutOverlapping(10)` (uma rodada não começa antes de a anterior terminar, e a trava vence em 10 minutos).
+A rodada do lembrete manda o lembrete dos agendamentos que começam depois de agora e até `REMINDER_HOURS_BEFORE` horas à frente (padrão 24, com o limite incluído) e que ainda não receberam (`reminder_sent_at` nulo). O agendador do Laravel (`routes/console.php`) roda a rodada a cada 15 minutos, dentro do próprio processo (`Schedule::call`, com o nome `appointments:send-reminders`), com `onOneServer()` (com várias instâncias, só uma roda; precisa de cache compartilhado) e `withoutOverlapping(10)` (uma rodada não começa antes de a anterior terminar, e a trava vence em 10 minutos). O comando `appointments:send-reminders` faz a mesma rodada na mão:
 
 ```bash
 php artisan appointments:send-reminders
 ```
 
-A saída diz quantos lembretes saíram, quantos foram pulados e quantos falharam (ex.: `Enviados: 1. Pulados: 0. Com falha: 0.`):
+A saída do comando diz quantos lembretes saíram, quantos foram pulados e quantos falharam (ex.: `Enviados: 1. Pulados: 0. Com falha: 0.`):
 
 - **pulados:** o de cliente excluído, o de e-mail do domínio `barberflow.invalid` e o que outro envio pegou antes;
-- **com falha:** o e-mail não saiu. O `reminder_sent_at` volta a nulo, e a rodada seguinte tenta de novo. Com alguma falha, o comando termina com o código 1, para o monitoramento perceber.
+- **com falha:** o e-mail não saiu. O `reminder_sent_at` volta a nulo, e a rodada seguinte tenta de novo. O log ganha um aviso só com o id do agendamento. Com alguma falha, a rodada do agendador termina como falha, com uma linha `ERROR` no log só com as contas (ex.: `Lembretes por e-mail com falha nesta rodada: 1. Enviados: 0. Pulados: 0.`), e o comando termina com o código 1.
 
-Cada lembrete sai uma vez. Antes de enviar, o comando reserva a linha com um `UPDATE ... WHERE reminder_sent_at IS NULL`, que também confere o status, a data, o horário, o barbeiro e o serviço que ele leu: duas rodadas ao mesmo tempo, ou o comando e o "Enviar lembrete agora", não mandam o mesmo lembrete duas vezes, e o e-mail fala do horário que estava na linha. Remarcar a data ou o horário volta o `reminder_sent_at` a nulo, e o lembrete do horário novo sai na rodada dele.
+Como a rodada roda no processo do agendador, o log dela sai junto com o dele: nos containers, na saída do `scheduler` (e no CloudWatch e no Loki); no local, no `laravel.log`. A linha da rodada na saída do agendador sai `DONE` mesmo quando ela falha (um detalhe do Laravel, igual na 13.33 e na 13.40): quem acompanha procura o `ERROR`.
+
+Cada lembrete sai uma vez. Antes de enviar, a rodada reserva a linha com um `UPDATE ... WHERE reminder_sent_at IS NULL`, que também confere o status, a data, o horário, o barbeiro e o serviço que ela leu: duas rodadas ao mesmo tempo, ou a rodada e o "Enviar lembrete agora", não mandam o mesmo lembrete duas vezes, e o e-mail fala do horário que estava na linha. Remarcar a data ou o horário volta o `reminder_sent_at` a nulo, e o lembrete do horário novo sai na rodada dele.
 
 O "agora" é o `now()` do PHP, no fuso do `APP_TIMEZONE`: o banco filtra só pela data (`appointments.date`), e a conta exata do horário é feita em PHP, igual no SQLite e no MySQL.
 
-O agendador precisa estar rodando: no local, `php artisan schedule:work` num terminal à parte; num servidor, o cron chama `php artisan schedule:run` a cada minuto (veja o README). Sem ele, o lembrete automático não sai, e o "Enviar lembrete agora" continua funcionando.
+O agendador precisa estar rodando: no local, `php artisan schedule:work` num terminal à parte; nos compose, o container `scheduler`; num servidor sem containers, o cron chama `php artisan schedule:run` a cada minuto (veja o README). Sem ele, o lembrete automático não sai, e o "Enviar lembrete agora" continua funcionando.
 
 ### Enviar lembrete agora
 
@@ -998,9 +1013,9 @@ O agendador precisa estar rodando: no local, `php artisan schedule:work` num ter
 | Barbeiro | só os da própria agenda (o de outro barbeiro dá `403`) |
 | Cliente | não, nem do próprio horário (`403`) |
 
-- Vale a qualquer momento antes do início, mesmo fora da janela do comando, e conta como o lembrete do agendamento: depois dele, o comando não manda outro, a não ser que a data ou o horário sejam remarcados.
-- Um envio a cada 10 minutos por agendamento (`resend_minutes`, fixo em `config/barberflow.php`), contando o lembrete do comando. Antes disso, `429` com o `Retry-After` em segundos. O limite é por agendamento: o de outro agendamento sai na hora.
-- Remarcar não libera outro envio manual antes dos 10 minutos: a remarcação volta o `reminder_sent_at` a nulo (para o comando mandar o lembrete do horário novo na rodada dele), mas o último envio manual também fica guardado no cache, e é ele que vale.
+- Vale a qualquer momento antes do início, mesmo fora da janela da rodada automática, e conta como o lembrete do agendamento: depois dele, a rodada não manda outro, a não ser que a data ou o horário sejam remarcados.
+- Um envio a cada 10 minutos por agendamento (`resend_minutes`, fixo em `config/barberflow.php`), contando o lembrete da rodada automática. Antes disso, `429` com o `Retry-After` em segundos. O limite é por agendamento: o de outro agendamento sai na hora.
+- Remarcar não libera outro envio manual antes dos 10 minutos: a remarcação volta o `reminder_sent_at` a nulo (para a rodada mandar o lembrete do horário novo), mas o último envio manual também fica guardado no cache, e é ele que vale.
 - Cada usuário manda até 10 lembretes por minuto, somando todos os agendamentos (limitador `reminders`). Depois disso, `429` com `Retry-After`, como nos outros [limites de requisição](#limites-de-requisição).
 - A linha do agendamento fica travada enquanto as regras são conferidas: dois cliques ao mesmo tempo passam um de cada vez, e o segundo já recebe o `429`. O e-mail sai depois de soltar a trava.
 - Se o e-mail não sair, a resposta é `503`, e o `reminder_sent_at` volta ao que era (nulo, ou a hora do envio anterior).
@@ -1584,15 +1599,17 @@ Período longo demais (`?from=2026-01-01&to=2027-01-02`, 367 dias), `422`:
 ## Limitações
 
 - **Agenda por barbeiro:** os horários livres olham só a agenda do barbeiro escolhido. O conflito do cliente com outro barbeiro aparece só ao agendar (`422` em `client_id`).
-- **Concorrência conferida no MySQL:** as travas que impedem dois agendamentos no mesmo horário, dois pagamentos do mesmo atendimento e o mesmo prêmio de fidelidade usado duas vezes só funcionam de verdade no MySQL; no SQLite dos testes, elas não fazem nada. O `composer test:mysql` (veja o README) roda o `AppointmentConcurrencyTest`, o `PaymentConcurrencyTest` e o `LoyaltyConcurrencyTest`, que conferem as travas com duas conexões, em passos de ordem fixa. A reserva do lembrete é um `UPDATE` condicional: o `ReminderCommandTest` e o `ReminderApiTest` mudam a linha logo antes dele (outra rodada, o envio manual, o cancelamento ou a remarcação) e logo antes do `UPDATE` que desfaz a reserva depois de uma falha, nos dois bancos, sem um teste de duas conexões no MySQL. A prova com pedidos simultâneos de verdade fica para o teste de carga `concorrencia.js`.
+- **Concorrência conferida no MySQL:** as travas que impedem dois agendamentos no mesmo horário, dois pagamentos do mesmo atendimento e o mesmo prêmio de fidelidade usado duas vezes, e a que faz a confirmação do e-mail esperar o cadastro de cliente da barbearia com o mesmo e-mail (ou o contrário), só funcionam de verdade no MySQL; no SQLite dos testes, elas não fazem nada. O `composer test:mysql` (veja o README) roda o `AppointmentConcurrencyTest`, o `PaymentConcurrencyTest`, o `LoyaltyConcurrencyTest` e o `EmailVerificationConcurrencyTest`, que conferem as travas com duas conexões, em passos de ordem fixa. A reserva do lembrete é um `UPDATE` condicional: o `ReminderCommandTest` e o `ReminderApiTest` mudam a linha logo antes dele (outra rodada, o envio manual, o cancelamento ou a remarcação) e logo antes do `UPDATE` que desfaz a reserva depois de uma falha, nos dois bancos, sem um teste de duas conexões no MySQL. A prova com pedidos simultâneos de verdade fica para o teste de carga `concorrencia.js`.
 - **O cadastro de conta diz se o e-mail já tem conta:** `POST /register` responde `Este e-mail já está cadastrado.`. O login e o "esqueci a senha" não revelam isso.
+- **Banco congelado:** com o MySQL de pé e sem responder, cada leitura desiste em `DB_READ_TIMEOUT` segundos (padrão 5), e o Laravel tenta de novo: o pedido responde em até cerca de 4 vezes esse tempo (20 segundos com o padrão), com `503` no `/health` e `500` nas outras rotas. Na homolog, em 15/11/2026: `503` em 20,05 s no `/health` e `500` em 20,03 s com o token; antes do limite, era o `504` do Nginx, em 60 s.
+- **Servidor de e-mail congelado:** com o servidor de e-mail de pé e sem responder, cada envio desiste em `MAIL_TIMEOUT` segundos (padrão 10), ou em até o dobro se ele congelar no meio da conversa. As rotas que mandam e-mail (`POST /register`, `POST /email/verification-notification`, `POST /forgot-password` e `POST /appointments/{id}/reminder`) esperam esse tempo e respondem como na falha do envio, antes dos 60 segundos do Nginx. Na homolog, em 15/11/2026: `201` em 10,42 s no `/register`, com o aviso de que o link não saiu, `503` em 10,04 s no reenvio do link e `503` em 10,06 s no lembrete; antes do limite, o reenvio levou 60,03 s. Com o servidor de e-mail fora do ar, a resposta sai em poucos segundos.
 - **Sem desfazer exclusão:** a linha fica no banco, mas não há rota para restaurar um registro excluído. No cliente, os dados pessoais já foram apagados.
 - **Página de até 100 itens:** quem precisa de tudo (como a tela Agendar) pede `per_page=100`; com mais de 100 cadastros, os outros ficam nas páginas seguintes. A Agenda e Meus horários leem as páginas seguintes, até 1000 agendamentos.
 - **Um pagamento por atendimento, para sempre:** depois do estorno, o atendimento não recebe outro pagamento. Para cobrar de novo um valor estornado por engano, o admin corrige o pagamento estornado (valor e observações), mas ele continua fora do faturamento.
 - **Dashboard pela data do atendimento:** o faturamento de um dia é o dos atendimentos daquele dia, mesmo que o pagamento tenha sido registrado depois. Não existe um relatório pela data do pagamento.
 - **Ocupação sem data de contratação:** o barbeiro cadastrado no meio do período conta o período inteiro nos minutos disponíveis, e o excluído no meio do período também (os atendimentos dele entram nos minutos ocupados). Só fica de fora quem foi cadastrado depois do último dia do período ou excluído antes do primeiro.
-- **Lembrete só por e-mail, na hora e sem fila:** o comando manda um e-mail de cada vez, e um servidor de e-mail lento atrasa a rodada (a trava do `withoutOverlapping` vence em 10 minutos). Não há lembrete por SMS ou WhatsApp, nem confirmação de presença pelo e-mail.
-- **O lembrete automático depende do agendador:** sem o `schedule:work` (local) ou o cron com o `schedule:run` (servidor), ele não sai. O "Enviar lembrete agora" funciona sem o agendador.
+- **Lembrete só por e-mail, na hora e sem fila:** a rodada manda um e-mail de cada vez, e um servidor de e-mail lento atrasa a rodada (até o `MAIL_TIMEOUT` por lembrete, com ele congelado; a trava do `withoutOverlapping` vence em 10 minutos). Não há lembrete por SMS ou WhatsApp, nem confirmação de presença pelo e-mail.
+- **O lembrete automático depende do agendador:** sem o `schedule:work` (local e container `scheduler`) ou o cron com o `schedule:run` (servidor sem containers), ele não sai. O "Enviar lembrete agora" funciona sem o agendador.
 - **Um prêmio de fidelidade vale para qualquer serviço:** o desconto é sobre o preço do atendimento pago, seja um corte ou um combo, e o prêmio não vence. Mudar o `LOYALTY_VISITS` muda a conta de todos os clientes, inclusive a dos prêmios que já foram ganhos (os disponíveis nunca ficam negativos).
 
 ## Coleção do Postman

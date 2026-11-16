@@ -45,7 +45,13 @@ return [
             'port' => env('MAIL_PORT', 2525),
             'username' => env('MAIL_USERNAME'),
             'password' => env('MAIL_PASSWORD'),
-            'timeout' => null,
+            // Segundos para desistir de abrir a conexão e de esperar cada resposta do servidor de e-mail
+            // (MAIL_TIMEOUT, padrão 10; vazio ou 0 vale o padrão). Sem ele, o Symfony Mailer espera o
+            // default_socket_timeout do PHP, de 60 s: com o servidor de pé e sem responder (congelado), o
+            // pedido ficava preso até o 504 do Nginx (60 s) e a rodada do lembrete, presa junto. Com 10, o
+            // envio desiste em 10 s quando o servidor não responde nem a saudação, ou em até 20 s quando ele
+            // congela no meio da conversa (o comando que ficou sem resposta e o QUIT esperam 10 s cada).
+            'timeout' => (float) (env('MAIL_TIMEOUT') ?: 10),
             'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
         ],
 

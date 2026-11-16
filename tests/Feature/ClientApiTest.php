@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Exceptions\EmailTakenException;
 use App\Models\Client;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -11,6 +13,19 @@ use Tests\TestCase;
 class ClientApiTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * Resposta do e-mail em uso, a da regra unique (lang/pt_BR/validation.php).
+     */
+    private const EMAIL_TAKEN = [
+        'message' => 'Este e-mail já está cadastrado.',
+        'errors' => ['email' => ['Este e-mail já está cadastrado.']],
+    ];
+
+    /**
+     * A consulta da regra unique do e-mail no cadastro de clientes.
+     */
+    private const CLIENTS_UNIQUE_RULE = '/^select count\(\*\) as aggregate from clients where email /';
 
     /**
      * O CRUD é testado como admin, que pode tudo. As regras dos outros perfis
@@ -205,7 +220,7 @@ class ClientApiTest extends TestCase
 
         $this->postJson('/api/clients', $this->payload(['name' => 'Outro']))
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['email']);
+            ->assertExactJson(self::EMAIL_TAKEN);
     }
 
     public function test_shows_a_client(): void
@@ -238,7 +253,58 @@ class ClientApiTest extends TestCase
 
         $this->patchJson("/api/clients/{$other->id}", ['email' => 'carlos@example.com'])
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['email']);
+            ->assertExactJson(self::EMAIL_TAKEN);
+    }
+
+    /**
+     * Outro pedido grava o mesmo e-mail entre a validação e o insert: a regra
+     * unique já passou, e quem recusa é o índice unique do banco. A resposta é a
+     * mesma da regra, e não um erro 500, e nada fica gravado em dobro. O outro
+     * cadastro entra logo depois da consulta da regra (afterQuery()), antes da
+     * transação do insert, e por isso continua lá quando ela é desfeita.
+     */
+    public function test_two_requests_with_the_same_email_at_the_same_time_get_the_same_422(): void
+    {
+        $this->afterQuery(self::CLIENTS_UNIQUE_RULE, fn () => Client::create($this->payload(['name' => 'Outra Pessoa'])));
+
+        $this->postJson('/api/clients', $this->payload())
+            ->assertUnprocessable()
+            ->assertExactJson(self::EMAIL_TAKEN);
+
+        $this->assertSame(['Outra Pessoa'], Client::where('email', 'carlos@example.com')->pluck('name')->all());
+
+        // O mesmo pedido de novo, agora barrado pela própria regra unique: a mesma resposta.
+        $this->postJson('/api/clients', $this->payload())
+            ->assertUnprocessable()
+            ->assertExactJson(self::EMAIL_TAKEN);
+    }
+
+    public function test_update_racing_another_request_for_the_same_email_gets_the_same_422(): void
+    {
+        $client = Client::create($this->payload(['name' => 'Ana', 'email' => 'ana@example.com']));
+
+        $this->beforeQuery('/^update clients /', fn () => Client::create($this->payload(['name' => 'Outra Pessoa'])));
+
+        $this->patchJson("/api/clients/{$client->id}", ['email' => 'carlos@example.com'])
+            ->assertUnprocessable()
+            ->assertExactJson(self::EMAIL_TAKEN);
+
+        $this->assertSame('ana@example.com', $client->fresh()->email);
+    }
+
+    /**
+     * Só a recusa de um índice de e-mail vira o 422 do e-mail em uso. O
+     * clients.user_id também é unique (um cadastro por conta), e a recusa dele
+     * continua sendo um erro: o pedido não mandou e-mail nenhum que estivesse em uso.
+     */
+    public function test_a_refusal_of_another_unique_index_is_not_reported_as_the_email(): void
+    {
+        $user = $this->makeClientUser();
+        $other = Client::create($this->payload());
+
+        $this->expectException(UniqueConstraintViolationException::class);
+
+        EmailTakenException::guard(fn () => $other->user()->associate($user)->save());
     }
 
     public function test_deleting_a_client_anonymizes_the_personal_data(): void

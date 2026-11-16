@@ -2,7 +2,7 @@
 
 Este guia explica o pipeline do BarberFlow no GitHub Actions: o CI, que confere cada pull request e cada push na `main`, e o deploy na AWS, que publica as imagens no ECR e troca as instâncias do Auto Scaling. Também traz a role de deploy (`terraform/cicd.tf`), a configuração do GitHub que o José liga (proteção da `main`, environment `production` e Dependabot), o rollback, as migrations e a ordem com o `terraform apply`.
 
-**Situação: validado só no código.** Nada foi para o GitHub nem para a AWS. Os dois workflows passam no actionlint, o `cicd.tf` passa no `terraform validate`, no `terraform test` e no `trivy config`, e os passos de cada job do CI rodaram no computador, em containers (seção "Situação conferida em 14/11/2026"). O CI verde no GitHub, o OIDC, o deploy e o rollback só se provam depois do push e do primeiro `apply`.
+**Situação: o CI rodou no GitHub; o deploy está validado só no código.** Nada foi para a AWS. Em 16/11/2026, as 13 branches subiram para o GitHub, com o OK do Leonam, e entraram na `main` pelos PRs #6 a #13. O CI só roda no pull request e no push na `main` (`.github/workflows/ci.yml:12-16`), e o deploy, com tag `v*` ou à mão (`.github/workflows/deploy.yml:16-20`). Até o merge do #12, só o `composer audit` do job `PHP` falhava, porque a `main` estava no Laravel 13.33.0; nesse merge e nos seguintes, no mesmo dia, a `main` passou nos 6 jobs (`docs/RELATORIO-TECNICO.md`, seção 4.12). Os dois workflows passam no actionlint, o `cicd.tf` passa no `terraform validate`, no `terraform test` e no `trivy config`, e os passos de cada job do CI rodaram no computador, em containers (seção "Situação conferida em 14/11/2026"). O OIDC, o deploy e o rollback só se provam depois do primeiro `apply`.
 
 | Parte | Dono | Arquivos |
 |---|---|---|
@@ -323,7 +323,7 @@ Settings, Rules, Rulesets, New ruleset, New branch ruleset:
 - lista de bypass vazia: nem o administrador faz push direto na `main`;
 - "Restrict deletions" e "Block force pushes";
 - "Require a pull request before merging", com 1 aprovação e "Dismiss stale pull request approvals when new commits are pushed";
-- "Require status checks to pass", com os checks `PHP`, `MySQL`, `Front`, `Docker`, `Terraform` e `actionlint` e "Require branches to be up to date before merging". Os checks aparecem na lista depois que o CI roda uma vez, no primeiro pull request.
+- "Require status checks to pass", com os checks `PHP`, `MySQL`, `Front`, `Docker`, `Terraform` e `actionlint` e "Require branches to be up to date before merging". Os checks aparecem na lista depois que o CI roda uma vez num pull request que tenha o `ci.yml` (no repositório do grupo, isso aconteceu em 16/11/2026, nos PRs #11 e #13).
 
 E uma regra para as tags de versão, em New ruleset, New tag ruleset: alvo `v*`, com "Restrict creations", "Restrict updates" e "Restrict deletions", e só o administrador do repositório no bypass. Assim só o José publica uma versão, e ninguém move uma tag de versão para outro commit.
 
@@ -357,9 +357,11 @@ E uma regra para as tags de versão, em New ruleset, New tag ruleset: alvo `v*`,
 - As atualizações menores (minor e patch) de cada ecossistema vêm juntas num pull request; as maiores (major), uma por pull request.
 - Versão nova só é proposta 7 dias depois de publicada (`cooldown`): tempo para a comunidade achar uma versão adulterada, como a do Trivy em março de 2026. Os alertas de segurança não esperam.
 - No Dockerfile, o PHP fica na 8.4 (só correções 8.4.x), o Node na 24 e o Nginx na 1.30 (estável; as versões com o segundo número ímpar, como a 1.31, são a linha de testes). Nos compose, o Node e o Nginx do dev seguem a mesma regra, e o MySQL fica na 8.4 (só correções 8.4.x), a linha do RDS. Trocar de linha é decisão do grupo, feita à mão.
-- O bloco `docker-compose` lê os arquivos da raiz cujo nome casa com a regra do Dependabot (`(docker-)?compose(-\w+)?(\.[\w-]+)?\.ya?ml`, conferida no código do `dependabot-core` em 14/11/2026), o que inclui o `docker-compose.monitoring.yml` e o `docker-compose.carga.yml`. As imagens construídas no computador (`barberflow-app` e `barberflow-web`) ficam de fora pelo `ignore`, e o `docker-compose.prod.yml` não tem imagem fixa (as dele vêm do ECR, por variável). Validado só no código: a primeira rodada no GitHub mostra os pull requests.
+- O bloco `docker-compose` lê os arquivos da raiz cujo nome casa com a regra do Dependabot (`(docker-)?compose(-\w+)?(\.[\w-]+)?\.ya?ml`, conferida no código do `dependabot-core` em 14/11/2026), o que inclui o `docker-compose.monitoring.yml` e o `docker-compose.carga.yml`. As imagens construídas no computador (`barberflow-app` e `barberflow-web`) ficam de fora pelo `ignore`, e o `docker-compose.prod.yml` não tem imagem fixa (as dele vêm do ECR, por variável). Em 16/11/2026, os seis blocos rodaram no GitHub sem erro (o `docker-compose` a partir do #13, que trouxe o bloco), e só o `composer` e o `npm` abriram pull requests.
 - Os commits saem como `chore[Deps]: ...`, `chore[CI]: ...`, `chore[Docker]: ...` e `chore[Terraform]: ...`, no formato do repositório.
 - Cada pull request do Dependabot passa pelo CI inteiro antes do merge, como qualquer outro.
+- Antes do merge, confira o `composer.lock` ou o `package-lock.json` do pull request, e não só a descrição. Em 16/11/2026, o #17 dizia atualizar dois pacotes e mudou a versão de 37, descendo 16 componentes do Symfony: 11 para a 8.0, sem suporte desde 07/2026, e 5 para a 7.4 LTS (`docs/RELATORIO-TECNICO.md`, seção 4.12).
+- Depois de um push na `main`, o Dependabot nem sempre refaz os pull requests dele. Em 16/11/2026, depois do #12 e do #17, que mudaram o `composer.lock`, ele refez os do Composer (o #14, trocado pelo #17, e o #15), mas não o #16, do npm. Para rodar o CI de um pull request dele sobre a `main` nova, comente `@dependabot rebase` no pull request: o "Re-run" do Actions repete o merge de teste antigo.
 - Depois de um pull request do `terraform`, confira os hashes das quatro plataformas no lock (`docs/nuvem/TERRAFORM.md`, "Atualizar versões").
 
 ## Atualizar versões
@@ -423,12 +425,12 @@ O que rodou no computador, em containers, sem GitHub e sem AWS:
 | Passos do job `Front` (Node 24.22.3) | `npm ci` e build sem erro; `npm audit` sem nenhuma vulnerabilidade |
 | Jobs `PHP` e `MySQL` com o código da `feat/agendamentos` e um MySQL 8.4.13 com as credenciais do CI | Pint passou; SQLite com 475 testes passando, 3 pulados e 1 falha; MySQL com 479 testes e a mesma falha (abaixo) |
 
-Dois pontos deixam o CI vermelho hoje, os dois da trilha da aplicação, e não do pipeline:
+Dois pontos deixavam o CI vermelho nessa data, os dois da trilha da aplicação, e não do pipeline. Os dois foram resolvidos depois:
 
-- **`composer audit`:** o alerta GHSA-63hm-g96r-2m2q (severidade baixa, publicado em 13/11/2026) atinge o `laravel/framework` antes da 13.40.0, e o `composer.lock` está na 13.33.0. A correção é atualizar o `laravel/framework` para a 13.40 ou mais nova, dentro do `^13.17`.
-- **`Vite manifest not found`:** um teste do `RegistrationTest` da `feat/agendamentos` abre a página de erro 403 sem `withoutVite()`. No computador ele passa porque existe o `public/build`; no CI, que não faz o build, falha.
+- **`composer audit`:** o alerta GHSA-63hm-g96r-2m2q (severidade baixa, publicado em 13/11/2026) atingia o `laravel/framework` antes da 13.40.0, e o `composer.lock` estava na 13.33.0. Em 15/11/2026, com o OK do Leonam, o `laravel/framework` foi para a 13.40.0, dentro do `^13.17`, e o `composer audit` ficou sem alerta, também no `composer audit --locked` de uma cópia limpa, como no CI (`docs/RELATORIO-TECNICO.md`, seção 4.12).
+- **`Vite manifest not found`:** um teste do `RegistrationTest` da `feat/agendamentos` abria a página de erro 403 sem `withoutVite()`. No computador ele passava porque existe o `public/build`; no CI, que não faz o build, falhava. O teste ganhou o `withoutVite()` na `feat/lembretes-fidelidade` (commit `6e89adf`), e a rodada igual à do CI, numa cópia sem `public/build`, passa (747 testes passando e os 11 de trava pulados, como no SQLite).
 
-Com o ruleset da seção "Proteção da main" ligado, as duas correções precisam entrar no mesmo pull request: com só uma delas, o check `PHP` continua vermelho, e o merge não entra.
+Com o ruleset da seção "Proteção da main" ligado, um check `PHP` vermelho barra o merge: as duas correções precisam estar na branch do pull request, e as duas estão na `feat/entrega-final`. Em 16/11/2026, a `main` recebeu as outras branches antes da `feat/entrega-final`, e o job `PHP` da `main` ficou vermelho só no `composer audit` até o merge do #12.
 
 ## Problemas comuns
 

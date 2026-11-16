@@ -17,6 +17,20 @@ class BarberApiTest extends TestCase
     use RefreshDatabase;
 
     /**
+     * Resposta do e-mail em uso, a da regra unique (lang/pt_BR/validation.php).
+     */
+    private const EMAIL_TAKEN = [
+        'message' => 'Este e-mail já está cadastrado.',
+        'errors' => ['email' => ['Este e-mail já está cadastrado.']],
+    ];
+
+    /**
+     * Consulta da regra unique de users, a última da validação do e-mail do
+     * barbeiro (o e-mail dele vira o login). Depois dela, só sobram as gravações.
+     */
+    private const USERS_UNIQUE_RULE = '/^select count\(\*\) as aggregate from users where email /';
+
+    /**
      * O CRUD é testado como admin, que pode tudo. As regras dos outros perfis
      * ficam no AuthorizationTest.
      */
@@ -221,8 +235,7 @@ class BarberApiTest extends TestCase
 
         $this->postJson('/api/barbers', $this->payload(['name' => 'Outro']))
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['email'])
-            ->assertJsonPath('errors.email.0', 'Este e-mail já está cadastrado.');
+            ->assertExactJson(self::EMAIL_TAKEN);
     }
 
     public function test_shows_a_barber(): void
@@ -255,7 +268,86 @@ class BarberApiTest extends TestCase
 
         $this->patchJson("/api/barbers/{$other->id}", ['email' => 'joao@barberflow.com'])
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['email']);
+            ->assertExactJson(self::EMAIL_TAKEN);
+    }
+
+    /**
+     * Outro pedido grava um barbeiro com o mesmo e-mail logo depois da validação
+     * (a última consulta dela é a do unique de users): o índice unique do banco
+     * recusa o insert, a transação é desfeita, e a resposta é a mesma da regra.
+     */
+    public function test_two_requests_with_the_same_email_at_the_same_time_get_the_same_422(): void
+    {
+        $this->beforeQuery(self::USERS_UNIQUE_RULE, fn () => Barber::create($this->payload(['name' => 'Outro Barbeiro'])));
+
+        $this->postJson('/api/barbers', $this->payload(['password' => 'senha-do-joao']))
+            ->assertUnprocessable()
+            ->assertExactJson(self::EMAIL_TAKEN);
+
+        $this->assertSame(['Outro Barbeiro'], Barber::where('email', 'joao@barberflow.com')->pluck('name')->all());
+        $this->assertDatabaseMissing('users', ['email' => 'joao@barberflow.com']);
+    }
+
+    /**
+     * O login do barbeiro (users.email) também: outro pedido grava um usuário com
+     * o mesmo e-mail logo antes do insert do login. O insert roda aqui na mesma
+     * conexão, dentro da transação deste pedido, e some com ela quando ela é
+     * desfeita; num banco de verdade, o do outro pedido já estaria gravado.
+     */
+    public function test_a_login_with_the_same_email_created_at_the_same_time_gets_the_same_422(): void
+    {
+        $this->beforeQuery('/^insert into users /', fn () => DB::table('users')->insert([
+            'name' => 'Outra Pessoa',
+            'email' => 'joao@barberflow.com',
+            'password' => 'nao-importa',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        $this->postJson('/api/barbers', $this->payload(['password' => 'senha-do-joao']))
+            ->assertUnprocessable()
+            ->assertExactJson(self::EMAIL_TAKEN);
+
+        // O cadastro do barbeiro, gravado antes do login, foi desfeito junto.
+        $this->assertDatabaseMissing('barbers', ['email' => 'joao@barberflow.com']);
+    }
+
+    public function test_update_racing_another_request_for_the_same_email_gets_the_same_422(): void
+    {
+        $barber = Barber::create($this->payload(['name' => 'Pedro', 'email' => 'pedro@barberflow.com']));
+        $this->makeBarberUser($barber);
+
+        $this->beforeQuery(self::USERS_UNIQUE_RULE, fn () => Barber::create($this->payload(['name' => 'Outro Barbeiro'])));
+
+        $this->patchJson("/api/barbers/{$barber->id}", ['email' => 'joao@barberflow.com'])
+            ->assertUnprocessable()
+            ->assertExactJson(self::EMAIL_TAKEN);
+
+        $this->assertSame('pedro@barberflow.com', $barber->fresh()->email);
+        $this->assertSame('pedro@barberflow.com', $barber->fresh()->user->email);
+    }
+
+    public function test_update_racing_another_login_for_the_same_email_gets_the_same_422(): void
+    {
+        $barber = Barber::create($this->payload(['name' => 'Pedro', 'email' => 'pedro@barberflow.com']));
+        $user = $this->makeBarberUser($barber);
+
+        // O e-mail novo chega a outro login logo antes de o syncLogin gravar o deste barbeiro.
+        $this->beforeQuery('/^update users /', fn () => DB::table('users')->insert([
+            'name' => 'Outra Pessoa',
+            'email' => 'joao@barberflow.com',
+            'password' => 'nao-importa',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]));
+
+        $this->patchJson("/api/barbers/{$barber->id}", ['email' => 'joao@barberflow.com'])
+            ->assertUnprocessable()
+            ->assertExactJson(self::EMAIL_TAKEN);
+
+        // A troca do e-mail no cadastro, feita antes, foi desfeita com a transação.
+        $this->assertSame('pedro@barberflow.com', $barber->fresh()->email);
+        $this->assertSame('pedro@barberflow.com', $user->fresh()->email);
     }
 
     public function test_deleting_a_barber_keeps_only_the_name(): void

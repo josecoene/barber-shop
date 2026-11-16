@@ -8,9 +8,21 @@
     max-width: 26rem;
 }
 
-/* Nome do usuário no menu: um nome muito longo é cortado com reticências. */
+/*
+ * Nome do usuário no menu: no máximo 16rem e, com o menu aberto numa linha só (1200px para cima), ele
+ * encolhe até o espaço que sobra depois dos links, do perfil, de Minha conta e de Sair, cortado com
+ * reticências (text-truncate). Um item flex não fica menor que o próprio conteúdo: cada caixa entre o
+ * nome e a barra precisa de min-width: 0 para ele poder encolher. No celular, a mesma regra corta o nome
+ * que, com o perfil, não cabe na largura do menu.
+ */
 .navbar-user {
     max-width: 16rem;
+}
+
+.navbar-collapse,
+.navbar-account,
+.navbar-account > .navbar-text {
+    min-width: 0;
 }
 
 /*
@@ -22,7 +34,11 @@
     overflow-x: auto;
 }
 
-/* Uma fatia tem a altura das 4 linhas de um bloco (horário, cliente, serviço e status). */
+/*
+ * Uma fatia tem a altura das 4 linhas de um bloco (horário, cliente, serviço e status). A altura da fatia
+ * e a fonte, a altura da linha, o padding e a borda do .schedule-block também estão no pages.js
+ * (SCHEDULE_*), que conta quantas linhas cabem inteiras em cada bloco: mudou aqui, mude lá.
+ */
 .schedule {
     --schedule-slot-height: 4rem;
     --schedule-head-height: 2.75rem;
@@ -77,7 +93,9 @@
     left: 0.25rem;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    column-gap: 1rem;
     overflow: hidden;
     padding: 0.125rem 0.375rem;
     border: 1px solid var(--bs-border-color);
@@ -90,10 +108,15 @@
     text-align: start;
 }
 
-/* Num bloco curto (ex.: 15 ou 20 minutos), as linhas não encolhem: as que não cabem ficam escondidas. */
+/*
+ * Linhas do bloco. O pages.js põe só as que cabem inteiras na altura dele. Se mesmo assim uma não couber
+ * (ex.: o navegador com uma fonte mínima maior), ela não encolhe nem aparece cortada no meio: com o
+ * flex-wrap e a largura toda, ela passa para uma segunda coluna, que o column-gap do bloco (maior que o
+ * padding da direita) põe fora da parte visível.
+ */
 .schedule-block > span {
     flex-shrink: 0;
-    max-width: 100%;
+    width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -141,13 +164,20 @@
 }
 
 /*
- * Clientes no celular: com a coluna Fidelidade, a tabela tem 5 colunas. Um pouco menos de espaço entre
- * elas faz a tabela caber nos 390px sem rolar para o lado e sem partir o "Não informado" no meio.
+ * Cadastros no celular (partials/crud): a lista no lugar da tabela, com cada dado e o nome da coluna ao
+ * lado, em duas colunas alinhadas. Nome e dados quebram linha só entre palavras (o e-mail, também nos
+ * <wbr> depois do @ e antes de cada ponto). Uma palavra mais larga que a tela inteira é a única que
+ * quebra no meio (overflow-wrap: break-word), para a página não rolar para o lado.
  */
-@media (max-width: 575.98px) {
-    [data-resource="clients"] .table > :not(caption) > * > * {
-        padding-inline: 0.375rem;
-    }
+.crud-details {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.125rem 0.75rem;
+}
+
+.crud-name,
+.crud-details dd {
+    overflow-wrap: break-word;
 }
 
 /*
