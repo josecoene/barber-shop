@@ -1,0 +1,42 @@
+# Loki do monitoramento local da homolog (docker-compose.monitoring.yml): um processo só, sem
+# autenticação (só a rede interna do Docker alcança a porta 3100) e com os logs em disco, no
+# volume lokidata. Mesma configuração da Sprint 4.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Logs ficam 7 dias (168 h); o compactor apaga os mais velhos.
+limits_config:
+  retention_period: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+# Sem estatísticas de uso enviadas para a Grafana Labs.
+analytics:
+  reporting_enabled: false

@@ -48,6 +48,14 @@ mock_provider "aws" {
       id = "lt-0123456789abcdef0"
     }
   }
+
+  # Tópico dos alarmes da feat/observabilidade: as ações dos alarmes do CloudWatch precisam de um
+  # ARN no formato certo.
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:us-east-1:123456789012:barberflow-homolog-alarms"
+    }
+  }
 }
 
 # Só o ambiente: cada run põe os valores do .tfvars.example de que precisa, e o

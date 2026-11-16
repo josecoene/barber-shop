@@ -1,7 +1,7 @@
 # Variáveis da base e da rede (branch feat/infra-rede), depois as dos dados e da segurança
-# (feat/infra-dados-seguranca), as da computação (feat/infra-computacao) e, no fim, as do CI/CD
-# (feat/ci-cd). A próxima branch que mexe no Terraform (feat/observabilidade) acrescenta as dela
-# no fim deste arquivo.
+# (feat/infra-dados-seguranca), as da computação (feat/infra-computacao), as do CI/CD
+# (feat/ci-cd) e, no fim, as da observabilidade (feat/observabilidade). Variável nova entra no
+# fim deste arquivo.
 # Os valores de cada ambiente ficam em envs/<ambiente>.tfvars (copie do .tfvars.example).
 
 variable "project" {
@@ -377,5 +377,130 @@ variable "github_environment" {
   validation {
     condition     = can(regex("^[A-Za-z0-9._-]{1,255}$", var.github_environment))
     error_message = "Use só letras, números, ponto, hífen e sublinhado, sem curinga, espaço ou dois-pontos, ex.: production."
+  }
+}
+
+# Observabilidade (branch feat/observabilidade): o e-mail dos alarmes do CloudWatch e os limites
+# de cada alarme (monitoring.tf). Todas têm valor padrão, como as anteriores. O limite do alarme
+# de instâncias em serviço é o asg_min_size, da computação.
+
+variable "alarm_email" {
+  description = "E-mail que recebe os alarmes do CloudWatch pelo tópico SNS do ambiente. Vazio (padrão), o tópico e os alarmes existem, mas ninguém é avisado. A AWS manda um e-mail de confirmação, e o aviso só chega depois do clique no link."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.alarm_email == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.alarm_email))
+    error_message = "Deixe vazio ou use um e-mail válido, ex.: alertas@barberflow.com.br."
+  }
+}
+
+variable "alarm_http_5xx_threshold" {
+  description = "Respostas 5xx em 5 minutos acima das quais os dois alarmes de 5xx disparam: um para as do próprio ALB e outro para as das instâncias."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.alarm_http_5xx_threshold >= 0 && var.alarm_http_5xx_threshold <= 100000 && floor(var.alarm_http_5xx_threshold) == var.alarm_http_5xx_threshold
+    error_message = "Use um número inteiro de 0 a 100000. Com 0, qualquer resposta 5xx dispara o alarme."
+  }
+}
+
+variable "alarm_target_p95_seconds" {
+  description = "Tempo de resposta das instâncias (p95, em segundos) acima do qual o alarme de latência dispara, depois de 15 minutos seguidos. O padrão é a meta dos testes de carga (load-tests/README.md)."
+  type        = number
+  default     = 0.5
+
+  validation {
+    condition     = var.alarm_target_p95_seconds > 0 && var.alarm_target_p95_seconds <= 60
+    error_message = "Use de 0 (sem contar) a 60 segundos, ex.: 0.5."
+  }
+}
+
+variable "alarm_unhealthy_hosts_threshold" {
+  description = "Instâncias sem saúde no target group acima das quais o alarme dispara, depois de 5 minutos seguidos. Com 0 (padrão), basta uma."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.alarm_unhealthy_hosts_threshold >= 0 && var.alarm_unhealthy_hosts_threshold <= 10 && floor(var.alarm_unhealthy_hosts_threshold) == var.alarm_unhealthy_hosts_threshold
+    error_message = "Use um número inteiro de 0 a 10, o máximo de instâncias do Auto Scaling."
+  }
+}
+
+variable "alarm_db_cpu_percent" {
+  description = "CPU do banco (%) acima da qual o alarme dispara, depois de 5 minutos seguidos."
+  type        = number
+  default     = 80
+
+  validation {
+    condition     = var.alarm_db_cpu_percent >= 1 && var.alarm_db_cpu_percent <= 100
+    error_message = "Use de 1 a 100 (%)."
+  }
+}
+
+variable "alarm_db_free_storage_gb" {
+  description = "Espaço livre no disco do banco (GB) abaixo do qual o alarme dispara. O padrão é 10% dos 20 GB do RDS, como a AWS recomenda. Precisa ser menor que o disco."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.alarm_db_free_storage_gb > 0
+    error_message = "Use um número maior que 0 (GB). O monitoring.tf também confere que o limite é menor que o disco do banco."
+  }
+}
+
+variable "alarm_db_free_memory_mb" {
+  description = "Memória livre do banco (MB) abaixo da qual o alarme dispara, depois de 15 minutos seguidos. O db.t3.micro tem 1 GB, e o MySQL usa a maior parte para o cache das tabelas."
+  type        = number
+  default     = 100
+
+  validation {
+    condition     = var.alarm_db_free_memory_mb > 0 && var.alarm_db_free_memory_mb <= 1048576
+    error_message = "Use de 1 a 1048576 (MB)."
+  }
+}
+
+variable "alarm_db_connections" {
+  description = "Conexões abertas no banco acima das quais o alarme dispara, depois de 5 minutos seguidos. O db.t3.micro aceita perto de 60; o padrão avisa antes do limite."
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.alarm_db_connections >= 1 && floor(var.alarm_db_connections) == var.alarm_db_connections
+    error_message = "Use um número inteiro de 1 para cima."
+  }
+}
+
+variable "alarm_cache_cpu_percent" {
+  description = "CPU do Valkey (%) em cada nó do cache acima da qual o alarme dispara, depois de 5 minutos seguidos. O padrão é o que a AWS recomenda para a CPU do engine."
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.alarm_cache_cpu_percent >= 1 && var.alarm_cache_cpu_percent <= 100
+    error_message = "Use de 1 a 100 (%)."
+  }
+}
+
+variable "alarm_cache_memory_percent" {
+  description = "Memória usada do Valkey (% do maxmemory) em cada nó do cache acima da qual o alarme dispara, depois de 5 minutos seguidos."
+  type        = number
+  default     = 80
+
+  validation {
+    condition     = var.alarm_cache_memory_percent >= 1 && var.alarm_cache_memory_percent <= 100
+    error_message = "Use de 1 a 100 (%)."
+  }
+}
+
+variable "alarm_cache_evictions" {
+  description = "Chaves jogadas fora por falta de memória (evictions) em 5 minutos, em cada nó do cache, acima das quais o alarme dispara. Com 0 (padrão), basta uma: com as sessões no cache, cada eviction pode deslogar alguém."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.alarm_cache_evictions >= 0 && floor(var.alarm_cache_evictions) == var.alarm_cache_evictions
+    error_message = "Use um número inteiro de 0 para cima."
   }
 }

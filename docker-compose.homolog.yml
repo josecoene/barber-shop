@@ -1,25 +1,30 @@
 # Homologação local: as imagens de produção (alvos app e web, construídas aqui mesmo)
 # com MySQL, Redis e Mailpit no lugar do RDS, do ElastiCache e do e-mail de verdade.
-# Sempre junto com o docker-compose.prod.yml, no projeto barberflow-homolog:
+# Sempre junto com o docker-compose.prod.yml, no projeto barberflow-homolog, e com a chave e as
+# senhas do docker/homolog/homolog.env (o Git ignora):
 #
-#   docker compose -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog up -d --build --wait
+#   docker compose --env-file docker/homolog/homolog.env -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog up -d --build --wait
 #
-# Antes, gere a chave em HOMOLOG_APP_KEY e a senha do banco em HOMOLOG_DB_PASSWORD
-# (passo a passo em docs/nuvem/DOCKER.md).
+# O homolog.env é gerado uma vez só e guardado enquanto o banco da homolog existir (passo a
+# passo e a função homolog, que encurta o comando, em docs/nuvem/DOCKER.md). O monitoramento
+# entra com mais um arquivo, o docker-compose.monitoring.yml (docs/nuvem/MONITORAMENTO.md).
 # Tela: http://localhost:8080/login. E-mails: http://localhost:8025 (Mailpit).
 # Não suba junto com o dev: os dois usam a porta 8080.
 
-# Credenciais do MySQL desta stack local. Nenhuma senha fica no repositório.
-# A do usuário do app vem do ambiente (HOMOLOG_DB_PASSWORD), como a APP_KEY.
+# Credenciais do MySQL desta stack local. Nenhuma senha fica no repositório: as do usuário do
+# app (HOMOLOG_DB_PASSWORD) e do usuário exporter do monitoramento (HOMOLOG_DB_EXPORTER_PASSWORD)
+# vêm do homolog.env, como a APP_KEY. O MySQL grava as duas só quando cria o banco.
 # O root ganha uma senha aleatória quando o banco é criado e só entra de dentro do
 # container do MySQL; nada na homolog usa o root.
 # O &nome marca o valor e o *nome repete, para o app usar exatamente o que o db criou.
 x-homolog-mysql-credentials: &homolog-mysql-credentials
   MYSQL_DATABASE: &homolog-db-database barberflow_homolog
   MYSQL_USER: &homolog-db-username barberflow
-  MYSQL_PASSWORD: &homolog-db-password ${HOMOLOG_DB_PASSWORD:?Defina HOMOLOG_DB_PASSWORD (gere junto com a HOMOLOG_APP_KEY, veja docs/nuvem/DOCKER.md)}
+  MYSQL_PASSWORD: &homolog-db-password ${HOMOLOG_DB_PASSWORD:?Defina HOMOLOG_DB_PASSWORD no docker/homolog/homolog.env e use o --env-file (veja docs/nuvem/DOCKER.md)}
   MYSQL_RANDOM_ROOT_PASSWORD: "yes"
   MYSQL_ROOT_HOST: localhost
+  # Senha do usuário exporter, que o docker/mysql/init/01-exporter-user.sh cria junto com o banco
+  MYSQL_EXPORTER_PASSWORD: ${HOMOLOG_DB_EXPORTER_PASSWORD:?Defina HOMOLOG_DB_EXPORTER_PASSWORD no docker/homolog/homolog.env e use o --env-file (veja docs/nuvem/DOCKER.md)}
 
 x-homolog-build-app: &homolog-build-app
   context: .
@@ -30,7 +35,7 @@ x-homolog-build-app: &homolog-build-app
 # do projeto com valor de exemplo, no lugar do .env que o SSM gera na EC2); o bloco de
 # produção do docker-compose.prod.yml e as linhas abaixo valem mais que ele.
 x-homolog-environment: &homolog-environment
-  APP_KEY: ${HOMOLOG_APP_KEY:?Defina HOMOLOG_APP_KEY (gere com php artisan key:generate --show, veja docs/nuvem/DOCKER.md)}
+  APP_KEY: ${HOMOLOG_APP_KEY:?Defina HOMOLOG_APP_KEY no docker/homolog/homolog.env e use o --env-file (veja docs/nuvem/DOCKER.md)}
   APP_URL: http://localhost:8080
   # A homolog roda em HTTP, então o cookie de sessão não pode exigir HTTPS
   SESSION_SECURE_COOKIE: "false"
@@ -94,6 +99,8 @@ services:
     environment: *homolog-mysql-credentials
     volumes:
       - dbdata:/var/lib/mysql
+      # Scripts que o MySQL roda uma vez, quando cria o banco: o usuário exporter do monitoramento
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u \"$$MYSQL_USER\" --silent"]
       interval: 10s

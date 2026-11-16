@@ -71,3 +71,9 @@ misconfigurations:
     paths:
       - bootstrap/main.tf
     statement: Bucket do state sem log de acesso, que pediria um segundo bucket só para os logs. O versionamento guarda cada versão do state, e o CloudTrail registra quem mudou a configuração do bucket.
+
+  # Tópico SNS dos alarmes (aws_sns_topic.alarms, feat/observabilidade).
+  - id: AWS-0095
+    paths:
+      - monitoring.tf
+    statement: Tópico dos alarmes sem criptografia do KMS. Os alarmes do CloudWatch não publicam num tópico criptografado com a chave da AWS (aws/sns), porque a política dela não deixa o CloudWatch usar; seria preciso uma chave do grupo (US$ 1 por mês) com uma política para o CloudWatch. As mensagens levam só o nome, o estado e o motivo do alarme, sem dado pessoal nem segredo.

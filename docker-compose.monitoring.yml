@@ -1,0 +1,223 @@
+# Monitoramento local da homolog: métricas no Prometheus, logs de todos os containers no Loki
+# (coletados pelo Alloy) e o painel "BarberFlow: visão geral" no Grafana. É a observabilidade da
+# Sprint 4, trazida do repositório local dela com os nomes de serviço e de rede deste projeto.
+#
+# Sempre junto com a homolog, no mesmo projeto, na raiz do repositório:
+#   docker compose --env-file docker/homolog/homolog.env -f docker-compose.prod.yml -f docker-compose.homolog.yml -f docker-compose.monitoring.yml -p barberflow-homolog up -d --wait
+# A função homologmon do docs/nuvem/MONITORAMENTO.md encurta o comando. Derrube com o mesmo
+# conjunto de arquivos (down, sem -v), senão os containers daqui ficam órfãos.
+#
+# Grafana em http://localhost:3000 e Prometheus em http://localhost:9090, só neste computador.
+# Loki, Alloy, cAdvisor e os exporters ficam só na rede interna. As senhas (admin do Grafana e
+# usuário exporter do MySQL) vêm do docker/homolog/homolog.env, que o Git ignora: nenhuma fica
+# neste arquivo. Versões fixas, conferidas em 14/11/2026 (tabela no MONITORAMENTO.md); o Alloy e
+# o cAdvisor, que enxergam o computador, também pelo digest.
+
+services:
+  # Guarda as métricas (números ao longo do tempo) por 7 dias, no volume prometheusdata.
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+      start_interval: 2s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - monitoring
+
+  # Gráficos e logs. Abre direto no painel do BarberFlow e deixa ver sem login (só leitura);
+  # para editar, entre como admin, com a senha do homolog.env. Sem volume: a cada subida nova,
+  # o Grafana nasce com a senha do homolog.env e com o painel e as fontes de dados dos arquivos
+  # de monitoring/grafana/.
+  grafana:
+    image: grafana/grafana:13.3.1
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${HOMOLOG_GRAFANA_ADMIN_PASSWORD:?Defina HOMOLOG_GRAFANA_ADMIN_PASSWORD no docker/homolog/homolog.env e use o --env-file (veja docs/nuvem/MONITORAMENTO.md)}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/barberflow.json
+      # Só avisos e erros no log: sem volume, cada subida nova refaz o banco interno do Grafana,
+      # e as mensagens dessa migração (perto de 2 mil linhas) encheriam o Loki.
+      GF_LOG_LEVEL: warn
+      # Visualização sem login, só leitura. O Grafana só aceita conexões deste computador.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Nada sai para a internet:
+      # - sem estatísticas de uso, sem procurar versão nova e sem notícias;
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # - sem plugins baixados na subida. Sem isso, cada container novo instala do grafana.com,
+      #   na versão mais nova do dia, os apps da lista de sugeridos e atualiza os plugins da
+      #   imagem, inclusive o Prometheus e o Loki. O painel usa só os dois, que vêm na imagem;
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      # - a chave que confere a assinatura dos plugins é a da imagem, sem baixar outra;
+      GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED: "true"
+      # - sem a foto do Gravatar (o Grafana buscaria no gravatar.com) e sem o botão que publica o
+      #   painel, com os logs, no snapshots.raintank.io.
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 2s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - monitoring
+
+  # Guarda os logs de todos os containers do projeto por 7 dias, no volume lokidata.
+  # A imagem não tem shell nem wget, então não há healthcheck aqui.
+  loki:
+    image: grafana/loki:3.7.9
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - lokidata:/loki
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - monitoring
+
+  # Lê os logs (stdout e stderr) dos containers deste projeto pelo socket do Docker, só leitura,
+  # e manda ao Loki. COMPOSE_PROJECT_NAME é o nome do projeto (barberflow-homolog), que o
+  # compose preenche sozinho. Quem lê o socket do Docker controla o Docker do computador: é uma
+  # ferramenta só para a máquina local (docs/nuvem/SEGURANCA.md), e por isso a imagem vai também
+  # pelo digest. O --disable-reporting desliga as estatísticas de uso que o Alloy manda à
+  # Grafana Labs.
+  alloy:
+    image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - --disable-reporting
+      - /etc/alloy/config.alloy
+    environment:
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      loki:
+        condition: service_started
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - monitoring
+
+  # CPU e memória de cada container. Precisa ler o sistema do host (no Docker Desktop, a máquina
+  # virtual do Docker), por isso o privileged e as pastas montadas só para leitura. A raiz
+  # montada (/rootfs) inclui o disco do Windows que o Docker Desktop monta, e a /var/run tem o
+  # socket do Docker: a imagem vai também pelo digest (docs/nuvem/SEGURANCA.md, "Riscos aceitos").
+  cadvisor:
+    image: ghcr.io/google/cadvisor:0.60.6@sha256:b8e7d1093144fd088f425ff003d75a4aa405de075db78dae3bc563730b1bd07a
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=5s
+      - --store_container_labels=true
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    restart: unless-stopped
+    networks:
+      - monitoring
+
+  # Requisições e conexões do Nginx, lidas da página de métricas (stub_status) da porta 8081 do
+  # web, que não é publicada. Fica também na rede web-metrics, só dele e do web.
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.5.3
+    command:
+      - --nginx.scrape-uri=http://web:8081/nginx_status
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - web-metrics
+      - monitoring
+
+  # Conexões e consultas do MySQL, com o usuário exporter (só leitura, até 3 conexões), que o
+  # docker/mysql/init/01-exporter-user.sh cria junto com o banco da homolog. Fica também na rede
+  # db-metrics, só dele e do db.
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.21.0
+    command:
+      - --mysqld.address=db:3306
+      - --mysqld.username=exporter
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${HOMOLOG_DB_EXPORTER_PASSWORD:?Defina HOMOLOG_DB_EXPORTER_PASSWORD no docker/homolog/homolog.env e use o --env-file (veja docs/nuvem/MONITORAMENTO.md)}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9104/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+      start_interval: 2s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - db-metrics
+      - monitoring
+
+  # O web e o db entram também na rede do exporter de cada um (o compose junta estas redes com
+  # as dos outros arquivos). Assim os exporters ficam fora da frontend e da backend, onde estão o
+  # PHP-FPM do app, o Redis sem senha e o Mailpit. Subir o monitoramento com a homolog no ar
+  # recria o web e o db, que ficam alguns segundos fora.
+  web:
+    networks:
+      - web-metrics
+
+  db:
+    networks:
+      - db-metrics
+
+networks:
+  # Só o monitoramento: Prometheus, Grafana, Loki, Alloy, cAdvisor e os exporters.
+  monitoring:
+  # Só o web e o nginx-exporter.
+  web-metrics:
+  # Só o db e o mysqld-exporter.
+  db-metrics:
+
+volumes:
+  prometheusdata:
+  lokidata:

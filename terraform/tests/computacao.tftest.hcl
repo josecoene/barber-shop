@@ -53,6 +53,14 @@ mock_provider "aws" {
       latest_version = 3
     }
   }
+
+  # Tópico dos alarmes da feat/observabilidade: as ações dos alarmes do CloudWatch precisam de um
+  # ARN no formato certo.
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:us-east-1:123456789012:barberflow-homolog-alarms"
+    }
+  }
 }
 
 variables {

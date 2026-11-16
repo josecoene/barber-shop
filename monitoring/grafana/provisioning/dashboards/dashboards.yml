@@ -1,0 +1,12 @@
+# Painéis do Grafana lidos dos arquivos JSON de monitoring/grafana/dashboards, na pasta
+# BarberFlow. Mudança feita pela tela não fica: o arquivo é a fonte (edite o JSON e suba de novo).
+apiVersion: 1
+
+providers:
+  - name: BarberFlow
+    folder: BarberFlow
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

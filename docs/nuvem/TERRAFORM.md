@@ -1,6 +1,6 @@
 # Terraform do BarberFlow
 
-Este guia explica a infraestrutura como código do BarberFlow na AWS: o que cada parte cria, como validar e testar no seu computador sem conta da AWS, como criar o bucket do state remoto, como escolher o ambiente, a ordem do primeiro deploy e o dia a dia das instâncias (Session Manager, administrador, logs e capacidade). O backup e o restore do banco ficam no `docs/nuvem/BACKUP.md`, e o CI, o deploy pelo GitHub Actions e o rollback, no `docs/nuvem/CI-CD.md`.
+Este guia explica a infraestrutura como código do BarberFlow na AWS: o que cada parte cria, como validar e testar no seu computador sem conta da AWS, como criar o bucket do state remoto, como escolher o ambiente, a ordem do primeiro deploy e o dia a dia das instâncias (Session Manager, administrador, logs e capacidade). O backup e o restore do banco ficam no `docs/nuvem/BACKUP.md`; o CI, o deploy pelo GitHub Actions e o rollback, no `docs/nuvem/CI-CD.md`; os alarmes e o dashboard do CloudWatch, na seção "Observabilidade" deste guia; o monitoramento local da homolog, no `docs/nuvem/MONITORAMENTO.md`; o desenho da arquitetura, no `docs/nuvem/ARQUITETURA-NUVEM.md`; e o custo, no `docs/nuvem/CUSTOS.md`.
 
 Nada daqui foi aplicado na AWS. Aplicar cria recursos que cobram por hora, então só acontece com a conta do grupo (veja "Aplicar na AWS").
 
@@ -12,7 +12,7 @@ O Terraform chega em cinco branches:
 | `feat/infra-dados-seguranca` | Eduardo | Security groups, IAM, ECR, logs, RDS, cache e parâmetros (seção "Dados e segurança") |
 | `feat/infra-computacao` | Manoel | ALB, Auto Scaling, `user_data` e orçamento |
 | `feat/ci-cd` | José (CI) e Manoel (CD) | `cicd.tf`, com a role de deploy por OIDC (o provedor OIDC só é criado se uma variável pedir), e o CI rodando `fmt -check`, `validate`, `test` e `trivy config` (seção "CI/CD") |
-| `feat/observabilidade` | Leonam | `monitoring.tf`, com o SNS por e-mail, os alarmes de ALB, Auto Scaling, RDS e ElastiCache e o dashboard do CloudWatch |
+| `feat/observabilidade` | Leonam | `monitoring.tf`, com o SNS por e-mail, os alarmes de ALB, Auto Scaling, RDS e ElastiCache e o dashboard do CloudWatch (seção "Observabilidade") |
 
 ## Arquivos
 
@@ -23,7 +23,7 @@ O Terraform chega em cinco branches:
 | `terraform/backend.tf` | State remoto no S3, com a trava (`use_lockfile`) e a criptografia (`encrypt`); bucket, key e região vêm do `backend.hcl` |
 | `terraform/backend.hcl.example` | Modelo do `backend.hcl`: bucket, key e região |
 | `terraform/providers.tf` | Provider AWS com a região da variável e as tags padrão |
-| `terraform/variables.tf` | Variáveis da base, da rede, dos dados, da computação e do CI/CD |
+| `terraform/variables.tf` | Variáveis da base, da rede, dos dados, da computação, do CI/CD e da observabilidade |
 | `terraform/locals.tf` | Prefixo dos nomes (ex.: `barberflow-homolog`) e as tags |
 | `terraform/network.tf` | VPC, subnets, internet gateway, tabelas de rotas e o security group padrão sem regras |
 | `terraform/sg.tf` | Security groups do ALB, do app, do banco e do cache, com as regras de entrada e de saída |
@@ -38,12 +38,14 @@ O Terraform chega em cinco branches:
 | `terraform/templates/user_data.sh.tftpl` | Script de subida das instâncias: Docker, compose, logs, `.env` do SSM e containers |
 | `terraform/budget.tf` | Orçamento mensal com aviso por e-mail |
 | `terraform/cicd.tf` | Provedor OIDC do GitHub (só com `create_github_oidc_provider = true`) e a role do deploy pelo GitHub Actions, com a política mínima |
-| `terraform/outputs.tf` | IDs da VPC e das subnets, zonas, security groups, instance profile, ECR, log groups, banco, cache, caminho do SSM, ALB, `APP_URL`, Auto Scaling, launch template, o SHA-256 do compose embutido no `user_data` e o que o deploy precisa (role, repositórios, parâmetro da tag e as variáveis do environment do GitHub) |
+| `terraform/monitoring.tf` | Tópico SNS dos alarmes, com a assinatura por e-mail (só com `alarm_email`), os alarmes do CloudWatch e o dashboard |
+| `terraform/outputs.tf` | IDs da VPC e das subnets, zonas, security groups, instance profile, ECR, log groups, banco, cache, caminho do SSM, ALB, `APP_URL`, Auto Scaling, launch template, o SHA-256 do compose embutido no `user_data`, o que o deploy precisa (role, repositórios, parâmetro da tag e as variáveis do environment do GitHub) e a observabilidade (tópico dos alarmes, nomes dos alarmes e endereço do dashboard) |
 | `terraform/envs/*.tfvars.example` | Valores de cada ambiente, homolog e prod |
 | `terraform/tests/rede.tftest.hcl` | Testes da rede com o provider simulado |
 | `terraform/tests/dados_seguranca.tftest.hcl` | Testes dos dados e da segurança com o provider simulado |
 | `terraform/tests/computacao.tftest.hcl` | Testes da computação (ALB, instâncias, `user_data`, Auto Scaling e orçamento) com o provider simulado |
 | `terraform/tests/cicd.tftest.hcl` | Testes da role de deploy (trust do OIDC e política) com o provider simulado |
+| `terraform/tests/monitoring.tftest.hcl` | Testes da observabilidade (tópico, alarmes e dashboard) com o provider simulado |
 | `terraform/tests/user_data/` | O `user_data` pronto para o ShellCheck e o teste da montagem do `.env` num container do Amazon Linux 2023 (seção "Como o user_data foi testado") |
 | `terraform/bootstrap/` | Stack separada que cria o bucket do state, com o próprio lock e o próprio teste |
 | `terraform/.trivyignore.yaml` | Alertas do Trivy aceitos de propósito, cada um preso ao arquivo do recurso e com o motivo |
@@ -364,6 +366,83 @@ Parte do José (CI) e do Manoel (CD), na branch `feat/ci-cd`. O `cicd.tf` cria a
 | `github_repository_owner_id` | vazio | vazio | ID do dono (preencha) | Formato imutável do `sub` |
 | `github_repository_id` | vazio | vazio | ID do repositório (preencha) | Formato imutável do `sub`, junto com o anterior |
 
+## Observabilidade
+
+Parte do Leonam, na branch `feat/observabilidade`: o `monitoring.tf` cria, em cada ambiente, os alarmes do CloudWatch, o tópico SNS que avisa por e-mail e um dashboard. Como o resto do Terraform, está validada só no código: `validate`, `test` com o provider simulado e `trivy config`. O monitoramento local da homolog (Prometheus, Grafana e Loki) fica no `docs/nuvem/MONITORAMENTO.md`.
+
+| Recurso | Nome | Para que serve |
+|---|---|---|
+| Tópico SNS | `barberflow-<ambiente>-alarms` | Recebe cada alarme que dispara e cada volta ao normal |
+| Assinatura por e-mail | o endereço do `alarm_email` | Só existe com a variável preenchida |
+| Alarmes | `barberflow-<ambiente>-<chave>` | 12 na homolog e 15 na prod (o cache da prod tem 2 nós) |
+| Dashboard | `barberflow-<ambiente>` | O estado de todos os alarmes e os gráficos de cada um |
+
+### Os alarmes
+
+| Chave | Métrica | Dispara com | Limite (variável e padrão) | Sem dado |
+|---|---|---|---|---|
+| `alb-5xx` | `HTTPCode_ELB_5XX_Count` do ALB, soma em 5 minutos | Mais respostas 5xx do próprio ALB que o limite (502, 503 e 504: nenhuma instância saudável, ou a instância não respondeu a tempo) | `alarm_http_5xx_threshold`, 10 | Não dispara |
+| `target-5xx` | `HTTPCode_Target_5XX_Count` do target group, soma em 5 minutos | Mais respostas 5xx das instâncias que o limite (500 do Laravel, ou 502 e 504 do Nginx com o PHP-FPM fora do ar ou lento) | `alarm_http_5xx_threshold`, 10 | Não dispara |
+| `target-p95` | `TargetResponseTime` do target group, p95 em 5 minutos | p95 acima do limite em 3 períodos seguidos (15 minutos) | `alarm_target_p95_seconds`, 0,5 s, a meta dos testes de carga | Não dispara |
+| `target-unhealthy` | `UnHealthyHostCount` do target group, mínimo por minuto | Instâncias sem saúde (o `/up` sem 200) acima do limite por 5 minutos seguidos | `alarm_unhealthy_hosts_threshold`, 0 | Não dispara |
+| `asg-in-service` | `GroupInServiceInstances` do Auto Scaling, mínimo por minuto | Menos instâncias em serviço que o mínimo do grupo por 5 minutos seguidos | `asg_min_size` (da computação) | Dispara |
+| `db-cpu` | `CPUUtilization` do RDS, média por minuto | Acima do limite por 5 minutos seguidos | `alarm_db_cpu_percent`, 80% | Fica sem estado |
+| `db-free-storage` | `FreeStorageSpace` do RDS, mínimo por minuto | Abaixo do limite por 5 minutos seguidos | `alarm_db_free_storage_gb`, 2 GB (10% do disco) | Fica sem estado |
+| `db-free-memory` | `FreeableMemory` do RDS, média por minuto | Abaixo do limite por 15 minutos seguidos | `alarm_db_free_memory_mb`, 100 MB | Fica sem estado |
+| `db-connections` | `DatabaseConnections` do RDS, média por minuto | Acima do limite por 5 minutos seguidos | `alarm_db_connections`, 50 (o `db.t3.micro` aceita perto de 60) | Fica sem estado |
+| `cache-<nó>-cpu` | `EngineCPUUtilization` do nó do cache, média por minuto | Acima do limite por 5 minutos seguidos | `alarm_cache_cpu_percent`, 90% | Fica sem estado |
+| `cache-<nó>-memory` | `DatabaseMemoryUsagePercentage` do nó, média por minuto | Acima do limite (em % do `maxmemory`) por 5 minutos seguidos | `alarm_cache_memory_percent`, 80% | Fica sem estado |
+| `cache-<nó>-evictions` | `Evictions` do nó, soma em 5 minutos | Mais chaves jogadas fora por falta de memória que o limite | `alarm_cache_evictions`, 0 | Fica sem estado |
+
+- **Sem dado** é o `treat_missing_data`, pensado em cada alarme. O ALB só manda métrica quando passam requisições: sem tráfego, não há erro nem lentidão (`notBreaching`). RDS e ElastiCache mandam um número por minuto, e uma falta curta (reinício, manutenção) deixa o alarme sem estado (`INSUFFICIENT_DATA`, o `missing`): aparece assim no console e no dashboard, sem e-mail e sem fingir que está tudo bem. Se o banco ou o cache caírem de verdade, quem avisa são os alarmes de 5xx, pelo efeito na aplicação. A exceção é o Auto Scaling: com as métricas do grupo ligadas (`compute.tf`), a AWS manda um número por minuto, e 5 minutos sem nenhum quer dizer que o grupo ou as métricas sumiram, o que também dispara (`breaching`).
+- Os limites seguem os alarmes recomendados pela AWS ("Recommended alarms" do CloudWatch, consultado em 14/11/2026) onde ela dá um número: 90% na CPU do engine do Valkey, 10% do disco no espaço livre do banco, 15 minutos na memória livre e o mínimo (todos os nós do ALB concordam) nas instâncias sem saúde, com mais de um ponto. Onde a AWS diz "depende", o padrão é conservador e a variável deixa ajustar depois de ver o dashboard.
+- **Cada alarme avisa duas vezes:** quando dispara (`alarm_actions`) e quando volta ao normal (`ok_actions`), os dois no tópico do ambiente. Sem aviso quando fica sem estado.
+- **O 5xx cobre o log de erro do Nginx**, que a `feat/infra-computacao` deixou só no nível `crit`: o 502 e o 504 do Nginx, com o PHP-FPM fora do ar ou lento, chegam ao ALB como 5xx das instâncias, e o 502, o 503 e o 504 do próprio ALB, como 5xx do ALB.
+- **Nós do cache:** sem cluster mode, o ElastiCache dá a cada nó o nome do replication group com `-001`, `-002` e assim por diante no fim, e as métricas do Valkey vêm por nó (dimensão `CacheClusterId`). O `monitoring.tf` monta os nomes a partir do `replication_group_id` e do `cache_num_cache_clusters`, que já são conhecidos no `plan`; o `member_clusters` do replication group só existe depois de ele ser criado, e um `for_each` nele quebraria o primeiro `apply`.
+- **CPU do cache:** a AWS recomenda olhar também a CPU da máquina (`CPUUtilization`) nos nós de 2 vCPUs ou menos, como o `cache.t4g.micro`. O alarme olha a do engine (o Valkey roda numa thread só); o dashboard mostra as duas.
+- **Homolog:** o `deploy.yml` só publica na prod, e a homolog troca de instância por um instance refresh: o que o `apply` começa quando o launch template muda, ou o feito à mão (seção "Trocar a capacidade e as instâncias"), que é como ela recebe uma imagem nova. Com 1 instância, a única sai antes da nova ficar pronta (seção "Auto Scaling", linha "Troca de instâncias"): o grupo fica sem instância em serviço por alguns minutos e dispara o `asg-in-service` (e, com tráfego, os de 5xx). É o aviso de que o app ficou fora do ar.
+- **Primeiro deploy:** com `asg_min_size = 0`, o limite do `asg-in-service` é 0, e ele não dispara pelo número de instâncias.
+- Os alarmes ficam num recurso só (`aws_cloudwatch_metric_alarm.main`, com `for_each` no `local.alarms`): alarme novo entra no `local.app_alarms` ou no `local.cache_alarms`, e o teste confere todos de uma vez. Um alarme fora desse recurso faz o teste falhar.
+
+### Tópico e e-mail
+
+- **Só e-mail.** Nada de SMS, HTTP ou fila no tópico. Com `alarm_email` preenchido, o `apply` cria a assinatura, e a AWS manda um e-mail de confirmação: o aviso só chega depois do clique no link. Até lá, a assinatura fica `PendingConfirmation`:
+
+  ```powershell
+  aws sns list-subscriptions-by-topic --topic-arn (tfaws output -raw alarm_topic_arn) --query "Subscriptions[].[Endpoint,SubscriptionArn]" --output table
+  ```
+
+- **Sem e-mail** (o padrão), o tópico e os alarmes existem do mesmo jeito: o estado de cada alarme aparece no console e no dashboard, e ninguém é avisado.
+- O tópico usa a política de acesso padrão da AWS, que deixa os alarmes da própria conta publicarem. Ele fica sem chave do KMS: os alarmes do CloudWatch não publicam num tópico criptografado com a chave da AWS (`aws/sns`), e uma chave do grupo custaria US$ 1 por mês e uma política para o CloudWatch. As mensagens levam só o nome, o estado e o motivo do alarme (item AWS-0095 do `.trivyignore.yaml`).
+- A descrição de cada alarme vai no e-mail e já diz o limite em uso e onde olhar.
+- **Testar o aviso**, depois do `apply` e da confirmação do e-mail: o comando abaixo põe um alarme em `ALARM` à mão. O e-mail chega em um ou dois minutos, e o alarme volta sozinho na próxima avaliação, com outro e-mail (o do `ok_actions`).
+
+  ```powershell
+  aws cloudwatch set-alarm-state --alarm-name barberflow-homolog-db-cpu --state-value ALARM --state-reason "Teste do aviso por e-mail"
+  ```
+
+### Dashboard
+
+O `barberflow-<ambiente>` (saída `cloudwatch_dashboard_url`) tem, de cima para baixo: o quadro com o estado de todos os alarmes; requisições e 5xx do ALB; p50 e p95 do tempo de resposta; instâncias em serviço, desejadas, saudáveis e sem saúde; a CPU média das instâncias, com a linha do alvo da escala; CPU, conexões, espaço livre e memória livre do banco; CPU do Valkey e da máquina, memória usada e evictions de cada nó do cache. Os gráficos com alarme mostram a linha do limite.
+
+### Variáveis da observabilidade
+
+| Variável | Padrão | Homolog | Prod | Para que serve |
+|---|---|---|---|---|
+| `alarm_email` | vazio | vazio | vazio (preencha com o e-mail do grupo) | Quem recebe os alarmes; vazio, ninguém é avisado |
+| `alarm_http_5xx_threshold` | `10` | igual | igual | Respostas 5xx em 5 minutos, nos dois alarmes de 5xx (0 a 100000) |
+| `alarm_target_p95_seconds` | `0.5` | igual | igual | p95 do tempo de resposta das instâncias, em segundos (até 60) |
+| `alarm_unhealthy_hosts_threshold` | `0` | igual | igual | Instâncias sem saúde aceitas (0 a 10) |
+| `alarm_db_cpu_percent` | `80` | igual | igual | CPU do banco (%) |
+| `alarm_db_free_storage_gb` | `2` | igual | igual | Espaço livre mínimo no disco do banco (GB), menor que o disco |
+| `alarm_db_free_memory_mb` | `100` | igual | igual | Memória livre mínima do banco (MB) |
+| `alarm_db_connections` | `50` | igual | igual | Conexões abertas no banco |
+| `alarm_cache_cpu_percent` | `90` | igual | igual | CPU do Valkey em cada nó (%) |
+| `alarm_cache_memory_percent` | `80` | igual | igual | Memória usada do Valkey em cada nó (% do `maxmemory`) |
+| `alarm_cache_evictions` | `0` | igual | igual | Evictions aceitas em 5 minutos, em cada nó |
+
+Os limites não mudam por ambiente, então só o `alarm_email` entrou nos dois `.tfvars.example`. Com homolog e prod na mesma conta, os dois ambientes podem avisar o mesmo e-mail: cada alarme leva o nome do ambiente. O custo dos alarmes e do dashboard está no `docs/nuvem/CUSTOS.md`.
+
 ## Antes de começar
 
 - Docker Desktop. A imagem `hashicorp/terraform:1.13.3` roda o Terraform sem instalar nada. Quem já tem o Terraform 1.11 ou mais novo instalado pode usar os mesmos comandos sem o `docker run`.
@@ -400,7 +479,7 @@ tf -chdir=bootstrap test
 4. `test` roda os testes com o provider AWS simulado (`mock_provider`): o Terraform finge criar os recursos, sem conta e sem custo.
 5. O `-chdir=bootstrap` faz o mesmo na stack do bucket do state.
 
-O `test` termina com `Success! 57 passed, 0 failed.` na raiz (12 do CI/CD, 18 da computação, 19 dos dados e da segurança e 8 da rede) e `Success! 1 passed, 0 failed.` no bootstrap.
+O `test` termina com `Success! 69 passed, 0 failed.` na raiz (12 do CI/CD, 18 da computação, 19 dos dados e da segurança, 12 da observabilidade e 8 da rede) e `Success! 1 passed, 0 failed.` no bootstrap.
 
 O CI (`.github/workflows/ci.yml`, job `Terraform`) roda os mesmos comandos em todo pull request, com o `hashicorp/setup-terraform` na mesma versão 1.13.3, além do `trivy config`, do ShellCheck e do teste da montagem do `.env` das seções abaixo.
 
@@ -468,6 +547,20 @@ A `feat/infra-computacao` mexeu em três pontos desse arquivo e no `rede.tftest.
 As regras desse arquivo também foram conferidas quebrando a configuração numa cópia da pasta, em 28 defeitos (IMDSv1, hop limit 2, disco sem criptografia ou gp2, sem IP público, instância com o security group do ALB, Auto Scaling numa zona só, health check EC2, fora do target group, `$Latest`, refresh com 90%, tags sem propagar, ALB interno ou sem `drop_invalid_header_fields`, health check fora do `/up`, 80 sempre encaminhando, 443 sempre ligada, TLS antigo, `APP_URL` e cookie fixos, `TRUSTED_PROXIES` com `*`, `user_data` sem `--with-decryption` ou com a senha do RDS, SHA-256 trocado, EC2 solta de volta e o orçamento sempre criado ou com aviso a 90%): o teste falhou em todos.
 
 `terraform/tests/cicd.tftest.hcl`: o padrão sem a role de deploy (nem role, nem política, nem leitura do provedor OIDC), a trust da role (só o `aud` do STS e o `sub` do environment do repositório, com `StringEquals` e sem curinga, nos dois formatos de `sub` quando os IDs estão preenchidos), o provedor OIDC criado só com a variável e sem `thumbprint_list`, a política (lista exata de ações, nenhuma ação com curinga, `Resource "*"` só no login do ECR e nas três consultas de leitura, `PutParameter` só no `image_tag`, nada do IAM nem do S3) e duas travas que leem o texto dos `.tf`: a lista exata dos recursos que ligam política a uma role, na pasta e no `bootstrap/` (qualquer role, e qualquer jeito de citar a role: referência, `local` ou nome escrito), e só a política própria citando a role de deploy. 35 defeitos de propósito fizeram o teste falhar; a lista está no `docs/nuvem/CI-CD.md`, "O que os testes conferem". A `feat/ci-cd` não mexeu nos outros três arquivos de teste: neles, a role de deploy não é criada (`create_deploy_role` fica no padrão, `false`).
+
+`terraform/tests/monitoring.tftest.hcl`, com 12 runs:
+
+- tópico: o nome do ambiente, a saída `alarm_topic_arn` e nenhuma assinatura sem `alarm_email`; com o e-mail, uma assinatura só, por `email`, com o endereço da variável e no tópico do ambiente;
+- alarmes: a lista exata (12 na homolog, 15 na prod), o nome `barberflow-<ambiente>-<chave>`, as ações ligadas e só no tópico do ambiente (quando dispara e quando volta), nenhuma ação sem estado e a saída `alarm_names`;
+- cada alarme no recurso certo: o ALB e o target group pelo `arn_suffix`, o Auto Scaling do app (que publica o `GroupInServiceInstances`), o banco do ambiente e os nós do cache com o nome do replication group e `-001` ou `-002`;
+- a tabela de cada alarme: métrica, estatística ou percentil (nunca os dois), período, pontos, comparação e `treat_missing_data`; os limites padrão e os trocados pelas variáveis (o do Auto Scaling é o `asg_min_size`, 0 no primeiro deploy) e a descrição do e-mail com o limite em uso;
+- dashboard: o nome, a saída `cloudwatch_dashboard_url`, o quadro com todos os alarmes, e só eles, e os gráficos na região do ambiente, com o ALB, o target group, o Auto Scaling, o banco e os nós do cache;
+- duas travas que leem o texto dos `.tf`: todo alarme da pasta está no `aws_cloudwatch_metric_alarm.main` (o que o teste confere inteiro), e o único tópico e a única assinatura do SNS da pasta e do `bootstrap/` são os do `monitoring.tf`, com um protocolo só, `email`;
+- recusa e-mail inválido, limite de 5xx negativo, p95 de 0 s, CPU do banco acima de 100%, espaço livre que não cabe no disco do banco (uma pré-condição, que compara com o `allocated_storage` do `main.tf`), memória do cache em 0%, evictions fracionadas e conexões em 0.
+
+Em 14/11/2026, 18 defeitos de propósito no `monitoring.tf` e no `variables.tf`, numa cópia da pasta, fizeram o teste falhar: alarme sem `ok_actions`, ações num ARN fixo ou desligadas, o 5xx do ALB olhando o target group, o nó do cache com dois dígitos, o Auto Scaling sem `breaching`, assinatura por SMS, assinatura criada sem e-mail, um alarme fora do `for_each`, o dashboard sem um alarme ou em outra região, o RDS com outro identifier, o limite do espaço livre sem a conversão de GB para bytes, a pré-condição do disco frouxa, o p95 como média, a validação do e-mail frouxa, uma assinatura HTTP num arquivo novo e o limite do 5xx fixo. Sem defeito, passou.
+
+A `feat/observabilidade` acrescentou um `mock_resource "aws_sns_topic"`, com um ARN no formato certo, aos outros quatro arquivos de teste: as ações dos alarmes pedem um ARN válido, e o texto que o mock inventa não passa. Nenhuma regra desses arquivos mudou.
 
 `terraform/bootstrap/tests/state.tftest.hcl`: nome do bucket com o ID da conta, versionamento, criptografia, as quatro travas de acesso público, a política que nega acesso sem HTTPS (no bucket e nos objetos) e o bucket sem `force_destroy`.
 
@@ -539,6 +632,7 @@ Os alertas aceitos ficam no `terraform/.trivyignore.yaml`. Cada item tem o ID do
 | AWS-0178 | `network.tf`, VPC | Sem Flow Logs, cortados no plano como excesso | Fica |
 | AWS-0132 | `bootstrap/main.tf`, bucket do state | Criptografia SSE-S3 em vez de uma chave do KMS (US$ 1 por mês e mais uma linha no `backend.hcl`) | Fica |
 | AWS-0089 | `bootstrap/main.tf`, bucket do state | Sem log de acesso, que pediria um segundo bucket | Fica |
+| AWS-0095 | `monitoring.tf`, tópico dos alarmes | Sem chave do KMS: os alarmes do CloudWatch não publicam num tópico com a chave da AWS (`aws/sns`), e uma chave do grupo custa US$ 1 por mês e pede política para o CloudWatch. As mensagens não têm dado pessoal nem segredo | Fica |
 
 A `feat/infra-dados-seguranca` corrigiu e apagou os itens AWS-0077 (backup curto), AWS-0080 (RDS sem criptografia) e AWS-0177 (sem proteção contra exclusão). A `feat/infra-computacao` apagou os itens AWS-0028 (sem IMDSv2) e AWS-0131 (disco sem criptografia), que eram da EC2 solta do `main.tf`: o launch template exige IMDSv2 e criptografa o disco, e o Trivy passa nele.
 
@@ -813,7 +907,7 @@ O segundo comando mostra o andamento (`Successful` no fim). Mudança no `user_da
 - A `feat/infra-rede` tirou o bloco `provider` do `main.tf` (no lugar ficou um comentário de três linhas, para a senha continuar na linha 23) e deixou o `terraform fmt` alinhar os `=` do RDS. A `feat/infra-dados-seguranca` acrescentou os atributos novos do RDS depois da senha. A `feat/infra-computacao` apagou a EC2 solta, que ficava antes do RDS, e pôs no lugar um comentário das mesmas 10 linhas, que diz para onde ela foi. O valor da senha e a linha 23 não mudaram. Recurso novo vai para outro arquivo, e atributo novo do RDS entra depois da senha.
 - O Terraform copia o mesmo valor para o parâmetro SecureString `/barberflow/<ambiente>/DB_PASSWORD`, que a EC2 lê. A cópia vai por referência (`value_wo = aws_db_instance.barbershop_db.password`, no `ssm.tf`), num atributo write-only: o valor não aparece no `plan` e não ganha uma segunda cópia no state. A senha só está escrita no `main.tf`, e o `tests/dados_seguranca.tftest.hcl` confere isso.
 - Sem `manage_master_user_password`: com ele, o RDS guardaria a senha no Secrets Manager e trocaria a cada 7 dias, e a aplicação, que lê a senha do SSM ao subir, cairia na primeira troca.
-- O risco: quem lê o repositório lê a senha, e o state do RDS também a guarda em texto puro. Por isso o bucket do state é privado, criptografado e só aceita HTTPS. O banco fica nas subnets privadas, e só o security group do app alcança a porta 3306, então a senha sozinha não abre o banco para quem está fora da VPC. O risco fica registrado também no `docs/nuvem/SEGURANCA.md` (branch `feat/observabilidade`).
+- O risco: quem lê o repositório lê a senha, e o state do RDS também a guarda em texto puro. Por isso o bucket do state é privado, criptografado e só aceita HTTPS. O banco fica nas subnets privadas, e só o security group do app alcança a porta 3306, então a senha sozinha não abre o banco para quem está fora da VPC. O risco fica registrado também no `docs/nuvem/SEGURANCA.md`, "Riscos aceitos".
 - Quando o grupo decidir trocar a senha, o caminho que não grava a senha no state é o atributo write-only `password_wo` do RDS (Terraform 1.11 ou mais novo, um dos motivos do `required_version`), com a senha vindo de fora do repositório (variável ou valor `ephemeral`). O `DB_PASSWORD` passa a receber o mesmo valor, e o `password_wo_version` do RDS e o `value_wo_version` do `DB_PASSWORD` sobem juntos.
 
 ## Atualizar versões
@@ -843,20 +937,21 @@ O `init -upgrade` escolhe a versão nova e o `providers lock` grava os hashes da
 - **Testes:** um arquivo por assunto em `terraform/tests/`, cada um com o próprio `mock_provider`. Políticas de IAM e de bucket em `jsonencode()` nos `locals`: o provider simulado não monta o JSON de um `data "aws_iam_policy_document"`, e o teste não consegue ler a política.
 - **Trivy:** alerta novo se corrige. Se ficar, entra no `.trivyignore.yaml` com `paths` (o arquivo do recurso) e `statement` (o motivo), nunca no `.trivyignore`, que valeria para o projeto todo.
 - **CI:** o job `Terraform` do `.github/workflows/ci.yml` roda `fmt -check`, `validate`, `test`, `trivy config` (com o `.trivyignore.yaml`), o ShellCheck do `user_data` e a montagem do `.env` em todo pull request. Arquivo de teste novo em `terraform/tests/` entra sozinho no `terraform test`.
-- **Mocks:** recurso novo cujo ID ou ARN vai para outro recurso (ex.: o ARN de um tópico SNS num alarme) pode precisar de um `mock_resource` com um valor no formato certo nos quatro arquivos de teste, porque o provider confere o formato e o texto que o mock inventa não passa. Foi o que a `feat/infra-computacao` fez com o ALB, o target group e o launch template.
+- **Mocks:** recurso novo cujo ID ou ARN vai para outro recurso (ex.: o ARN de um tópico SNS num alarme) pode precisar de um `mock_resource` com um valor no formato certo em todos os arquivos de teste, porque o provider confere o formato e o texto que o mock inventa não passa. Foi o que a `feat/infra-computacao` fez com o ALB, o target group e o launch template, e a `feat/observabilidade` com o tópico SNS.
+- **Alarmes:** alarme novo entra no `local.app_alarms` ou no `local.cache_alarms` do `monitoring.tf`, nunca num `aws_cloudwatch_metric_alarm` à parte (o `tests/monitoring.tftest.hcl` falha), e na lista exata e na tabela do teste. A ação é sempre o tópico `aws_sns_topic.alarms`.
 - **Deploy (feito na `feat/ci-cd`):** o que a `feat/infra-computacao` deixou anotado virou o `deploy.yml` e o `cicd.tf` (`docs/nuvem/CI-CD.md`):
   - o deploy grava a tag nova em `/barberflow/<ambiente>/image_tag` (o `ignore_changes` impede o Terraform de desfazer), com `ssm:PutParameter` só nesse parâmetro, e as imagens vão para o ECR só com a tag do commit, nunca com `latest`;
   - depois de gravar a tag, ele faz o instance refresh do `aws_autoscaling_group.app`, com `MinHealthyPercentage=50` e `InstanceWarmup=300`, como o `instance_refresh` do `compute.tf`, espera terminar e testa o `/api/health` no `APP_URL` (saída `app_url`);
   - antes de tudo, compara o `sha256sum docker-compose.prod.yml` do commit com a tag `ComposeFileSha256` do launch template (`ec2:DescribeLaunchTemplates`, só de leitura, com `Resource "*"`) e para pedindo o `apply` quando são diferentes, sem ler o state;
   - permissão nova do deploy entra no `local.deploy_role_policy` e na lista exata de ações do `tests/cicd.tftest.hcl`. Uma trava desse teste confere a lista exata dos recursos que ligam política a uma role, nos `.tf` da pasta e do `bootstrap/` e para qualquer role: anexo novo (à role das instâncias também) entra nessa lista de propósito. A do run `iam_role` do `dados_seguranca.tftest.hcl` continua contando quem cita a role das instâncias (`aws_iam_role.ec2`);
   - a role de deploy só existe com `create_deploy_role = true` (`aws_iam_role.deploy[0]`): saída ou recurso novo que use a role precisa tratar o caso sem ela, como o `one(aws_iam_role.deploy[*].arn)` do `outputs.tf`.
-- **Para a `feat/observabilidade`:**
-  - o `docs/nuvem/DEPLOY.md`, se for criado, só aponta para o que já existe, sem repetir o passo a passo: "O deploy", "Rollback", "Migrations: só para frente" e "Ordem com o terraform apply" do `docs/nuvem/CI-CD.md`, e "Primeiro deploy" deste guia. Duas cópias do mesmo roteiro passariam a divergir na primeira mudança (um rollback sem a conferência do compose, por exemplo);
-  - os alarmes do RDS usam `aws_db_instance.barbershop_db.identifier`, e os do cache, os nós de `aws_elasticache_replication_group.cache.member_clusters` (as métricas do ElastiCache vêm por nó);
-  - os do ALB (5xx, latência e hosts sem saúde) usam `aws_lb.main.arn_suffix` e `aws_lb_target_group.app.arn_suffix`, e os do Auto Scaling, `aws_autoscaling_group.app.name`. As métricas do grupo (`GroupInServiceInstances` e outras) já estão ligadas no `compute.tf`;
-  - o orçamento mensal já existe (`budget.tf`, com o e-mail em `budget_alert_email`): o SNS dos alarmes não precisa repetir o aviso de custo;
-  - a variável `log_retention_days` já existe: reaproveite, em vez de declarar de novo. Os log groups `/barberflow/nginx` e `/barberflow/app` do `monitoring.tf` da Sprint 4 não voltam: os grupos são os do `logs.tf`, e os streams se chamam `<ID da instância>/<nome do container>`;
-  - o `SEGURANCA.md` registra o risco que sobrou no log de erro do Nginx: ele fica no nível `crit` (`docker/nginx/default.conf`), mas uma falha grave ainda grava a requisição inteira, com query string, token de redefinição de senha, assinatura do link de confirmação e e-mail, no grupo `web` do CloudWatch e no Loki (detalhes no `docs/nuvem/DOCKER.md`, seção "Nginx"). Um alarme que conte erros do Nginx deve olhar o status 5xx do log de acesso ou as métricas do ALB, e não o log de erro.
+- **Observabilidade (feita na `feat/observabilidade`):** o que as branches anteriores deixaram anotado virou o `monitoring.tf` (seção "Observabilidade") e os docs de nuvem:
+  - o `docs/nuvem/DEPLOY.md` só aponta para o que já existe, sem repetir o passo a passo: "O deploy", "Rollback", "Migrations: só para frente" e "Ordem com o terraform apply" do `docs/nuvem/CI-CD.md`, e "Primeiro deploy" deste guia;
+  - os alarmes do RDS usam `aws_db_instance.barbershop_db.identifier`, e os do ALB, `aws_lb.main.arn_suffix` e `aws_lb_target_group.app.arn_suffix`; os do Auto Scaling, `aws_autoscaling_group.app.name`, com as métricas do grupo que o `compute.tf` já liga;
+  - os do cache olham cada nó, com o nome montado a partir do `replication_group_id` (`-001`, `-002`), e não do `member_clusters`, que só existe depois de criar o cache e quebraria o `for_each` do primeiro `apply`;
+  - o orçamento mensal continua no `budget.tf`: o SNS dos alarmes não repete o aviso de custo;
+  - nenhum log group novo: os de containers e do RDS são os do `logs.tf`, com o `log_retention_days`. Os `/barberflow/nginx` e `/barberflow/app` do `monitoring.tf` da Sprint 4 não voltaram;
+  - o alarme de 5xx olha as métricas do ALB, e não o log de erro do Nginx, que fica no `crit`. O risco que sobrou nesse log está no `docs/nuvem/SEGURANCA.md`, "Riscos aceitos".
 
 ## Problemas comuns
 
@@ -880,3 +975,6 @@ O `init -upgrade` escolhe a versão nova e o `providers lock` grava os hashes da
 - **`parâmetro com nome que não serve de variável de ambiente`**, **`parâmetro com nome reservado ao user_data`** ou **`valor que o .env não representa`** no log da subida: algum parâmetro de `/barberflow/<ambiente>/` foi criado à mão com nome fora do padrão (só letras, números e `_`, sem pasta dentro do caminho), com um nome que o `user_data` escreve (`APP_IMAGE`, `WEB_IMAGE`, `AWSLOGS_REGION`, `AWSLOGS_WEB_GROUP` ou `INSTANCE_ID`) ou com barra invertida antes de aspas simples ou no fim do valor. O log cita o nome do parâmetro; corrija e faça o instance refresh.
 - **`Invalid value for variable` citando o `app_url` ou o `certificate_arn`** no `plan`: domínio em `https://` precisa do certificado, e certificado precisa do domínio em `https://`, na mesma região (seção "HTTPS com domínio próprio").
 - **`cannot be deleted because deletion protection is enabled`** no `destroy` do ALB: a prod tem `alb_deletion_protection = true`. Veja "Aplicar na AWS".
+- **O e-mail dos alarmes não chega:** a assinatura ainda está `PendingConfirmation` (o link de confirmação da AWS não foi clicado, ou caiu no spam) ou o `alarm_email` ficou vazio. Veja "Observabilidade", "Tópico e e-mail". A AWS apaga sozinha a assinatura que não foi confirmada em 48 horas (documentação do SNS, "Email subscription setup and management", consultada em 14/11/2026); depois disso, o próximo `apply` cria a assinatura de novo, e a AWS manda outro e-mail de confirmação.
+- **`Resource precondition failed` citando o `alarm_db_free_storage_gb`** no `plan`: o limite do espaço livre não cabe no disco do banco (20 GB no `main.tf`). Use um número menor.
+- **O `asg-in-service` disparou num instance refresh da homolog** (o do `apply` ou o feito à mão): com 1 instância, o refresh tira a única do ar por alguns minutos. É o esperado (seção "Observabilidade").

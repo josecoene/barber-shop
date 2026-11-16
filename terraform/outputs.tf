@@ -1,5 +1,5 @@
-# Saídas da rede, dos dados e da segurança e, no fim, da computação. Dentro desta pasta, as
-# próximas branches usam os recursos direto (aws_vpc.main, aws_subnet.public, aws_lb.main etc.);
+# Saídas da rede, dos dados e da segurança, da computação, do CI/CD e, no fim, da observabilidade.
+# Dentro desta pasta, as branches usam os recursos direto (aws_vpc.main, aws_subnet.public, aws_lb.main etc.);
 # as saídas servem para conferir o que foi criado e para scripts e pipelines lerem com
 # terraform output.
 
@@ -166,4 +166,22 @@ output "github_environment_variables" {
     ECR_WEB_REPOSITORY  = aws_ecr_repository.image["web"].name
     IMAGE_TAG_PARAMETER = aws_ssm_parameter.operator_managed["image_tag"].name
   } : null
+}
+
+# Saídas da observabilidade (feat/observabilidade): o tópico dos alarmes, os alarmes e o
+# endereço do dashboard no console.
+
+output "alarm_topic_arn" {
+  description = "Tópico SNS que recebe os alarmes do CloudWatch. Com alarm_email, a assinatura por e-mail fica pendente até o clique no link de confirmação que a AWS manda."
+  value       = aws_sns_topic.alarms.arn
+}
+
+output "alarm_names" {
+  description = "Nomes dos alarmes do CloudWatch do ambiente, em ordem alfabética."
+  value       = sort([for alarm in aws_cloudwatch_metric_alarm.main : alarm.alarm_name])
+}
+
+output "cloudwatch_dashboard_url" {
+  description = "Endereço do dashboard do ambiente no console do CloudWatch (precisa de login na conta)."
+  value       = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards/dashboard/${aws_cloudwatch_dashboard.main.dashboard_name}"
 }
