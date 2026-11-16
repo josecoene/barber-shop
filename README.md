@@ -520,7 +520,7 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 - [x] Sprint 4: Prometheus, Grafana, Loki e Alloy na homolog, alarmes e dashboard do CloudWatch, testes de carga e de resiliência, checklist de go-live e os guias de `docs/nuvem/`
 - [ ] Terraform aplicado na AWS e o go-live (a parte B do checklist): precisa da conta do grupo e custa dinheiro
 - [x] CI no GitHub: rodou pela primeira vez em 16/11/2026, e a `main` passou nos 6 jobs no merge do #12, a `feat/entrega-final`, e nos seguintes, no mesmo dia (relatório técnico, seção 4.12)
-- [ ] Os pull requests que faltam e a proteção da `main`: com o grupo (em 16/11/2026, os da `fix/symfony-8.1` e da `feat/docs-github` e o #16, do Dependabot)
+- [ ] Os pull requests que faltam e a proteção da `main`: com o grupo (em 16/11/2026, depois dos PRs #18 e #19, faltava o #16, do Dependabot)
 
 **Entrega final (`feat/entrega-final`)**
 
