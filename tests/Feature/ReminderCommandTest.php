@@ -431,11 +431,10 @@ class ReminderCommandTest extends TestCase
      * Como a rodada roda no processo do agendador, o log da falha sai junto com
      * o dele, que o schedule:work repassa para a saída do container. Como outro
      * processo, com a saída no /dev/null, o log dela não chegaria a este
-     * processo, e o Log::spy() não veria nada. A rodada seguinte manda o
-     * lembrete (test_a_failed_send_frees_the_reminder_for_the_next_round_and_logs_only_the_id):
-     * aqui ela não roda de novo, porque o Laravel guarda o erro da rodada no
-     * evento agendado, e só um schedule:run novo (um processo novo, como o que o
-     * schedule:work abre a cada minuto) começa sem ele.
+     * processo, e o Log::spy() não veria nada. A rodada seguinte, com o e-mail
+     * de volta, manda o lembrete: quem confere é o
+     * test_a_failed_send_frees_the_reminder_for_the_next_round_and_logs_only_the_id,
+     * pelo comando appointments:send-reminders.
      */
     public function test_the_scheduled_round_logs_the_failed_send_in_the_scheduler_process(): void
     {
