@@ -35,7 +35,7 @@ O objetivo do produto é ajudar a barbearia a reduzir horários vazios e faltas,
 | Infraestrutura | Terraform na AWS: VPC, ALB, Auto Scaling, RDS, ElastiCache, ECR, SSM e CloudWatch |
 | CI/CD | GitHub Actions |
 | Observabilidade | Prometheus, Grafana, Loki e Alloy (homolog) e alarmes do CloudWatch (AWS) |
-| Testes | PHPUnit 12 e k6 (carga) |
+| Testes | PHPUnit 13 e k6 (carga) |
 
 A arquitetura é um monólito modular: um serviço Laravel só, com as regras de cada módulo em `app/Services`. O porquê, e quando separar um serviço, está no [ADR 0001](docs/adr/0001-monolito-modular.md).
 
@@ -519,8 +519,8 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 - [x] Sprint 3: imagens otimizadas, CI (Pint, testes no SQLite e no MySQL, `composer audit`, `npm audit`, build, Trivy, Terraform e actionlint) e deploy por tag com OIDC, instance refresh e rollback (o CI rodou no GitHub em 16/11/2026; o deploy está validado só no código)
 - [x] Sprint 4: Prometheus, Grafana, Loki e Alloy na homolog, alarmes e dashboard do CloudWatch, testes de carga e de resiliência, checklist de go-live e os guias de `docs/nuvem/`
 - [ ] Terraform aplicado na AWS e o go-live (a parte B do checklist): precisa da conta do grupo e custa dinheiro
-- [x] CI no GitHub: rodou pela primeira vez em 16/11/2026, e a `main` passou nos 6 jobs no merge do #12, a `feat/entrega-final`, e no do #17 (relatório técnico, seção 4.12)
-- [ ] Os pull requests que faltam e a proteção da `main`: com o grupo (em 16/11/2026, os da `fix/symfony-8.1` e da `feat/docs-github` e o #15 e o #16, do Dependabot)
+- [x] CI no GitHub: rodou pela primeira vez em 16/11/2026, e a `main` passou nos 6 jobs no merge do #12, a `feat/entrega-final`, e nos seguintes, no mesmo dia (relatório técnico, seção 4.12)
+- [ ] Os pull requests que faltam e a proteção da `main`: com o grupo (em 16/11/2026, depois dos PRs #18 e #19, faltava o #16, do Dependabot)
 
 **Entrega final (`feat/entrega-final`)**
 
