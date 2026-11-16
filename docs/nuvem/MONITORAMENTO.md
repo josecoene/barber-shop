@@ -251,7 +251,7 @@ Em 15/11/2026, depois da atualização do `laravel/framework` para a 13.40.0, co
 | Grafana | Versão 13.3.1, banco `ok`, o painel com os 13 itens e as duas fontes com `OK`, sem nenhum plugin baixado. O admin entrou com a senha do `homolog.env` (`POST /login`), e `admin`/`admin` recebeu 401 |
 | Loki | Logs dos 13 serviços (nos primeiros 30 minutos, 41 linhas do `app`, 46 do `web`, 8 do `scheduler` e 47 do `db`); a linha `GENERATED ROOT PASSWORD` do banco novo com `[oculto]` |
 | Lembrete que falhou | Com o Mailpit congelado, a consulta `{service="scheduler"} \|~ "Lembrete\|ERROR"` trouxe os 8 avisos, só com o `appointment_id`, e a linha `ERROR` da rodada, só com as contas; a `{service="scheduler"} \|= "send-reminders"` trouxe as duas rodadas, a que falhou e a seguinte. Nenhuma linha do `scheduler` com `@` |
-| `homologmon down` (sem `-v`) e `up` de novo | `down` em 5,9 s e `up` em 14,4 s, no mesmo volume, com "Nothing to migrate" e os mesmos dados. No fim, a homolog ficou derrubada sem `-v`, e o volume do banco guarda os dados de demonstração |
+| `homologmon down` (sem `-v`) e `up` de novo | `down` em 5,9 s e `up` em 14,4 s, no mesmo volume, com "Nothing to migrate" e os mesmos dados. No fim, a homolog ficou derrubada sem `-v`, e o volume do banco ficou com os dados de demonstração. Mais tarde, no mesmo dia, ele foi apagado e criado de novo, com a demonstração e a senha de demonstração nova (`docs/RELATORIO-TECNICO.md`, seção 4.12) |
 
 ## Problemas comuns
 

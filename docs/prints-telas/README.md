@@ -20,7 +20,7 @@ Ficaram sem print a tela "Redefinir senha" (`/reset-password/{token}`, que só a
 
 Em 15/11/2026, a rodada de acabamento corrigiu os três detalhes visuais que os primeiros prints mostravam (as tabelas dos cadastros no celular, o menu do admin em 1280 px e os blocos curtos da Agenda). As correções mudam as telas, então os prints delas foram refeitos.
 
-**Como:** na mesma homolog, com as imagens de produção feitas de novo com o código da rodada, e com o MySQL no volume da revisão final, que guarda os dados do `DemoSeeder` e do `AdminUserSeeder` de 15/11/2026. Os mesmos logins, o mesmo dia de agenda (16/11/2026), os mesmos registros abertos (o detalhe de Daniel Rocha às 16:00, o modal de pagamento de Ana Paula Ribeiro e os resumos dos três Agendar) e o mesmo jeito de tirar a página inteira. Nenhum formulário foi enviado.
+**Como:** na mesma homolog, com as imagens de produção feitas de novo com o código da rodada, e com o MySQL no volume da revisão final, que guardava os dados do `DemoSeeder` e do `AdminUserSeeder` de 15/11/2026 (o volume foi apagado depois, no mesmo dia, com o OK do Leonam, `docs/RELATORIO-TECNICO.md`, seção 4.12). Os mesmos logins, o mesmo dia de agenda (16/11/2026), os mesmos registros abertos (o detalhe de Daniel Rocha às 16:00, o modal de pagamento de Ana Paula Ribeiro e os resumos dos três Agendar) e o mesmo jeito de tirar a página inteira. Nenhum formulário foi enviado.
 
 **Refeitos (22):**
 

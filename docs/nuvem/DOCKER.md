@@ -219,6 +219,25 @@ Logins que os dois seeders criam (todos com o e-mail já confirmado):
 
 Para entrar pela tela sem mostrar a senha, copie para a área de transferência e cole no campo: `Get-HomologValue 'HOMOLOG_DEMO_USER_PASSWORD' | Set-Clipboard`. Limpe depois com `Set-Clipboard -Value ' '` (o histórico da área de transferência do Windows, o Win+V, também guarda o que foi copiado). O domínio `demo.barberflow.test` é reservado para teste: nenhum e-mail chega a uma pessoa, e o Mailpit guarda tudo.
 
+**Trocar a senha de demonstração.** O `DemoSeeder` não muda a senha de um login que já existe (`database/seeders/DemoSeeder.php:636`): a senha nova pede um banco novo, e isso apaga os dados da homolog. Combine com o grupo antes. No PowerShell, na raiz do repositório, com a mesma função que subiu a stack (`homolog`, ou `homologmon` com o monitoramento):
+
+```powershell
+homolog down
+$linha = docker run --rm --entrypoint php barberflow-app:homolog -r "echo 'HOMOLOG_DEMO_USER_PASSWORD='.bin2hex(random_bytes(16));"
+if ([regex]::IsMatch($linha, '^HOMOLOG_DEMO_USER_PASSWORD=[0-9a-f]{32}$')) { (Get-Content docker\homolog\homolog.env) | ForEach-Object { if ($_ -like 'HOMOLOG_DEMO_USER_PASSWORD=*') { $linha } else { $_ } } | Set-Content -Encoding ascii docker\homolog\homolog.env }
+if ((Get-Content docker\homolog\homolog.env) -ccontains $linha) { 'Senha trocada no homolog.env' } else { 'A troca falhou: não apague o banco' }
+Remove-Variable linha
+```
+
+O `down` sem `-v` mantém os volumes. O `docker run` gera a linha nova como no passo 1 desta seção (16 bytes aleatórios, 32 letras e números), e o primeiro `if` troca só a linha `HOMOLOG_DEMO_USER_PASSWORD` do `homolog.env`, com o mesmo `-Encoding ascii`: as outras linhas ficam como estão, e a senha não aparece na tela. O `[regex]::IsMatch` confere a linha nova sem guardá-la no `$Matches`, como o `-match` faria, e o `Remove-Variable` tira a senha nova do terminal. O segundo `if` lê o arquivo de novo e só mostra `Senha trocada no homolog.env` quando acha nele a linha nova. Se o `docker run` não devolver só a linha nova, se o `homolog.env` estiver só de leitura ou sem a linha `HOMOLOG_DEMO_USER_PASSWORD`, ou se o terminal estiver fora da raiz do repositório, sai `A troca falhou: não apague o banco`, e o arquivo fica como estava. O comando foi conferido em 16/11/2026 num `homolog.env` falso, no PowerShell 7 e no Windows PowerShell 5.1, rodado de uma vez e linha por linha: na troca, só essa linha mudou, sem BOM e com o fim de linha CRLF de antes, e o `$Matches` ficou sem a senha; nos cinco casos de falha (o `docker run` sem saída ou com duas linhas, o arquivo só de leitura, o arquivo sem a linha e o terminal fora da raiz), saiu `A troca falhou`, e o arquivo ficou igual. Só com `Senha trocada no homolog.env` na tela, apague o banco e suba de novo:
+
+```powershell
+docker volume rm barberflow-homolog_dbdata
+homolog up -d --wait
+```
+
+O banco nasce vazio, com as mesmas senhas do app e do `exporter`, que continuam no `homolog.env`, e o `app` roda as migrations. Depois, rode os dois seeders do passo 2 desta seção: o `DemoSeeder` cria os logins com a senha nova e a agenda em volta do dia em que roda, e o `AdminUserSeeder`, o admin com a senha de antes. Foi o caminho de 15/11/2026, no computador do Leonam, depois que a senha de demonstração apareceu na saída de uma busca (`docs/RELATORIO-TECNICO.md`, seção 4.12).
+
 ### O que conferir
 
 ```
