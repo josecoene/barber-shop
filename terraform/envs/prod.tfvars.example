@@ -1,0 +1,10 @@
+# Valores da produção. Copie para envs/prod.tfvars (o Git ignora) e use no plan:
+#   terraform plan "-var-file=envs/prod.tfvars"
+# Sem senha nem segredo aqui: o que for sensível vem do SSM ou de variável de ambiente.
+
+environment = "prod"
+region      = "us-east-1"
+
+# Faixa diferente da homolog, para as duas VPCs poderem se conectar um dia sem conflito de IP.
+vpc_cidr = "10.30.0.0/16"
+az_count = 2

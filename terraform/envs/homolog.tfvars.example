@@ -1,0 +1,8 @@
+# Valores da homologação. Copie para envs/homolog.tfvars (o Git ignora) e use no plan:
+#   terraform plan "-var-file=envs/homolog.tfvars"
+# Sem senha nem segredo aqui: o que for sensível vem do SSM ou de variável de ambiente.
+
+environment = "homolog"
+region      = "us-east-1"
+vpc_cidr    = "10.20.0.0/16"
+az_count    = 2
