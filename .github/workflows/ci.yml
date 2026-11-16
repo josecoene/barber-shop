@@ -1,0 +1,365 @@
+# CI do BarberFlow: roda em todo pull request e em cada push na main.
+# O que cada job faz e como rodar o mesmo no computador: docs/nuvem/CI-CD.md.
+#
+# Versões fixas: cada action pelo SHA do commit da release (o comentário mostra a versão), cada
+# imagem Docker pela tag exata com o digest e o Composer pela versão com o SHA-256 do arquivo.
+# O Dependabot (.github/dependabot.yml) propõe a atualização das actions; as imagens do bloco env
+# abaixo, o MySQL do job MySQL e o Composer se atualizam à mão (CI-CD.md, "Atualizar versões").
+# O deploy.yml usa as mesmas imagens do Trivy e do BuildKit: troque nos dois arquivos juntos.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# Um push novo na mesma branch (ou no mesmo pull request) cancela a rodada que ficou velha.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Nunca a 0.69.4 nem as imagens 0.69.5 e 0.69.6 do Docker Hub, publicadas por um invasor em
+  # março de 2026 (aviso GHSA-69fq-xp46-6x23). As mesmas imagens do docs/nuvem/TERRAFORM.md.
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+  SHELLCHECK_IMAGE: koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+  AMAZON_LINUX_IMAGE: amazonlinux:2023.12.20261102.0@sha256:3ccfbe800f864982b0a4e124a614b2382518cbd04b3c1cd35202bd46f392675b
+  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+  # O BuildKit que o Buildx sobe para fazer o build (roda os RUN do Dockerfile). Sem isto, ele
+  # baixaria a moby/buildkit:buildx-stable-1, uma tag que muda de conteúdo. É a versão para a
+  # qual essa tag apontava em 14/11/2026.
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+
+jobs:
+  php:
+    name: PHP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Baixa o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Sem a extensão intl (o ":intl" desliga a que o setup-php traz), como na imagem de
+      # produção: um uso novo do Number:: do Laravel, que precisa dela, falha aqui e não na AWS.
+      # O Composer é o mesmo do docker/php/Dockerfile, conferido pelo SHA-256 do composer.phar.
+      - name: PHP 8.4 com pcov
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          extensions: pdo_sqlite, sqlite3, pdo_mysql, pcov, :intl
+          coverage: pcov
+          tools: composer:2.11.2@sha256:dd158c0afd41d15fac89e1b4e47b5d42911fe316c3687cd5edac98319b25d028
+
+      - name: Pasta do cache do Composer
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache do Composer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Dependências do Composer
+        id: deps
+        run: composer install --no-progress --prefer-dist --no-interaction
+
+      # A suíte precisa de uma APP_KEY (sessão e cookies criptografados). Chave nova a cada
+      # rodada, só para o teste.
+      - name: .env de teste
+        id: env
+        run: |
+          cp .env.example .env
+          php artisan key:generate --ansi
+
+      # Pint, testes e audit rodam mesmo que um dos outros falhe: o pull request mostra os três
+      # resultados de uma vez, e o job fica vermelho se qualquer um falhar.
+      - name: Pint (formatação)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: vendor/bin/pint --test
+
+      # O composer test limpa o cache de configuração e roda o php artisan test (o
+      # @no_additional_args do composer.json deixa os argumentos só para o test). O --coverage
+      # mostra no log a cobertura por arquivo e o total; o --coverage-clover vai para o PHPUnit e
+      # grava o arquivo que vira artefato. Sem npm run build aqui, de propósito: teste que abre
+      # tela precisa do withoutVite() (AGENTS.md).
+      - name: Testes no SQLite, com cobertura
+        id: tests
+        if: ${{ !cancelled() && steps.env.outcome == 'success' }}
+        run: composer test -- --coverage --coverage-clover=build/coverage/clover.xml
+
+      - name: Guarda a cobertura (clover)
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cobertura-clover
+          path: build/coverage/clover.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      # Falha com qualquer alerta de segurança (todas as severidades): no Composer, quase todo
+      # alerta já sai com a versão corrigida, e a correção é um composer update no pull request.
+      - name: Alertas de segurança das dependências (composer audit)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: composer audit --no-interaction
+
+  mysql:
+    name: MySQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # MySQL descartável, só deste job: o RefreshDatabase apaga e recria o banco a cada teste.
+    # Usuário e senha valem só aqui e não são senha do projeto.
+    services:
+      mysql:
+        image: mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+        env:
+          MYSQL_DATABASE: barberflow_testing
+          MYSQL_USER: ci_tests
+          MYSQL_PASSWORD: ci_tests_only
+          MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+        ports:
+          - 3306:3306
+        # Pela porta TCP: durante a inicialização o MySQL escuta só no socket, e o teste só
+        # passa quando o servidor de verdade está no ar.
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 20s
+    # O phpunit.mysql.xml não força os DB_*: o ambiente decide.
+    env:
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: barberflow_testing
+      DB_USERNAME: ci_tests
+      DB_PASSWORD: ci_tests_only
+    steps:
+      - name: Baixa o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A suíte no MySQL chega com a agenda (feat/agendamentos). Sem o arquivo, o job avisa e
+      # termina com sucesso, e os passos seguintes não rodam.
+      - name: Procura o phpunit.mysql.xml
+        id: suite
+        run: |
+          if [ -f phpunit.mysql.xml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Testes no MySQL pulados::Este commit não tem o phpunit.mysql.xml. O job roda a suíte no MySQL 8.4 quando o arquivo existir."
+          fi
+
+      - name: PHP 8.4
+        if: steps.suite.outputs.exists == 'true'
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          extensions: pdo_mysql, :intl
+          coverage: none
+          tools: composer:2.11.2@sha256:dd158c0afd41d15fac89e1b4e47b5d42911fe316c3687cd5edac98319b25d028
+
+      - name: Pasta do cache do Composer
+        if: steps.suite.outputs.exists == 'true'
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache do Composer
+        if: steps.suite.outputs.exists == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Dependências do Composer
+        if: steps.suite.outputs.exists == 'true'
+        run: composer install --no-progress --prefer-dist --no-interaction
+
+      - name: .env de teste
+        if: steps.suite.outputs.exists == 'true'
+        run: |
+          cp .env.example .env
+          php artisan key:generate --ansi
+
+      - name: Testes no MySQL 8.4 (phpunit.mysql.xml)
+        if: steps.suite.outputs.exists == 'true'
+        run: vendor/bin/phpunit -c phpunit.mysql.xml
+
+  front:
+    name: Front
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Baixa o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Node 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Dependências do npm
+        run: npm ci
+
+      - name: Build do Vite
+        run: npm run build
+
+      # Falha com alerta alto ou crítico; os moderados e baixos aparecem no log sem travar o PR.
+      - name: Alertas de segurança das dependências (npm audit)
+        run: npm audit --audit-level=high
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Baixa o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      # Os dois alvos do Dockerfile que vão para a AWS (app e web), gravados em arquivo para o
+      # Trivy. O cache fica no GitHub Actions, um por imagem. Estas imagens não vão para o ECR: o
+      # deploy.yml faz o build de novo, a partir do commit da tag, e passa o mesmo Trivy antes do
+      # push.
+      - name: Build da imagem app
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/php/Dockerfile
+          target: app
+          tags: barberflow-app:ci
+          outputs: type=docker,dest=${{ runner.temp }}/barberflow-app.tar
+          provenance: false
+          cache-from: type=gha,scope=barberflow-app
+          cache-to: type=gha,mode=max,scope=barberflow-app
+
+      - name: Build da imagem web
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/php/Dockerfile
+          target: web
+          tags: barberflow-web:ci
+          outputs: type=docker,dest=${{ runner.temp }}/barberflow-web.tar
+          provenance: false
+          cache-from: type=gha,scope=barberflow-web
+          cache-to: type=gha,mode=max,scope=barberflow-web
+
+      # Falha com vulnerabilidade CRITICAL que já tem correção publicada (--ignore-unfixed): a
+      # correção é atualizar a imagem base ou o pacote. As que ainda não têm correção não travam.
+      - name: Trivy nas imagens
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          for image in app web; do
+            echo "== barberflow-$image"
+            docker run --rm \
+              -v "$RUNNER_TEMP:/scan:ro" \
+              -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
+              "$TRIVY_IMAGE" image --input "/scan/barberflow-$image.tar" \
+              --scanners vuln --ignore-unfixed --severity CRITICAL --exit-code 1 --no-progress
+          done
+
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # O repositório inteiro: o compute.tf lê o ../docker-compose.prod.yml para o user_data.
+      - name: Baixa o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A mesma versão da imagem hashicorp/terraform:1.13.3 do docs/nuvem/TERRAFORM.md.
+      - name: Terraform 1.13.3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.13.3
+          terraform_wrapper: false
+
+      # O provider AWS tem perto de 770 MB: fica no cache do GitHub, pela versão do lock.
+      - name: Pasta do cache dos providers
+        run: |
+          mkdir -p "$RUNNER_TEMP/terraform-plugin-cache"
+          echo "TF_PLUGIN_CACHE_DIR=$RUNNER_TEMP/terraform-plugin-cache" >> "$GITHUB_ENV"
+
+      - name: Cache dos providers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/terraform-plugin-cache
+          key: terraform-providers-${{ runner.os }}-${{ hashFiles('terraform/.terraform.lock.hcl', 'terraform/bootstrap/.terraform.lock.hcl') }}
+
+      - name: Formatação (fmt -check)
+        run: terraform -chdir=terraform fmt -check -recursive
+
+      # Antes do init, para o Trivy ler só os .tf, sem a pasta .terraform. Os alertas aceitos
+      # ficam no .trivyignore.yaml, cada um preso ao arquivo do recurso.
+      - name: Trivy config
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE/terraform:/src:ro" -w /src "$TRIVY_IMAGE" \
+            config --ignorefile .trivyignore.yaml --exit-code 1 .
+
+      - name: init, validate e test (raiz)
+        run: |
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform validate
+          terraform -chdir=terraform test
+
+      - name: init, validate e test (bootstrap do state)
+        run: |
+          terraform -chdir=terraform/bootstrap init -backend=false -input=false
+          terraform -chdir=terraform/bootstrap validate
+          terraform -chdir=terraform/bootstrap test
+
+      # O user_data pronto (render.sh) passa pelo ShellCheck sem nenhum aviso.
+      - name: ShellCheck do user_data
+        run: bash terraform/tests/user_data/render.sh | docker run --rm -i "$SHELLCHECK_IMAGE" --shell=bash --severity=style -
+
+      # A montagem do .env do user_data num container do Amazon Linux 2023, o sistema das
+      # instâncias (docs/nuvem/TERRAFORM.md, "Como o user_data foi testado").
+      - name: Montagem do .env do user_data
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/terraform:/src/terraform:ro" \
+            -v "$GITHUB_WORKSPACE/docker-compose.prod.yml:/src/docker-compose.prod.yml:ro" \
+            "$AMAZON_LINUX_IMAGE" bash /src/terraform/tests/user_data/env_test.sh
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Baixa o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Confere os workflows (sintaxe, expressões, contextos e, com o ShellCheck da imagem, os
+      # scripts dos passos run).
+      - name: actionlint nos workflows
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo "$ACTIONLINT_IMAGE" -color

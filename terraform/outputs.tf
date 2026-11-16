@@ -130,3 +130,40 @@ output "compose_file_sha256" {
   description = "SHA-256 do docker-compose.prod.yml que vai no user_data, o mesmo da tag ComposeFileSha256 do launch template. Mudança no compose só chega às instâncias pelo apply, nunca pelo deploy."
   value       = local.compose_file_sha256
 }
+
+# Saídas do CI/CD (feat/ci-cd). O deploy.yml lê tudo das variáveis do environment production do
+# GitHub; a github_environment_variables junta os valores prontos para copiar (docs/nuvem/CI-CD.md).
+# Sem a role (create_deploy_role = false), as saídas dela ficam nulas ou vazias.
+
+output "deploy_role_arn" {
+  description = "ARN da role que o deploy do GitHub Actions assume por OIDC (variável AWS_DEPLOY_ROLE_ARN do environment). Nulo sem a role."
+  value       = one(aws_iam_role.deploy[*].arn)
+}
+
+output "ecr_repository_names" {
+  description = "Nome dos repositórios do ECR, por imagem (variáveis ECR_APP_REPOSITORY e ECR_WEB_REPOSITORY do environment)."
+  value       = { for image, repository in aws_ecr_repository.image : image => repository.name }
+}
+
+output "image_tag_parameter_name" {
+  description = "Parâmetro do SSM com a tag das imagens no ar, que o deploy grava (variável IMAGE_TAG_PARAMETER do environment)."
+  value       = aws_ssm_parameter.operator_managed["image_tag"].name
+}
+
+output "github_deploy_subjects" {
+  description = "Valores de sub do token OIDC que a role de deploy aceita: o formato com os nomes e, com os dois IDs preenchidos, o imutável. Vazio sem a role."
+  value       = var.create_deploy_role ? local.github_deploy_subjects : []
+}
+
+output "github_environment_variables" {
+  description = "Variáveis do environment do GitHub que o deploy.yml lê, com os valores deste ambiente, prontas para copiar. Nulo sem a role, porque não há deploy pelo GitHub para configurar."
+  value = var.create_deploy_role ? {
+    AWS_DEPLOY_ROLE_ARN = one(aws_iam_role.deploy[*].arn)
+    AWS_REGION          = var.region
+    ASG_NAME            = aws_autoscaling_group.app.name
+    APP_URL             = local.app_url
+    ECR_APP_REPOSITORY  = aws_ecr_repository.image["app"].name
+    ECR_WEB_REPOSITORY  = aws_ecr_repository.image["web"].name
+    IMAGE_TAG_PARAMETER = aws_ssm_parameter.operator_managed["image_tag"].name
+  } : null
+}

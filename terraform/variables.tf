@@ -1,7 +1,7 @@
 # Variáveis da base e da rede (branch feat/infra-rede), depois as dos dados e da segurança
-# (feat/infra-dados-seguranca) e, no fim, as da computação (feat/infra-computacao).
-# As próximas branches que mexem no Terraform (feat/ci-cd e feat/observabilidade) acrescentam
-# as delas no fim deste arquivo.
+# (feat/infra-dados-seguranca), as da computação (feat/infra-computacao) e, no fim, as do CI/CD
+# (feat/ci-cd). A próxima branch que mexe no Terraform (feat/observabilidade) acrescenta as dela
+# no fim deste arquivo.
 # Os valores de cada ambiente ficam em envs/<ambiente>.tfvars (copie do .tfvars.example).
 
 variable "project" {
@@ -307,5 +307,75 @@ variable "budget_alert_email" {
   validation {
     condition     = var.budget_alert_email == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.budget_alert_email))
     error_message = "Deixe vazio ou use um e-mail válido, ex.: financeiro@barberflow.com.br."
+  }
+}
+
+# CI/CD (branch feat/ci-cd): a role que o deploy do GitHub Actions assume por OIDC (cicd.tf).
+# Todas têm valor padrão, como as anteriores.
+
+# Sem a role por padrão: o GitHub cria sem nenhuma proteção o environment que um workflow cita e
+# que ainda não existe, e a role aceitaria um workflow de qualquer branch (docs/nuvem/CI-CD.md).
+variable "create_deploy_role" {
+  description = "Cria a role de deploy do GitHub Actions (OIDC) e a política dela. Use true só no ambiente cujo environment do GitHub (github_environment) já existe com revisores obrigatórios e branches restritas: true no prod (environment production do deploy.yml) e false nos outros."
+  type        = bool
+  default     = false
+}
+
+variable "create_github_oidc_provider" {
+  description = "Cria o provedor OIDC do GitHub Actions (token.actions.githubusercontent.com) na conta. A AWS aceita um só por conta: true no ambiente que cria (o prod, no exemplo) e false nos outros, que leem o que já existe quando também têm a role (create_deploy_role)."
+  type        = bool
+  default     = false
+}
+
+variable "github_repository" {
+  description = "Repositório do GitHub (dono/nome) cujo deploy pode assumir a role, escrito como aparece no GitHub (maiúsculas e minúsculas contam)."
+  type        = string
+  default     = "josecoene/barber-shop"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$", var.github_repository))
+    error_message = "Use dono/repositório, sem curinga e sem espaço, ex.: josecoene/barber-shop."
+  }
+}
+
+# IDs do formato imutável do sub do token OIDC (repo:dono@ID/repositório@ID:...), que o GitHub
+# usa nos repositórios criados depois de 15/07/2026 e nos que ligaram o formato à mão. Vazios, a
+# role aceita só o formato com os nomes.
+variable "github_repository_owner_id" {
+  description = "ID numérico do dono do repositório no GitHub (owner.id na API), para o formato imutável do sub. Vazio enquanto não for preenchido."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^([1-9][0-9]*)?$", var.github_repository_owner_id))
+    error_message = "Deixe vazio ou use só o número do ID do dono (owner.id), ex.: 123456."
+  }
+}
+
+variable "github_repository_id" {
+  description = "ID numérico do repositório no GitHub (id na API), para o formato imutável do sub. Vazio enquanto não for preenchido; vai junto com o github_repository_owner_id."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^([1-9][0-9]*)?$", var.github_repository_id))
+    error_message = "Deixe vazio ou use só o número do ID do repositório (id), ex.: 456789."
+  }
+
+  # Os dois IDs andam juntos: o formato imutável leva os dois.
+  validation {
+    condition     = (var.github_repository_id == "") == (var.github_repository_owner_id == "")
+    error_message = "Preencha os dois IDs (github_repository_owner_id e github_repository_id) ou nenhum."
+  }
+}
+
+variable "github_environment" {
+  description = "Environment do GitHub (Settings > Environments) cujo deploy pode assumir a role, escrito como aparece no GitHub. É o environment do .github/workflows/deploy.yml, com a aprovação do grupo."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]{1,255}$", var.github_environment))
+    error_message = "Use só letras, números, ponto, hífen e sublinhado, sem curinga, espaço ou dois-pontos, ex.: production."
   }
 }

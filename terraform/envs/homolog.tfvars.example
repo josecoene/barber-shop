@@ -55,3 +55,18 @@ asg_cpu_target       = 60
 # mesmo aviso duas vezes.
 budget_limit_usd   = 30
 budget_alert_email = ""
+
+# Deploy pelo GitHub Actions (cicd.tf e docs/nuvem/CI-CD.md). A homolog fica sem role de deploy
+# (false): o deploy.yml só publica na prod, e o environment homolog do GitHub não é configurado.
+# O GitHub cria sem nenhuma proteção o environment que um workflow cita e que não existe, então
+# uma role da homolog seria assumida por um workflow de qualquer branch. Sem a role, a homolog
+# também não lê o provedor OIDC, e a ordem dos apply de homolog e prod não importa. Para dar uma
+# role à homolog, crie antes o environment homolog no GitHub com revisores e branches, como o
+# production (CI-CD.md, "Configurar o GitHub"); aí, na mesma conta da prod, aplique a prod antes
+# (o provedor OIDC é um por conta e nasce lá). Os IDs seguem a regra do prod.tfvars.example.
+create_deploy_role          = false
+create_github_oidc_provider = false
+github_repository           = "josecoene/barber-shop"
+github_environment          = "homolog"
+github_repository_owner_id  = ""
+github_repository_id        = ""
