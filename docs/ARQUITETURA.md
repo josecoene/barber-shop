@@ -22,7 +22,7 @@ O projeto atende a duas disciplinas: Arquitetura de Microsserviços e Desenvolvi
 | ORM | Eloquent | Evita SQL manual e facilita relacionamentos futuros |
 | Autenticação | Laravel Sanctum | Sessão (cookie + CSRF) para as telas e token Bearer para a API, no mesmo pacote e com as mesmas regras de perfil |
 | Telas | Blade + Bootstrap 5.3 via Vite | Telas servidas pelo próprio Laravel, que chamam a API com a sessão do navegador |
-| Testes | PHPUnit 12 (testes de feature) e k6 (carga) | Valida os endpoints de ponta a ponta e o tempo de resposta com muitos usuários ao mesmo tempo |
+| Testes | PHPUnit 13 (testes de feature) e k6 (carga) | Valida os endpoints de ponta a ponta e o tempo de resposta com muitos usuários ao mesmo tempo |
 | Containers | Docker (uma imagem em estágios, `docker/php/Dockerfile`), Docker Compose e Nginx | O mesmo código roda igual no computador, na homolog e na AWS |
 | Cache, sessões e travas | Redis na homolog e ElastiCache Valkey na AWS | As instâncias dividem as sessões e as travas do agendador (`onOneServer()`) e das migrations (`--isolated`) |
 | Infraestrutura | Terraform na AWS: VPC, ALB, Auto Scaling, RDS, ElastiCache, ECR, SSM e CloudWatch | Infraestrutura como código, testada sem conta da AWS (`terraform test` com o provider simulado) |
