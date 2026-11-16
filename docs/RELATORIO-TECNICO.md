@@ -25,7 +25,7 @@ A arquitetura é um **monólito modular**: um serviço Laravel só, com as regra
 
 ### Como o trabalho foi dividido
 
-O Leonam pediu, em 12/11/2026, para deixar o projeto completo nas duas réguas. A auditoria do mesmo dia achou cerca de 95 faltas (seção 5). O trabalho saiu em 13 branches locais, com commits locais e sem push (decisão 4 do plano). As partes dos colegas ficaram numa branch por dono, para cada um revisar a sua (decisão 3 do plano, 12/11/2026):
+O Leonam pediu, em 12/11/2026, para deixar o projeto completo nas duas réguas. A auditoria do mesmo dia achou cerca de 95 faltas (seção 5). O trabalho saiu em 13 branches, com commits locais e sem push até o OK do Leonam (decisão 4 do plano). As 13 subiram para o GitHub em 16/11/2026 (seção 4.12). As partes dos colegas ficaram numa branch por dono, para cada um revisar a sua (decisão 3 do plano, 12/11/2026):
 
 | Branch | Dono (pelo PDF) | O que entregou |
 |---|---|---|
@@ -147,7 +147,7 @@ Em cada sprint: o que o PDF pede, onde está no repositório e como foi provado.
 | CI em todo pull request: Pint, testes no SQLite com cobertura e no MySQL 8.4, `composer audit`, `npm audit`, build das imagens com Trivy, Terraform e actionlint, com as actions fixadas pelo SHA | `.github/workflows/ci.yml` e `.github/dependabot.yml` | N5 (José) |
 | Deploy por tag `v*`, com aprovação, OIDC (sem chave guardada), push no ECR, instance refresh, conferência do `/api/health` e rollback pelo `image_tag` | `.github/workflows/deploy.yml` e `terraform/cicd.tf` | N5 (Manoel) |
 
-**Como foi provado:** actionlint sem aviso, 18 testes da computação e 12 do CI/CD, e os passos de cada job rodados no computador (`docs/nuvem/CI-CD.md`, "Rodar o mesmo no computador"). **Só o GitHub e a AWS provam:** o CI verde depois do push, o OIDC, o deploy, o instance refresh e o rollback.
+**Como foi provado:** actionlint sem aviso, 18 testes da computação e 12 do CI/CD, e os passos de cada job rodados no computador (`docs/nuvem/CI-CD.md`, "Rodar o mesmo no computador"). **Só o GitHub e a AWS provam:** o CI verde, que roda a partir do primeiro pull request que tiver o `ci.yml` (o push das branches, em 16/11/2026, não o disparou, seção 4.12), o OIDC, o deploy, o instance refresh e o rollback.
 
 ### Sprint 4: observabilidade e entrega final (go-live)
 
@@ -365,7 +365,7 @@ A revisão dessas duas correções, feita por um agente de contexto limpo, não 
 
 ### 4.12 Rodada do Laravel 13.40.0
 
-Em 15/11/2026, o Leonam respondeu às pendências que esperavam o OK dele (seção 7). Esta rodada fez a última delas, a atualização do `laravel/framework`, conferiu tudo de novo (a suíte e a homolog do zero, no volume padrão, com as imagens novas) e registra a limpeza que ele autorizou.
+Em 15/11/2026, o Leonam respondeu às pendências que esperavam o OK dele (seção 7). Esta rodada fez a última delas, a atualização do `laravel/framework`, conferiu tudo de novo (a suíte e a homolog do zero, no volume padrão, com as imagens novas) e registra a limpeza que ele autorizou. O push de 16/11/2026, também com o OK dele, fecha a seção.
 
 **A atualização.** O `composer.json` não mudou: o `laravel/framework` continua pedido como `^13.17`. No `composer.lock`, mudaram só dois pacotes, e nenhum entrou ou saiu:
 
@@ -433,6 +433,13 @@ Não rodaram de novo: a carga e o estresse do k6, a concorrência com 50 pedidos
 - **O registro do agente de revisão** (2 arquivos) foi apagado, e a mesma varredura, repetida, achou 0 arquivos com a senha antiga.
 - **Antes, ainda em 15/11,** saíram da pasta temporária as 2 cópias do projeto que esta rodada tinha criado para rodar a suíte como no CI, que levavam a senha do RDS do `terraform/main.tf`. A varredura logo depois achou 0 arquivos com essa senha ali.
 
+**O push,** em 16/11/2026, com o OK do Leonam:
+
+- **O comando.** Um `git push --atomic -u origin` só, com as 13 branches da seção 1: `fix/menu-e-setup`, `feat/api-qualidade`, `feat/auth`, `feat/agendamentos`, `feat/pagamentos-dashboard`, `feat/lembretes-fidelidade`, `feat/infra-docker`, `feat/infra-rede`, `feat/infra-dados-seguranca`, `feat/infra-computacao`, `feat/ci-cd`, `feat/observabilidade` e `feat/entrega-final`. Com o `--atomic`, ou subiam as 13, ou nenhuma. As 13 eram branches novas no GitHub, e cada branch local ficou ligada à dela (upstream).
+- **A conferência.** O `git ls-remote` mostrou cada uma das 13 no mesmo commit da cópia local (a `feat/entrega-final` em `c947e74`). A `main` do GitHub não mudou: continua em `73524c1`, a mesma base da `fix/menu-e-setup`, e por isso nada precisou de rebase. O push não mexeu nas 4 branches que já estavam lá: a `fix/migrations` (#1), a `feat/test` (#2), a `feat/documentation` (#4) e a `feat/telas` (#5) entraram na `main` por pull request, e nenhuma tem commit fora dela.
+- **O CI e o deploy não rodaram.** O CI só roda no pull request e no push na `main` (`.github/workflows/ci.yml:12-16`), e o deploy, com tag `v*` ou à mão (`.github/workflows/deploy.yml:16-20`). A primeira rodada do CI no GitHub vem com o primeiro pull request que tiver o `ci.yml` (o da `feat/ci-cd`, o da `feat/observabilidade` ou o da `feat/entrega-final`). O pull request das outras 10 branches só roda o CI depois que o `ci.yml` chegar à `main`.
+- **A varredura antes do push,** em tudo o que subiu e ainda não estava no GitHub (56 commits, 408 árvores e 626 arquivos): nenhuma das 6 senhas e chaves do `homolog.env` nem a `APP_KEY` do `.env` local; nenhum token com o prefixo `barberflow_`, `APP_KEY` em base64, chave privada, chave de acesso da AWS ou token do GitHub; e nenhum arquivo que não pode subir (`.env`, `homolog.env`, `.tfstate`, `.tfvars`, `laravel.log`, `.sqlite`, `.pem`, `.key`, `vendor/`, `node_modules/` e `.playwright-mcp/`). Das senhas da decisão 5, as duas do MySQL de dev (no `docker-compose.yml`) e a do RDS (no `terraform/main.tf`) aparecem só nesses arquivos, como já estavam na `main` do GitHub. A do `test@example.com`, que na `main` vinha do `UserFactory`, está também no `DatabaseSeeder` desde a `fix/menu-e-setup`, com o mesmo valor. O maior arquivo novo tem 0,61 MB (o PDF da Sprint 4), e os novos somam 12,6 MB. Os commits têm um só e-mail de autor, que já estava no histórico do repositório, e nenhum tem a linha `Co-Authored-By`.
+
 ## 5. Faltas da auditoria de 12/11/2026
 
 A auditoria de 12/11/2026 levantou as faltas nas duas réguas, em quatro listas (API, front, nuvem e qualidade). Um verificador conferiu cada uma (confirmada, parcial ou refutada) e uma revisão crítica acrescentou 13 faltas novas e 62 ajustes. Tirando os duplicados e a refutada (nota no fim da seção), ficam as 96 faltas das tabelas abaixo.
@@ -499,7 +506,7 @@ Cada linha diz em que branch a falta foi resolvida, com o arquivo que prova, ou 
 | `compose-bootstrap-app` | Feito em N1; na produção, sem gerar chave e com as migrations por `RUN_MIGRATIONS` | `docker/php/entrypoint-dev.sh` e `docker/php/entrypoint.sh` |
 | `tf-security-groups` | Feito em N3 | `terraform/sg.tf` e `terraform/tests/dados_seguranca.tftest.hcl` (`security_groups`) |
 | `tf-ec2-sem-bootstrap` | Feito em N4 (validado só no código) | `terraform/compute.tf` e `terraform/templates/user_data.sh.tftpl` |
-| `ci-pipeline-inexistente` | Feito em N5 (validado só no código até o push) | `.github/workflows/ci.yml` |
+| `ci-pipeline-inexistente` | Feito em N5 (validado só no código até o primeiro pull request que tiver o `ci.yml`) | `.github/workflows/ci.yml` |
 | `cd-deploy-inexistente` | Feito em N5 e em N3 (ECR); validado só no código | `.github/workflows/deploy.yml`, `terraform/cicd.tf` e `terraform/ecr.tf` |
 | `tf-rede-vpc-subnets` | Feito em N2 | `terraform/network.tf` e `terraform/tests/rede.tftest.hcl` |
 | `tf-iam-ausente` | Feito em N3 (role das instâncias) e em N5 (role de deploy) | `terraform/iam.tf` e `terraform/cicd.tf` |
@@ -579,14 +586,14 @@ Do §7 do plano:
 | Item | Por quê |
 |---|---|
 | `terraform apply` e o go-live na AWS | Precisa da conta do grupo e custa dinheiro. No lugar: o roteiro e a homologação local completa |
-| O que só a AWS prova: OIDC, deploy, instance refresh, HTTPS no ALB, TLS do RDS e do ElastiCache, IAM mínimo, `awslogs` e o CI verde no GitHub | Validado só no código (`validate`, `test` com o provider simulado e actionlint) até o primeiro `apply` e o push |
-| Push, pull requests e a proteção da `main` | O push pede OK separado; os pull requests e a configuração do GitHub são do grupo, e o repositório é do José |
+| O que só a AWS prova: OIDC, deploy, instance refresh, HTTPS no ALB, TLS do RDS e do ElastiCache, IAM mínimo, `awslogs` e o CI verde no GitHub | Validado só no código (`validate`, `test` com o provider simulado e actionlint) até o primeiro `apply` e o primeiro pull request que tiver o `ci.yml` |
+| Pull requests e a proteção da `main` | São do grupo, como toda a configuração do GitHub, e o repositório é do José. O push, que pedia um OK separado, foi feito em 16/11/2026, com o OK do Leonam (seção 4.12) |
 | Mudar qualquer senha que já existe ou reescrever o histórico | Decisão 5 (13/11/2026). O risco está no `docs/nuvem/SEGURANCA.md`. A senha das contas de demonstração da homolog, que fica fora do repositório, foi trocada em 15/11/2026, com o OK do Leonam (seção 4.12) |
 | Separar um microsserviço; relatórios avançados, app mobile, multiempresa, WhatsApp e pagamento online | ADR 0001 e a evolução da `docs/ARQUITETURA.md` |
 | OpenAPI, `/api/v1`, Form Requests e API Resources, teste e lint de JS | Fora das duas réguas; o JS pediria dependência nova |
 | `commission_rate`, status do barbeiro e `birth_date` e `notes` do cliente | A própria `docs/ARQUITETURA.md` adiou |
 | AWS Backup, VPC Flow Logs e a página `/status` do PHP-FPM | Cortes de excesso do plano |
-| Domínio e certificado reais | Precisam ser comprados. O Terraform já aceita o `certificate_arn` |
+| Domínio e certificado reais | O domínio precisa ser comprado, e o certificado é pedido no ACM para ele, com validação por DNS (`docs/nuvem/TERRAFORM.md`, "HTTPS com domínio próprio"). O Terraform já aceita o `certificate_arn` |
 
 ## 7. Pendências
 
@@ -596,7 +603,7 @@ As que esperavam o OK do Leonam foram resolvidas em 15/11/2026, com a resposta d
 - **Os volumes do banco da homolog** foram apagados: o `barberflow-homolog_dbdata`, criado com uma senha que se perdeu (o app recebia `Access denied` com ele, e por isso a verificação usou o MySQL num tmpfs), e o `barberflow-homolog_dbdata-r`, o volume novo da revisão final e das duas rodadas de acabamento (seção 4.10). A homolog voltou ao volume padrão, o `barberflow-homolog_dbdata`, que nasceu de novo na rodada do Laravel 13.40.0, com a senha do `docker/homolog/homolog.env`, e ficou com os dados de demonstração até ser criado mais uma vez, no fim do mesmo dia (item seguinte).
 - **O resíduo do teste de concorrência no banco da demonstração,** achado na rodada do Laravel 13.40.0: o agendamento 178, cancelado (o app não apaga agendamento), e as linhas do barbeiro, do serviço e do cliente do teste, que o `concorrencia.js` exclui só logicamente. Com elas, o Dashboard de novembro contava 4 barbeiros na Ocupação, em vez dos 3 da demonstração, e a Agenda de 16/11 mostrava o cancelado (seção 4.12, "Achados da rodada"). Apagar só o agendamento não bastaria, porque a Ocupação vem da linha do barbeiro excluído. O banco da demonstração nasceu de novo, com os seeders, junto com a troca da senha das contas de demonstração, e o Dashboard do mês voltou a contar 3 barbeiros ("Depois, com o OK do Leonam", no fim da seção 4.12).
 
-Nada mais espera o OK do Leonam, fora o push, que é dele. Do grupo ficam o `terraform apply` com o go-live na AWS, os pull requests e a proteção da `main` (seção 6). Os achados que pedem decisão de código ou de infra continuam na seção 8.
+O push, que também esperava o OK do Leonam, foi feito em 16/11/2026: as 13 branches estão no GitHub, a `main` de lá não mudou, e nenhum workflow rodou (seção 4.12). Nada mais espera o OK dele. Do grupo ficam o `terraform apply` com o go-live na AWS, o domínio com o certificado, os pull requests e a proteção da `main` (seção 6). Os achados que pedem decisão de código ou de infra continuam na seção 8.
 
 ## 8. Achados que ficaram registrados
 

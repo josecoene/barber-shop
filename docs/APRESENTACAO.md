@@ -251,7 +251,7 @@ Os números do k6 valem para o computador da homolog, não para a AWS.
 ### 14. O que ficou de fora
 
 - Aplicar na AWS e o go-live: precisa da conta do grupo e custa dinheiro
-- O CI verde no GitHub, os pull requests e a proteção da `main`: depois do push
+- O CI verde no GitHub, os pull requests e a proteção da `main`: com o grupo (as branches subiram em 16/11/2026, e o CI roda a partir do primeiro pull request que tiver o `ci.yml`)
 - Achados em aberto: o pool do PHP-FPM cheio com o banco congelado e a leitura lenta que o Laravel repete (relatório, seção 8)
 
 ---

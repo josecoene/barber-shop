@@ -519,7 +519,7 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 - [x] Sprint 3: imagens otimizadas, CI (Pint, testes no SQLite e no MySQL, `composer audit`, `npm audit`, build, Trivy, Terraform e actionlint) e deploy por tag com OIDC, instance refresh e rollback (validado só no código)
 - [x] Sprint 4: Prometheus, Grafana, Loki e Alloy na homolog, alarmes e dashboard do CloudWatch, testes de carga e de resiliência, checklist de go-live e os guias de `docs/nuvem/`
 - [ ] Terraform aplicado na AWS e o go-live (a parte B do checklist): precisa da conta do grupo e custa dinheiro
-- [ ] CI verde no GitHub, proteção da `main` e pull requests: depois do push, com o grupo
+- [ ] CI verde no GitHub, proteção da `main` e pull requests: com o grupo (as branches estão no GitHub desde 16/11/2026, e o CI roda a partir do primeiro pull request que tiver o `ci.yml`)
 
 **Entrega final (`feat/entrega-final`)**
 
@@ -532,6 +532,7 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 - [x] Segunda rodada de acabamento: o limite de tempo do servidor de e-mail (`MAIL_TIMEOUT`) e o log do lembrete na saída do agendador, medidos de novo na homolog com o servidor de e-mail congelado; o e-mail da tela "Confirme seu e-mail" no celular; a confirmação do e-mail contra o cadastro de cliente da barbearia, provada sem erro no MySQL; e a confirmação que, no MySQL, ligava a conta ao cadastro de cliente de outra pessoa com um e-mail só parecido (com acento), com o cadastro de conta passando a recusar e-mail com acento (os prints, o k6, o ZAP, os headers e o CSRF ficaram os de antes). Logo depois, os dois achados novos dela: a confirmação que o MySQL desfaz por deadlock, com duas contas confirmando no mesmo instante, roda de novo, e o e-mail da Minha conta quebra só depois do @ e antes dos pontos no celular
 - [x] Os dois volumes do banco da homolog (o `barberflow-homolog_dbdata`, da senha perdida, e o `barberflow-homolog_dbdata-r`) apagados em 15/11/2026, com o OK do Leonam: a homolog voltou ao volume padrão, criado de novo com a senha do `homolog.env` e com os dados de demonstração
 - [x] O banco da demonstração criado de novo em 15/11/2026, com o OK do Leonam, junto com a troca da senha das contas de demonstração: sem o resíduo do teste de concorrência, o Dashboard de novembro voltou a contar 3 barbeiros (veja [Pendências](#pendências))
+- [x] As 13 branches no GitHub em 16/11/2026, com o OK do Leonam: um push só, depois de uma varredura que não achou nenhuma senha nova, chave ou arquivo que não pode subir, sem mexer na `main` de lá e sem disparar o CI nem o deploy (detalhes no relatório técnico, seção 4.12)
 
 ## Prints das telas
 
@@ -559,4 +560,4 @@ As que esperavam o OK do Leonam foram resolvidas em 15/11/2026, com a resposta d
 - **Volumes do banco da homolog:** o `barberflow-homolog_dbdata` do computador do Leonam, criado com uma senha que se perdeu (por isso a verificação usou o MySQL num tmpfs), e o `barberflow-homolog_dbdata-r`, o volume novo do "subir de novo sem perder nada" e da queda do banco, foram apagados. A homolog voltou ao volume padrão, o `barberflow-homolog_dbdata`, criado de novo com a senha do `homolog.env` e com os dados do `DemoSeeder`.
 - **Resíduo do teste de concorrência no banco da demonstração:** o `concorrencia.js` da rodada do Laravel 13.40.0 deixou no banco o agendamento que passou, cancelado (o app não apaga agendamento), e o barbeiro, o serviço e o cliente do teste, excluídos só logicamente, e o Dashboard de novembro contava 4 barbeiros na Ocupação, em vez dos 3 da demonstração. O banco da demonstração nasceu de novo, com os seeders, junto com a troca da senha das contas de demonstração, e o Dashboard do mês voltou a contar 3 barbeiros.
 
-Nada mais espera o OK do Leonam, fora o push, que é dele. O resto é do grupo: o Terraform aplicado na AWS com o go-live, o CI verde no GitHub, os pull requests e a proteção da `main` (veja [Status do projeto](#status-do-projeto)).
+O push, que esperava o OK do Leonam, foi feito em 16/11/2026: as 13 branches estão no GitHub, a `main` de lá não mudou, e nenhum workflow rodou (relatório técnico, seção 4.12). Nada mais espera o OK dele. O resto é do grupo: o Terraform aplicado na AWS com o go-live, o domínio com o certificado, o CI verde no GitHub (ele roda a partir do primeiro pull request que tiver o `ci.yml`), os pull requests e a proteção da `main` (veja [Status do projeto](#status-do-projeto)).

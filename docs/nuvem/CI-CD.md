@@ -2,7 +2,7 @@
 
 Este guia explica o pipeline do BarberFlow no GitHub Actions: o CI, que confere cada pull request e cada push na `main`, e o deploy na AWS, que publica as imagens no ECR e troca as instâncias do Auto Scaling. Também traz a role de deploy (`terraform/cicd.tf`), a configuração do GitHub que o José liga (proteção da `main`, environment `production` e Dependabot), o rollback, as migrations e a ordem com o `terraform apply`.
 
-**Situação: validado só no código.** Nada foi para o GitHub nem para a AWS. Os dois workflows passam no actionlint, o `cicd.tf` passa no `terraform validate`, no `terraform test` e no `trivy config`, e os passos de cada job do CI rodaram no computador, em containers (seção "Situação conferida em 14/11/2026"). O CI verde no GitHub, o OIDC, o deploy e o rollback só se provam depois do push e do primeiro `apply`.
+**Situação: validado só no código.** Nada foi para a AWS. As 13 branches estão no GitHub desde 16/11/2026 (o push foi feito com o OK do Leonam, sem mexer na `main` de lá), mas nenhum workflow rodou: o CI só roda no pull request e no push na `main` (`.github/workflows/ci.yml:12-16`), e o deploy, com tag `v*` ou à mão (`.github/workflows/deploy.yml:16-20`). Os dois workflows passam no actionlint, o `cicd.tf` passa no `terraform validate`, no `terraform test` e no `trivy config`, e os passos de cada job do CI rodaram no computador, em containers (seção "Situação conferida em 14/11/2026"). O CI verde no GitHub só se prova no primeiro pull request que tiver o `ci.yml` (o da `feat/ci-cd`, o da `feat/observabilidade` ou o da `feat/entrega-final`, ou qualquer um depois que o `ci.yml` chegar à `main`), e o OIDC, o deploy e o rollback, depois do primeiro `apply`.
 
 | Parte | Dono | Arquivos |
 |---|---|---|
@@ -323,7 +323,7 @@ Settings, Rules, Rulesets, New ruleset, New branch ruleset:
 - lista de bypass vazia: nem o administrador faz push direto na `main`;
 - "Restrict deletions" e "Block force pushes";
 - "Require a pull request before merging", com 1 aprovação e "Dismiss stale pull request approvals when new commits are pushed";
-- "Require status checks to pass", com os checks `PHP`, `MySQL`, `Front`, `Docker`, `Terraform` e `actionlint` e "Require branches to be up to date before merging". Os checks aparecem na lista depois que o CI roda uma vez, no primeiro pull request.
+- "Require status checks to pass", com os checks `PHP`, `MySQL`, `Front`, `Docker`, `Terraform` e `actionlint` e "Require branches to be up to date before merging". Os checks aparecem na lista depois que o CI roda uma vez, no primeiro pull request que tiver o `ci.yml` (enquanto ele não estiver na `main`, só o de uma branch que já o traga, como a `feat/ci-cd`, a `feat/observabilidade` ou a `feat/entrega-final`).
 
 E uma regra para as tags de versão, em New ruleset, New tag ruleset: alvo `v*`, com "Restrict creations", "Restrict updates" e "Restrict deletions", e só o administrador do repositório no bypass. Assim só o José publica uma versão, e ninguém move uma tag de versão para outro commit.
 
