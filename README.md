@@ -315,7 +315,7 @@ docker run --rm -v "${ci}:/src:ro" composer:2 sh -c "cp -a /src/. /app/ && cd /a
 
 - O clone leva só o que já tem commit, como o CI. Mudanças ainda sem commit ficam de fora. Numa rodada nova, troque o nome da pasta (o `git clone` recusa uma que já existe).
 - O CI usa o PHP 8.4; a imagem `composer:2` traz o 8.5. A suíte passa nos dois.
-- O `composer audit` passa sem alerta desde 15/11/2026, com o `laravel/framework` na 13.40.0. A 13.33.0, de antes, tinha um alerta de severidade baixa (GHSA-63hm-g96r-2m2q), que fazia o job falhar.
+- O `composer audit` passa sem alerta desde 15/11/2026, com o `laravel/framework` na 13.40.0 (na 13.42.0 desde o PR #17, de 16/11/2026). A 13.33.0, de antes, tinha um alerta de severidade baixa (GHSA-63hm-g96r-2m2q), que fazia o job falhar.
 - Os outros jobs (MySQL, front, imagens com Trivy, Terraform e actionlint) estão no [`docs/nuvem/CI-CD.md`](docs/nuvem/CI-CD.md), "Rodar o mesmo no computador".
 
 ### O que os testes cobrem
@@ -516,10 +516,11 @@ Sistema Cloud.pdf     # o pedido da disciplina de nuvem
 
 - [x] Sprint 1: imagem Docker em estágios, compose de dev, produção e homolog, Nginx, Terraform com versões fixas, state remoto e a rede (VPC e subnets em 2 zonas)
 - [x] Sprint 2: RDS MySQL 8.4 com TLS, backup de 7 dias e snapshot final, ElastiCache, security groups, IAM mínimo, ECR e parâmetros do SSM (validado só no código)
-- [x] Sprint 3: imagens otimizadas, CI (Pint, testes no SQLite e no MySQL, `composer audit`, `npm audit`, build, Trivy, Terraform e actionlint) e deploy por tag com OIDC, instance refresh e rollback (validado só no código)
+- [x] Sprint 3: imagens otimizadas, CI (Pint, testes no SQLite e no MySQL, `composer audit`, `npm audit`, build, Trivy, Terraform e actionlint) e deploy por tag com OIDC, instance refresh e rollback (o CI rodou no GitHub em 16/11/2026; o deploy está validado só no código)
 - [x] Sprint 4: Prometheus, Grafana, Loki e Alloy na homolog, alarmes e dashboard do CloudWatch, testes de carga e de resiliência, checklist de go-live e os guias de `docs/nuvem/`
 - [ ] Terraform aplicado na AWS e o go-live (a parte B do checklist): precisa da conta do grupo e custa dinheiro
-- [ ] CI verde no GitHub, proteção da `main` e pull requests: com o grupo (as branches estão no GitHub desde 16/11/2026, e o CI roda a partir do primeiro pull request que tiver o `ci.yml`)
+- [x] CI no GitHub: rodou pela primeira vez em 16/11/2026, e a `main` passou nos 6 jobs no merge do #12, a `feat/entrega-final`, e no do #17 (relatório técnico, seção 4.12)
+- [ ] Os pull requests que faltam e a proteção da `main`: com o grupo (em 16/11/2026, os da `fix/symfony-8.1` e da `feat/docs-github` e o #15 e o #16, do Dependabot)
 
 **Entrega final (`feat/entrega-final`)**
 
@@ -560,4 +561,4 @@ As que esperavam o OK do Leonam foram resolvidas em 15/11/2026, com a resposta d
 - **Volumes do banco da homolog:** o `barberflow-homolog_dbdata` do computador do Leonam, criado com uma senha que se perdeu (por isso a verificação usou o MySQL num tmpfs), e o `barberflow-homolog_dbdata-r`, o volume novo do "subir de novo sem perder nada" e da queda do banco, foram apagados. A homolog voltou ao volume padrão, o `barberflow-homolog_dbdata`, criado de novo com a senha do `homolog.env` e com os dados do `DemoSeeder`.
 - **Resíduo do teste de concorrência no banco da demonstração:** o `concorrencia.js` da rodada do Laravel 13.40.0 deixou no banco o agendamento que passou, cancelado (o app não apaga agendamento), e o barbeiro, o serviço e o cliente do teste, excluídos só logicamente, e o Dashboard de novembro contava 4 barbeiros na Ocupação, em vez dos 3 da demonstração. O banco da demonstração nasceu de novo, com os seeders, junto com a troca da senha das contas de demonstração, e o Dashboard do mês voltou a contar 3 barbeiros.
 
-O push, que esperava o OK do Leonam, foi feito em 16/11/2026: as 13 branches estão no GitHub, a `main` de lá não mudou, e nenhum workflow rodou (relatório técnico, seção 4.12). Nada mais espera o OK dele. O resto é do grupo: o Terraform aplicado na AWS com o go-live, o domínio com o certificado, o CI verde no GitHub (ele roda a partir do primeiro pull request que tiver o `ci.yml`), os pull requests e a proteção da `main` (veja [Status do projeto](#status-do-projeto)).
+O push, que esperava o OK do Leonam, foi feito em 16/11/2026, e no mesmo dia as 13 branches entraram na `main` pelos PRs #6 a #13 (relatório técnico, seção 4.12). O resto é do grupo: os pull requests que faltam, a proteção da `main`, o Terraform aplicado na AWS com o go-live e o domínio com o certificado (veja [Status do projeto](#status-do-projeto)).

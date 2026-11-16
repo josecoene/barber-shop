@@ -241,7 +241,7 @@ Navegador ou Postman, depois o Nginx, o PHP-FPM, os middlewares (headers, limite
 | Concorrência da agenda | 1 criado em 50 pedidos iguais |
 | Resiliência | Cache fora: 503 em 3 a 4 s e de volta em 200; app de volta em 1,7 s; banco num volume de volta em 1,9 s, sem perder nada; banco congelado: 503 em 20 s (antes, 504 em 60 s); servidor de e-mail congelado: 503 em 10 s (antes, 60 s) |
 | OWASP ZAP baseline | 0 FAIL, 4 avisos baixos ou informativos |
-| Dependências | `composer audit` e `npm audit` sem nenhum alerta, com o Laravel 13.40.0 |
+| Dependências | `composer audit` e `npm audit` sem nenhum alerta, com o Laravel 13.40.0 (na 13.42.0 desde 16/11/2026) |
 | Terraform | 69 testes passaram; `trivy config` sem problema |
 
 Os números do k6 valem para o computador da homolog, não para a AWS.
@@ -251,7 +251,7 @@ Os números do k6 valem para o computador da homolog, não para a AWS.
 ### 14. O que ficou de fora
 
 - Aplicar na AWS e o go-live: precisa da conta do grupo e custa dinheiro
-- O CI verde no GitHub, os pull requests e a proteção da `main`: com o grupo (as branches subiram em 16/11/2026, e o CI roda a partir do primeiro pull request que tiver o `ci.yml`)
+- Os pull requests que faltam e a proteção da `main`: com o grupo (as 13 branches entraram na `main` em 16/11/2026, e a `main` passou nos 6 jobs do CI no merge do #12)
 - Achados em aberto: o pool do PHP-FPM cheio com o banco congelado e a leitura lenta que o Laravel repete (relatório, seção 8)
 
 ---
