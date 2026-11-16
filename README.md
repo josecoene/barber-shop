@@ -10,66 +10,135 @@ O objetivo do produto é ajudar a barbearia a reduzir horários vazios e faltas,
 
 | Camada | Tecnologia |
 |---|---|
-| Backend / API | Laravel 13 (PHP 8.3+, testado em PHP 8.5) |
+| Backend / API | Laravel 13 (PHP 8.4.1+, testado em PHP 8.5) |
 | Banco de dados | MySQL |
 | ORM | Eloquent |
 | Autenticação (planejada) | Laravel Sanctum |
-| Frontend (planejado) | Blade + Bootstrap |
-
-## Pré-requisitos
-
-- PHP 8.3 ou superior
-- Composer
-- MySQL
-- Extensões do PHP habilitadas no `php.ini`: `mbstring`, `fileinfo`, `curl`, `openssl`, `pdo_mysql`, `tokenizer`, `xml`, `ctype`
-- Para rodar os testes: `pdo_sqlite` e `sqlite3` (os testes usam SQLite em memória)
+| Frontend | Telas em Blade + Bootstrap 5.3 via Vite (cadastros ligados à API; login, agenda e agendamento ainda só visuais) |
 
 ## Como rodar localmente
 
-1. Instale as dependências:
+Há dois caminhos:
+
+1. **Tudo nativo:** PHP, Composer e Node instalados na máquina.
+2. **Windows sem PHP:** o PHP roda num container Docker e o Node fica na máquina.
+
+### Caminho 1: tudo nativo
+
+**Requisitos**
+
+- PHP 8.4.1 ou superior, com `pdo_sqlite` (para usar SQLite) ou `pdo_mysql` (para usar MySQL)
+- Outras extensões do PHP habilitadas no `php.ini`: `mbstring`, `fileinfo`, `curl`, `openssl`, `tokenizer`, `xml`, `ctype`
+- Para rodar os testes: `pdo_sqlite` e `sqlite3` (os testes usam SQLite em memória)
+- Composer 2
+- Node 22.13 ou superior, com npm
+- MySQL, só se for usar MySQL
+
+**Passos**
+
+1. Instale as dependências do PHP:
    ```bash
    composer install
    ```
-2. Crie o arquivo de ambiente (o `.env.example` já vem configurado para MySQL):
+2. Crie o arquivo de ambiente (o `.env.example` vem configurado para MySQL):
    ```bash
    cp .env.example .env        # Linux/macOS/Git Bash
    copy .env.example .env      # Windows (cmd)
    ```
-3. Abra o `.env` e preencha `DB_PASSWORD` com a senha do seu MySQL.
-4. Crie o banco de dados (o Laravel não cria o banco sozinho):
-   ```sql
-   CREATE DATABASE barberflow;
-   ```
-5. Gere a chave da aplicação:
+3. Gere a chave da aplicação:
    ```bash
    php artisan key:generate
    ```
-6. Crie as tabelas e popule os serviços de exemplo:
+4. Escolha o banco no `.env`:
+   - **SQLite** (o mais simples): troque `DB_CONNECTION=mysql` por `DB_CONNECTION=sqlite` e comente a linha `DB_DATABASE` com `#`. Os dados ficam no arquivo `database/database.sqlite`.
+   - **MySQL**: preencha `DB_PASSWORD` com a senha do seu MySQL.
+5. Crie as tabelas:
    ```bash
    php artisan migrate
-   php artisan db:seed --class=ServiceSeeder
    ```
-7. Suba o servidor:
+   Se o banco ainda não existir (o arquivo do SQLite ou o banco `barberflow` no MySQL), o comando pergunta se pode criá-lo: responda `yes`.
+6. Popule os dados iniciais:
+   ```bash
+   php artisan db:seed
+   ```
+   O seed cria os 4 serviços de exemplo e o usuário de teste `test@example.com`. Pode rodar de novo sem duplicar nada, mas os 4 serviços de exemplo voltam ao preço, à duração e ao status padrão: o que você mudou neles pela tela se perde. Os outros cadastros não mudam.
+7. Instale as dependências do front e gere os arquivos das telas:
+   ```bash
+   npm install
+   npm run build
+   ```
+   Se for mexer nas telas, use `npm run dev` num terminal separado no lugar do `npm run build`: ele atualiza a página a cada mudança.
+8. Suba o servidor:
    ```bash
    php artisan serve
    ```
 
-A API fica disponível em `http://localhost:8000/api`. Teste rapidamente:
+Atalhos do Composer:
 
-```bash
-curl http://localhost:8000/api/services
-```
+- `composer run setup` faz de uma vez o `composer install`, cria o `.env` se ele não existir e roda o `key:generate`, o `migrate`, o `npm install` e o `npm run build`. Ele não roda o seed. Como o `.env` novo vem com MySQL, crie e ajuste o `.env` antes (passos 2 e 4).
+- `composer run dev` sobe juntos o servidor (`php artisan serve`), a fila (`queue:listen`) e o Vite (`npm run dev`).
 
-> **Atenção:** `clients` e `barbers` começam vazios. Apenas `services` possui seeder.
+### Caminho 2: Windows sem PHP (PHP no container, Node na máquina)
+
+É o jeito usado hoje no Windows sem PHP instalado. O container usa a imagem `composer:2`, que traz o PHP com `pdo_sqlite` mas sem `pdo_mysql`, por isso este caminho usa SQLite.
+
+**Requisitos:** Docker Desktop, Node 22.13 ou superior e npm. Rode os comandos no PowerShell, na raiz do projeto.
+
+1. Instale as dependências do PHP pelo container. A pasta `vendor` fica no volume `barberflow-vendor` do Docker, e não na sua máquina:
+   ```powershell
+   docker run --rm -v "${PWD}:/app" -v barberflow-vendor:/app/vendor -w /app composer:2 composer install
+   ```
+2. Crie o `.env`:
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+   Depois, no `.env`, troque `DB_CONNECTION=mysql` por `DB_CONNECTION=sqlite` e comente a linha `DB_DATABASE` com `#`.
+3. Suba o servidor num container chamado `barberflow-app`:
+   ```powershell
+   docker run -d --name barberflow-app -p 127.0.0.1:8000:8000 -e PHP_CLI_SERVER_WORKERS=4 -v "${PWD}:/app" -v barberflow-vendor:/app/vendor -w /app composer:2 php artisan serve --host=0.0.0.0 --port=8000 --no-reload
+   ```
+   O `127.0.0.1` no `-p` abre a porta só para a sua máquina. Com `-p 8000:8000`, o Docker escuta em todas as interfaces e qualquer pessoa na mesma rede (o Wi-Fi da faculdade, por exemplo) alcança o app: como a API ainda não pede login, ela poderia ler, editar e apagar os cadastros. O `--host=0.0.0.0` vale só dentro do container e precisa ficar: sem ele, o Docker não alcança o servidor. O `PHP_CLI_SERVER_WORKERS=4` deixa o servidor atender várias requisições ao mesmo tempo e só funciona junto com o `--no-reload`.
+4. Rode os comandos `artisan` dentro do container, com `docker exec -w /app barberflow-app ...`:
+   ```powershell
+   docker exec -w /app barberflow-app php artisan key:generate
+   docker exec -w /app barberflow-app php artisan migrate
+   docker exec -w /app barberflow-app php artisan db:seed
+   docker restart barberflow-app
+   ```
+   Com `--no-reload`, o servidor só lê o `.env` quando inicia. Por isso o `docker restart` no fim: repita sempre que mudar o `.env`.
+5. Na máquina, instale as dependências do front e deixe o Vite rodando:
+   ```powershell
+   npm install
+   npm run dev
+   ```
+   Se não for mexer nas telas, rodar `npm run build` uma vez também serve.
+
+Para parar o servidor, use `docker stop barberflow-app`; para subir de novo, `docker start barberflow-app`.
+
+### Depois de subir
+
+- Telas: a Agenda fica em `http://localhost:8000/appointments` e o menu leva aos cadastros. A tela de login fica em `/login`, mas o login ainda não funciona.
+- API: `http://localhost:8000/api`. Teste rapidamente:
+  ```bash
+  curl http://localhost:8000/api/services
+  ```
+
+> **Erro 500 "Vite manifest not found":** as telas carregam o CSS e o JS pelo Vite. Se o `npm run build` não rodou e o `npm run dev` não está aberto, as telas respondem 500 com essa mensagem. Rode um dos dois. A API não depende disso.
+
+> **Atenção:** `clients` e `barbers` começam vazios: o seed cria só os serviços e o usuário de teste.
 > Se você já tinha rodado as migrations antes de atualizar o projeto, recrie o banco com `php artisan migrate:fresh` (isso apaga os dados).
 
 ## Testes
 
 ```bash
-php artisan test
+composer test
 ```
 
-Os testes de feature em `tests/Feature` cobrem o CRUD de `services`, `clients` e `barbers` (listagem, criação, validação, consulta, atualização, remoção e 404).
+No caminho 2, rode `docker exec -w /app barberflow-app composer test`.
+
+O `composer test` limpa o cache de configuração antes de rodar o `php artisan test`. Com a configuração em cache, os testes ignorariam o `phpunit.xml` e usariam o banco do `.env`, apagando os dados dele.
+
+Os testes de feature em `tests/Feature` cobrem o CRUD de `services`, `clients` e `barbers` (listagem, criação, validação, consulta, atualização, remoção e 404), as telas (`WebPagesTest`: cada tela responde, o menu aponta para as telas e não para a API, e nenhum nome de rota se repete) e o seed (`DatabaseSeederTest`).
 
 ## Endpoints
 
@@ -103,11 +172,15 @@ app/
   Models/             # Service, Client, Barber, User
 database/
   migrations/         # estrutura das tabelas
-  seeders/            # ServiceSeeder
+  seeders/            # DatabaseSeeder (usuário de teste) e ServiceSeeder
+resources/
+  views/              # telas em Blade
+  js/pages.js         # comportamento das telas e chamadas à API
 routes/
-  api.php             # rotas da API (Route::apiResource)
+  api.php             # rotas da API (Route::apiResource), com nomes api.*
+  web.php             # rotas das telas
 tests/
-  Feature/            # testes dos endpoints
+  Feature/            # testes dos endpoints, das telas e do seed
 docs/
   API.md              # referência da API
   ARQUITETURA.md      # arquitetura, modelo de dados e roadmap

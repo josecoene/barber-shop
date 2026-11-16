@@ -1,0 +1,143 @@
+# Homologação local: as imagens de produção (alvos app e web, construídas aqui mesmo)
+# com MySQL, Redis e Mailpit no lugar do RDS, do ElastiCache e do e-mail de verdade.
+# Sempre junto com o docker-compose.prod.yml, no projeto barberflow-homolog:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.homolog.yml -p barberflow-homolog up -d --build --wait
+#
+# Antes, gere a chave em HOMOLOG_APP_KEY e a senha do banco em HOMOLOG_DB_PASSWORD
+# (passo a passo em docs/nuvem/DOCKER.md).
+# Tela: http://localhost:8080/login. E-mails: http://localhost:8025 (Mailpit).
+# Não suba junto com o dev: os dois usam a porta 8080.
+
+# Credenciais do MySQL desta stack local. Nenhuma senha fica no repositório.
+# A do usuário do app vem do ambiente (HOMOLOG_DB_PASSWORD), como a APP_KEY.
+# O root ganha uma senha aleatória quando o banco é criado e só entra de dentro do
+# container do MySQL; nada na homolog usa o root.
+# O &nome marca o valor e o *nome repete, para o app usar exatamente o que o db criou.
+x-homolog-mysql-credentials: &homolog-mysql-credentials
+  MYSQL_DATABASE: &homolog-db-database barberflow_homolog
+  MYSQL_USER: &homolog-db-username barberflow
+  MYSQL_PASSWORD: &homolog-db-password ${HOMOLOG_DB_PASSWORD:?Defina HOMOLOG_DB_PASSWORD (gere junto com a HOMOLOG_APP_KEY, veja docs/nuvem/DOCKER.md)}
+  MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+  MYSQL_ROOT_HOST: localhost
+
+x-homolog-build-app: &homolog-build-app
+  context: .
+  dockerfile: docker/php/Dockerfile
+  target: app
+
+# Ambiente do app e do scheduler na homolog. A base é o .env.example (todas as chaves
+# do projeto com valor de exemplo, no lugar do .env que o SSM gera na EC2); o bloco de
+# produção do docker-compose.prod.yml e as linhas abaixo valem mais que ele.
+x-homolog-environment: &homolog-environment
+  APP_KEY: ${HOMOLOG_APP_KEY:?Defina HOMOLOG_APP_KEY (gere com php artisan key:generate --show, veja docs/nuvem/DOCKER.md)}
+  APP_URL: http://localhost:8080
+  # A homolog roda em HTTP, então o cookie de sessão não pode exigir HTTPS
+  SESSION_SECURE_COOKIE: "false"
+  DB_CONNECTION: mysql
+  DB_HOST: db
+  DB_PORT: "3306"
+  DB_DATABASE: *homolog-db-database
+  DB_USERNAME: *homolog-db-username
+  DB_PASSWORD: *homolog-db-password
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  # E-mails (lembretes, confirmação de conta) caem no Mailpit, sem sair da máquina
+  MAIL_MAILER: smtp
+  MAIL_HOST: mailpit
+  MAIL_PORT: "1025"
+  DEMO_SEED_ENABLED: "true"
+
+services:
+  app:
+    build: *homolog-build-app
+    image: barberflow-app:homolog
+    env_file: !override
+      - .env.example
+    environment:
+      <<: *homolog-environment
+      RUN_MIGRATIONS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build: *homolog-build-app
+    image: barberflow-app:homolog
+    env_file: !override
+      - .env.example
+    environment: *homolog-environment
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: web
+    image: barberflow-web:homolog
+    # Troca a porta 80 da produção pela 8080, só neste computador
+    ports: !override
+      - "127.0.0.1:8080:80"
+
+  db:
+    image: mysql:8.4.13
+    environment: *homolog-mysql-credentials
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u \"$$MYSQL_USER\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+      start_interval: 2s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  redis:
+    image: redis:8.10.3-alpine
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+      start_interval: 2s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    ports:
+      # Tela do Mailpit só neste computador; o SMTP (1025) fica só na rede interna
+      - "127.0.0.1:8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+volumes:
+  dbdata:
+  redisdata:

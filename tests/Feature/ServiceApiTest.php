@@ -13,10 +13,10 @@ class ServiceApiTest extends TestCase
     private function payload(array $overrides = []): array
     {
         return array_merge([
-            'name'     => 'Corte de cabelo',
+            'name' => 'Corte de cabelo',
             'duration' => 30,
-            'price'    => 40.00,
-            'status'   => 'active',
+            'price' => 40.00,
+            'status' => 'active',
         ], $overrides);
     }
 
@@ -37,9 +37,9 @@ class ServiceApiTest extends TestCase
             ->assertJsonFragment(['name' => 'Corte de cabelo', 'duration' => 30]);
 
         $this->assertDatabaseHas('services', [
-            'name'     => 'Corte de cabelo',
+            'name' => 'Corte de cabelo',
             'duration' => 30,
-            'status'   => 'active',
+            'status' => 'active',
         ]);
     }
 

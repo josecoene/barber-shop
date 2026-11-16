@@ -32,7 +32,7 @@ class BarberController extends Controller
     {
         $validated = $request->validate([
             'name' => 'sometimes|required|string|max:255',
-            'email' => 'sometimes|required|email|unique:barbers,email,' . $barber->id,
+            'email' => 'sometimes|required|email|unique:barbers,email,'.$barber->id,
             'phone' => 'nullable|string|max:20',
         ]);
 

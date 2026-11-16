@@ -13,7 +13,7 @@ Nesta etapa o sistema é uma **API REST monolítica modular** em Laravel: um ún
 
 | Camada | Tecnologia | Motivo |
 |---|---|---|
-| Backend / API | Laravel 13 (PHP 8.3+) | Roteamento de API, validação e ORM prontos; estrutura MVC alinhada ao esboço inicial |
+| Backend / API | Laravel 13 (PHP 8.4.1+) | Roteamento de API, validação e ORM prontos; estrutura MVC alinhada ao esboço inicial |
 | Banco de dados | MySQL | Banco relacional, adequado a agenda, clientes e financeiro |
 | ORM | Eloquent | Evita SQL manual e facilita relacionamentos futuros |
 | Autenticação | Laravel Sanctum (instalado, ainda não ativado) | Tokens de API com controle por perfil |
