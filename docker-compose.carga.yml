@@ -28,7 +28,7 @@ services:
   # O -e sem valor repassa a variável do terminal: o e-mail e a senha do usuário de carga
   # nunca ficam em arquivo.
   k6:
-    image: grafana/k6:2.3.0
+    image: grafana/k6:2.4.0
     profiles: ["carga"]
     # root dentro do container só para gravar os resultados na pasta montada em qualquer sistema
     # (no Linux, a pasta do repositório não é do usuário 12345 da imagem).
