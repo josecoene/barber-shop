@@ -97,7 +97,7 @@ services:
   # Guarda os logs de todos os containers do projeto por 7 dias, no volume lokidata.
   # A imagem não tem shell nem wget, então não há healthcheck aqui.
   loki:
-    image: grafana/loki:3.7.9
+    image: grafana/loki:3.7.10
     command: ["-config.file=/etc/loki/loki.yml"]
     volumes:
       - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
@@ -115,7 +115,7 @@ services:
   # pelo digest. O --disable-reporting desliga as estatísticas de uso que o Alloy manda à
   # Grafana Labs.
   alloy:
-    image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
+    image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
     command:
       - run
       - --storage.path=/var/lib/alloy/data
@@ -140,7 +140,7 @@ services:
   # montada (/rootfs) inclui o disco do Windows que o Docker Desktop monta, e a /var/run tem o
   # socket do Docker: a imagem vai também pelo digest (docs/nuvem/SEGURANCA.md, "Riscos aceitos").
   cadvisor:
-    image: ghcr.io/google/cadvisor:0.60.6@sha256:b8e7d1093144fd088f425ff003d75a4aa405de075db78dae3bc563730b1bd07a
+    image: ghcr.io/google/cadvisor:v0.61.1@sha256:4929b70e82079d001d0028b85d6a4dd25ad4666b719455c9542b983489963916
     command:
       - --docker_only=true
       - --housekeeping_interval=5s
