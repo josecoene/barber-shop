@@ -19,7 +19,7 @@ FROM composer:2.11.2 AS composer
 # ---------------------------------------------------------------------------
 # base: PHP-FPM com as extensões e a configuração comuns ao dev e à produção
 # ---------------------------------------------------------------------------
-FROM php:8.4.27-fpm-bookworm AS base
+FROM php:8.4.28RC1-fpm-bookworm AS base
 
 # Extensão redis do PECL, com o pacote conferido por SHA-256
 ARG PHPREDIS_VERSION=6.3.0
